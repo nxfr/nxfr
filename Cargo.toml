@@ -38,7 +38,7 @@ dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # Discovery
-mdns-sd = "0.11"
+mdns-sd = "0.20"
 nix = { version = "0.29", features = ["fs"] }
 
 # Internal
