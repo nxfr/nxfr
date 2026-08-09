@@ -93,8 +93,8 @@ fn test_browse_snapshot_multiple_polls_no_degradation() {
 #[test]
 fn test_config_default_receiving_disabled() {
     let cfg = NxfrConfig::default();
-    assert_eq!(
-        cfg.receiving_enabled, false,
+    assert!(
+        !cfg.receiving_enabled,
         "Spec default MUST be false (hidden-by-default)"
     );
 }
@@ -194,15 +194,12 @@ async fn test_set_receiving_error_is_human_readable() {
     // which is human-readable. This test verifies the invariant: failed toggle does NOT
     // mutate config.
     let config_before = state.config.read().await.receiving_enabled;
-    assert_eq!(config_before, false, "Should be false before toggle");
+    assert!(!config_before, "Should be false before toggle");
 
     // Simulate: if toggle fails, config must remain false.
     // (In production, cmd_set_receiving returns error before mutating config.)
     let config_after = state.config.read().await.receiving_enabled;
-    assert_eq!(
-        config_after, false,
-        "Config must not change on failed toggle"
-    );
+    assert!(!config_after, "Config must not change on failed toggle");
 }
 
 // ──────────────────────── Test G5: Self-send E2E ────────────────────────

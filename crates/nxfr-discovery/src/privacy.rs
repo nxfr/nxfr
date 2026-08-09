@@ -64,7 +64,7 @@ mod tests {
         // Let's compute manually to check the expected output.
         // SHA-256(device_id || "2025-01-01")
         let mut hasher = Sha256::new();
-        hasher.update(&device_id);
+        hasher.update(device_id);
         hasher.update(date_str.as_bytes());
         let result = hasher.finalize();
         let expected: String = result[..8].iter().map(|b| format!("{:02x}", b)).collect();

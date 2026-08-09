@@ -85,27 +85,29 @@ mod tests {
         let cfg_path = dir.path().join("config.toml");
         let cfg = NxfrConfig::load_from(&cfg_path).unwrap();
         assert!(cfg_path.exists());
-        assert_eq!(cfg.receiving_enabled, false);
+        assert!(!cfg.receiving_enabled);
     }
 
     #[test]
     fn test_save_and_reload() {
         let dir = tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
-        let mut cfg = NxfrConfig::default();
-        cfg.device_name = "Test Name".to_string();
-        cfg.receiving_enabled = true;
+        let cfg = NxfrConfig {
+            device_name: "Test Name".to_string(),
+            receiving_enabled: true,
+            ..Default::default()
+        };
         cfg.save_to(&cfg_path).unwrap();
 
         let loaded = NxfrConfig::load_from(&cfg_path).unwrap();
         assert_eq!(loaded.device_name, "Test Name");
-        assert_eq!(loaded.receiving_enabled, true);
+        assert!(loaded.receiving_enabled);
     }
 
     #[test]
     fn test_default_values() {
         let cfg = NxfrConfig::default();
-        assert_eq!(cfg.receiving_enabled, false);
+        assert!(!cfg.receiving_enabled);
         assert!(!cfg.device_name.is_empty());
     }
 }

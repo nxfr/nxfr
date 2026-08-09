@@ -13,8 +13,8 @@ pub async fn handle() -> anyhow::Result<()> {
         println!("  (none)");
     } else {
         println!(
-            "  {:<20} {:<10} {:<14} {}",
-            "NAME", "TRUST", "AUTO-ACCEPT", "DEVICE ID"
+            "  {:<20} {:<10} {:<14} DEVICE ID",
+            "NAME", "TRUST", "AUTO-ACCEPT"
         );
         for p in paired.unwrap() {
             let name = p["name"].as_str().unwrap_or("?");
@@ -35,7 +35,7 @@ pub async fn handle() -> anyhow::Result<()> {
     if discovered.map_or(true, |a| a.is_empty()) {
         println!("  (none)");
     } else {
-        println!("  {:<20} {:<24} {}", "NAME", "ADDRESS", "PORT");
+        println!("  {:<20} {:<24} PORT", "NAME", "ADDRESS");
         for d in discovered.unwrap() {
             let name = d["name"].as_str().unwrap_or("?");
             let addrs: Vec<&str> = d["addresses"]

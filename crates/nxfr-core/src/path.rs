@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_path_too_long() {
         let mut path = "a/".repeat(2048);
-        path.push_str("b");
+        path.push('b');
         assert!(matches!(
             sanitize_path(&path),
             Err(PathError::PathTooLong { len: _ })

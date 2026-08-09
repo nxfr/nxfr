@@ -78,16 +78,12 @@ mod fuzz_property_tests {
             let data = rng.bytes(len);
 
             // Must never panic.
-            match FrameHeader::parse(&data) {
-                Ok(header) => {
-                    parse_ok += 1;
-                    // Round-trip invariant.
-                    let serialized = header.serialize();
-                    let reparsed =
-                        FrameHeader::parse(&serialized).expect("round-trip must succeed");
-                    assert_eq!(header, reparsed);
-                }
-                Err(_) => {}
+            if let Ok(header) = FrameHeader::parse(&data) {
+                parse_ok += 1;
+                // Round-trip invariant.
+                let serialized = header.serialize();
+                let reparsed = FrameHeader::parse(&serialized).expect("round-trip must succeed");
+                assert_eq!(header, reparsed);
             }
         }
         eprintln!("[fuzz_property_frame_parser] 100k inputs, {parse_ok} parsed OK");
@@ -102,16 +98,13 @@ mod fuzz_property_tests {
             let data = rng.bytes(len);
 
             // Must never panic.
-            match codec::decode_control(&data) {
-                Ok(msg) => {
-                    decode_ok += 1;
-                    if let Ok(encoded) = codec::encode_control(&msg) {
-                        let redecoded = codec::decode_control(&encoded)
-                            .expect("round-trip decode must succeed");
-                        assert_eq!(msg, redecoded);
-                    }
+            if let Ok(msg) = codec::decode_control(&data) {
+                decode_ok += 1;
+                if let Ok(encoded) = codec::encode_control(&msg) {
+                    let redecoded =
+                        codec::decode_control(&encoded).expect("round-trip decode must succeed");
+                    assert_eq!(msg, redecoded);
                 }
-                Err(_) => {}
             }
         }
         eprintln!("[fuzz_property_cbor_decoder] 100k inputs, {decode_ok} decoded OK");

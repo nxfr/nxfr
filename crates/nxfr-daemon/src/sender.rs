@@ -91,7 +91,7 @@ pub async fn send_file<S: AsyncRead + AsyncWrite + Unpin>(
         in_flight += 1;
         offset = end as u64;
 
-        if (offset as usize).is_multiple_of(CHUNK_DATA_SIZE * 10) || is_last {
+        if (offset as usize) % (CHUNK_DATA_SIZE * 10) == 0 || is_last {
             info!(
                 "Sent {offset}/{total_size} bytes ({:.1}%), in_flight={in_flight}",
                 (offset as f64 / total_size as f64) * 100.0

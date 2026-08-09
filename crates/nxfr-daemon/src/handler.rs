@@ -343,7 +343,7 @@ pub async fn handle_incoming(
                                         .files
                                         .iter()
                                         .filter(|(fid, _)| {
-                                            file_ids.as_ref().is_none_or(|ids| ids.contains(fid))
+                                            file_ids.as_ref().map_or(true, |ids| ids.contains(fid))
                                         })
                                         .map(|(fid, fs)| nxfr_core::messages::ResumeFileStatus {
                                             file_id: *fid,
