@@ -16,7 +16,7 @@ ciborium = "0.2"
 sha2 = "0.10"
 
 # Crypto/TLS
-rcgen = { version = "0.13", features = ["ring"] }
+rcgen = { version = "0.14", features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 tokio-rustls = "0.26"
 rustls-pki-types = "1"
