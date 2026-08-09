@@ -1,0 +1,10 @@
+[package]
+name = "nxfr-common"
+description = "Shared types and errors for the NXFR protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }

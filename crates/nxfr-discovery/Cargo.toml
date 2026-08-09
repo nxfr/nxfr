@@ -1,0 +1,16 @@
+[package]
+name = "nxfr-discovery"
+description = "mDNS/DNS-SD discovery for the NXFR protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nxfr-common = { workspace = true }
+mdns-sd = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+hex = { workspace = true }

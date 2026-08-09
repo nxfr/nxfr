@@ -1,0 +1,95 @@
+site_name: NXFR Protocol
+site_description: Open, secure, cross-platform file transfer over LAN
+site_url: https://nxfr.github.io/nxfr/
+repo_url: https://github.com/nxfr/nxfr
+repo_name: nxfr/nxfr
+edit_uri: edit/main/docs-site/docs/
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nxfr/nxfr
+
+
+copyright: Copyright &copy; 2026 NXFR Protocol
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+      fallback_to_build_date: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+    - CLI Reference: getting-started/cli.md
+  - Protocol Specification:
+    - Overview: spec/overview.md
+    - Discovery & Transport: spec/discovery-transport.md
+    - Framing & Encoding: spec/framing.md
+    - Messages & State Machines: spec/messages.md
+    - Transfer & Resume: spec/transfer.md
+  - Security:
+    - Threat Model: security/threat-model.md
+    - Cryptography & Pairing: security/crypto.md
+    - Privacy & mDNS: security/privacy.md
+  - Architecture:
+    - Linux Daemon: architecture/linux.md
+    - Android Client: architecture/android.md
+    - Cross-Platform: architecture/cross-platform.md
+  - Contributing: contributing.md

@@ -1,0 +1,16 @@
+[package]
+name = "nxfr-core"
+description = "Pure protocol logic for the NXFR protocol — no I/O, no unsafe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nxfr-common = { workspace = true }
+thiserror = { workspace = true }
+ciborium = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }

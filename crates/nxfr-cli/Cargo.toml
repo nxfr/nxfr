@@ -1,0 +1,22 @@
+[package]
+name = "nxfr-cli"
+description = "NXFR command-line client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nxfr"
+path = "src/main.rs"
+
+[dependencies]
+nxfr-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+indicatif = { workspace = true }
+dialoguer = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+dirs = { workspace = true }

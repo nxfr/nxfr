@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!--
+    NXFR Protocol — Logo Icon Mark
+
+    Concept: A bold geometric "N" formed by two vertical bars (representing
+    two devices/nodes on a LAN) connected by a diagonal stroke with arrow
+    tips extending beyond the bars — representing bidirectional peer-to-peer
+    data transfer. The arrow tip at top-left points upward (source device),
+    the tip at bottom-right points downward (destination device).
+
+    Colors: Electric Cyan (#00E5FF) — pops on both light and dark backgrounds.
+    Replace fill values with "currentColor" for automatic theme adaptation.
+  -->
+
+  <!-- Left device bar -->
+  <rect x="16" y="18" width="14" height="64" fill="#00E5FF"/>
+
+  <!-- Right device bar -->
+  <rect x="70" y="18" width="14" height="64" fill="#00E5FF"/>
+
+  <!-- Diagonal transfer arrow with bidirectional tips -->
+  <polygon points="23,8 30,18 84,82 77,92 70,82 16,18" fill="#00E5FF"/>
+</svg>

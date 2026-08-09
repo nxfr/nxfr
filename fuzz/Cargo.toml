@@ -1,0 +1,28 @@
+[package]
+name = "nxfr-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nxfr-core = { path = "../crates/nxfr-core" }
+nxfr-common = { path = "../crates/nxfr-common" }
+
+[[bin]]
+name = "fuzz_frame_parser"
+path = "fuzz_targets/fuzz_frame_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cbor_decoder"
+path = "fuzz_targets/fuzz_cbor_decoder.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_path_sanitizer"
+path = "fuzz_targets/fuzz_path_sanitizer.rs"
+doc = false

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- NXFR nav bar logo — Electric Cyan for visibility on indigo/dark headers -->
+  <rect x="16" y="18" width="14" height="64" fill="#00E5FF"/>
+  <rect x="70" y="18" width="14" height="64" fill="#00E5FF"/>
+  <polygon points="23,8 30,18 84,82 77,92 70,82 16,18" fill="#00E5FF"/>
+</svg>

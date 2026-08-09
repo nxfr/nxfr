@@ -1,0 +1,18 @@
+[package]
+name = "nxfr-crypto"
+description = "Cryptographic primitives for the NXFR protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nxfr-common = { workspace = true }
+sha2 = { workspace = true }
+rcgen = { workspace = true }
+ring = { workspace = true }
+rustls-pki-types = { workspace = true }
+x509-parser = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }

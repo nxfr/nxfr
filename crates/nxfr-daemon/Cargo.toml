@@ -1,0 +1,43 @@
+[package]
+name = "nxfr-daemon"
+description = "NXFR protocol daemon — TCP listener, connection handler, file I/O, IPC"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nxfr_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nxfr-daemon"
+path = "src/main.rs"
+
+[dependencies]
+nxfr-common = { workspace = true }
+nxfr-core = { workspace = true }
+nxfr-crypto = { workspace = true }
+nxfr-transport = { workspace = true }
+nxfr-storage = { workspace = true }
+nxfr-discovery = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+zeroize = { workspace = true }
+env_logger = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+dirs = { workspace = true }
+mdns-sd = { workspace = true }
+nix = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+env_logger = { workspace = true }

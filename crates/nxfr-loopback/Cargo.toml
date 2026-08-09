@@ -1,0 +1,18 @@
+[package]
+name = "nxfr-loopback"
+description = "NXFR protocol loopback test — drives the §10 golden wire trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nxfr-common = { workspace = true }
+nxfr-core = { workspace = true }
+nxfr-crypto = { workspace = true }
+nxfr-transport = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

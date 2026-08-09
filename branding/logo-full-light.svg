@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100">
+  <!-- NXFR Protocol — Full Logo (Icon + Wordmark) -->
+
+  <!-- Icon mark -->
+  <rect x="10" y="18" width="14" height="64" fill="#0E7490"/>
+  <rect x="64" y="18" width="14" height="64" fill="#0E7490"/>
+  <polygon points="17,8 24,18 78,82 71,92 64,82 10,18" fill="#0E7490"/>
+
+  <!-- Wordmark "NXFR" -->
+  <g fill="#0F172A">
+    <!-- N -->
+    <polygon points="105,28 113,28 113,68 105,68"/>
+    <polygon points="127,28 135,28 135,68 127,68"/>
+    <polygon points="105,28 113,28 135,68 127,68"/>
+    <!-- X -->
+    <polygon points="143,28 152,28 173,68 164,68"/>
+    <polygon points="164,28 173,28 152,68 143,68"/>
+    <!-- F -->
+    <polygon points="181,28 189,28 189,68 181,68"/>
+    <polygon points="189,28 205,28 205,36 189,36"/>
+    <polygon points="189,44 202,44 202,52 189,52"/>
+    <!-- R -->
+    <polygon points="213,28 221,28 221,68 213,68"/>
+    <polygon points="221,28 237,28 237,36 221,36"/>
+    <polygon points="237,28 241,28 241,48 237,48"/>
+    <polygon points="221,44 237,44 237,52 221,52"/>
+    <polygon points="228,52 236,52 241,68 233,68"/>
+  </g>
+</svg>

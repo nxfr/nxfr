@@ -1,0 +1,51 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+
+# MkDocs
+docs-site/site/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+
+# Runtime data (not repo files)
+*.profraw
+
+# Testing
+*.profdata
+lcov.info
+coverage/
+target/criterion/
+
+# OS
+.DS_Store
+Desktop.ini
+ehthumbs.db
+Thumbs.db
+
+# Environment
+.env
+.env.local
+/target/
+**/target/
