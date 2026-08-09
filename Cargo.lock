@@ -1067,6 +1067,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nxfr-ffi"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "nxfr-common",
+ "nxfr-core",
+ "nxfr-crypto",
+ "nxfr-transport",
+ "ring",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "nxfr-loopback"
 version = "0.1.0"
 dependencies = [
