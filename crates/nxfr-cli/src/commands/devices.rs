@@ -22,7 +22,10 @@ pub async fn handle() -> anyhow::Result<()> {
             let auto_accept = p["auto_accept"].as_str().unwrap_or("?");
             let device_id = p["device_id"].as_str().unwrap_or("?");
             let short_id = truncate_device_id(device_id);
-            println!("  {:<20} {:<10} {:<14} {}", name, trust, auto_accept, short_id);
+            println!(
+                "  {:<20} {:<10} {:<14} {}",
+                name, trust, auto_accept, short_id
+            );
         }
     }
 
