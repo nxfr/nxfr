@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.nxfr.android.R
+import com.nxfr.android.service.NxfrService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -153,7 +154,7 @@ fun SettingsScreen(
         // Network Section
         if (showAdvancedSettings) {
             SettingsCard(title = stringResource(R.string.settings_section_network)) {
-                var port by remember { mutableStateOf("53210") }
+                var port by remember { mutableStateOf(NxfrService.DEFAULT_PORT.toString()) }
                 OutlinedTextField(
                     value = port,
                     onValueChange = { port = it },
@@ -171,7 +172,7 @@ fun SettingsScreen(
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
-                var multicastAddress by remember { mutableStateOf("224.0.0.1") }
+                var multicastAddress by remember { mutableStateOf(NxfrService.DEFAULT_MULTICAST) }
                 OutlinedTextField(
                     value = multicastAddress,
                     onValueChange = { multicastAddress = it },

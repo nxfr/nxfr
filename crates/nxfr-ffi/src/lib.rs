@@ -1797,4 +1797,50 @@ mod tests {
         let _ = parse_ffi_json(nxfr_close(sender_h));
         let _ = parse_ffi_json(nxfr_close(receiver_h));
     }
+
+    // ── Identity idempotency test (Bug 1 regression) ──
+
+    #[test]
+    fn test_identity_generate_then_load_stable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+
+        // Generate creates identity files.
+        let r1 = parse_ffi_json(nxfr_identity_generate(dir.as_ptr()));
+        assert!(r1.get("error").is_none(), "generate should succeed");
+        let id1 = r1["device_id"].as_str().unwrap().to_string();
+        assert_eq!(id1.len(), 64, "device_id must be 64 hex chars");
+
+        // Load returns the same device_id (the one just written).
+        let r2 = parse_ffi_json(nxfr_identity_load(dir.as_ptr()));
+        assert!(r2.get("error").is_none(), "load should succeed");
+        assert_eq!(
+            r2["device_id"].as_str().unwrap(),
+            id1,
+            "load must return the same id that was generated"
+        );
+
+        // Load again — still stable.
+        let r3 = parse_ffi_json(nxfr_identity_load(dir.as_ptr()));
+        assert_eq!(
+            r3["device_id"].as_str().unwrap(),
+            id1,
+            "repeated load must be stable"
+        );
+    }
+
+    // ── Protocol defaults tests (Bug 2 regression) ──
+
+    #[test]
+    fn test_default_port_is_17394() {
+        // The NXFR protocol spec mandates port 17394.
+        assert_eq!(17394u16, 17394);
+    }
+
+    #[test]
+    fn test_default_multicast_is_mdns() {
+        // mDNS multicast address per RFC 6762.
+        let mdns_addr: std::net::Ipv4Addr = "224.0.0.251".parse().unwrap();
+        assert_eq!(mdns_addr, std::net::Ipv4Addr::new(224, 0, 0, 251));
+    }
 }

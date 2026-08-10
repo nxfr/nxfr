@@ -42,10 +42,21 @@ class NxfrService : Service() {
         const val ACTION_SEND = "com.nxfr.android.SEND"
         const val EXTRA_ADDR = "addr"
         const val EXTRA_FILE_PATH = "file_path"
+        const val DEFAULT_PORT = 17394
+        const val DEFAULT_MULTICAST = "224.0.0.251"
 
         init {
             System.loadLibrary("nxfr_ffi")
         }
+
+        /** Shared identity state, readable from any Activity/Composable. */
+        private val _deviceId = MutableStateFlow("")
+        val deviceId: StateFlow<String> = _deviceId.asStateFlow()
+
+        private val _deviceName = MutableStateFlow("My Device")
+        val deviceName: StateFlow<String> = _deviceName.asStateFlow()
+
+        fun setDeviceName(name: String) { _deviceName.value = name }
     }
 
     /**
@@ -98,6 +109,47 @@ class NxfrService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        loadOrGenerateIdentity()
+    }
+
+    /**
+     * Load identity from filesDir/nxfr-identity/. If missing or error,
+     * generate a new one. Pushes the real device_id into the companion
+     * StateFlow so the UI can observe it.
+     */
+    private fun loadOrGenerateIdentity() {
+        val storeDir = identityDir()
+        Log.i(TAG, "Identity storeDir: $storeDir")
+
+        // Try loading first.
+        val loadJson = NxfrBridge.nxfr_identity_load(storeDir)
+        val loadResult = JSONObject(loadJson)
+        Log.d(TAG, "identity_load result: $loadJson")
+
+        if (!loadResult.has("error") && loadResult.optString("device_id").isNotEmpty()) {
+            val id = loadResult.getString("device_id")
+            _deviceId.value = id
+            Log.i(TAG, "Loaded identity: device_id=$id")
+            return
+        }
+
+        // Generate if load failed.
+        Log.i(TAG, "No existing identity, generating...")
+        val genJson = NxfrBridge.nxfr_identity_generate(storeDir)
+        val genResult = JSONObject(genJson)
+        Log.d(TAG, "identity_generate result: $genJson")
+
+        if (!genResult.has("error") && genResult.optString("device_id").isNotEmpty()) {
+            val id = genResult.getString("device_id")
+            _deviceId.value = id
+            Log.i(TAG, "Generated identity: device_id=$id")
+        } else {
+            Log.e(TAG, "Failed to generate identity: $genJson")
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundWithType()
         when (intent?.action) {
@@ -125,7 +177,7 @@ class NxfrService : Service() {
     /** Accept loop: listen → accept → pump for offers. */
     private suspend fun startListening() {
         val storeDir = identityDir()
-        ensureIdentity(storeDir)
+        // Identity already loaded in onCreate.
 
         val listenJson = withContext(Dispatchers.IO) {
             NxfrBridge.nxfr_listen(17394, storeDir)
@@ -161,7 +213,7 @@ class NxfrService : Service() {
     /** Send a file to a remote device. */
     private suspend fun doSendFile(addr: String, filePath: String) {
         val storeDir = identityDir()
-        ensureIdentity(storeDir)
+        // Identity already loaded in onCreate.
 
         // Connect.
         val connJson = withContext(Dispatchers.IO) {
@@ -225,7 +277,7 @@ class NxfrService : Service() {
                     )
                 }
                 "complete" -> {
-                    _nxfrState.value = NxfrState.Complete(event.optString("file_path", null))
+                    _nxfrState.value = NxfrState.Complete(event.optString("file_path").ifEmpty { null })
                     Log.i(TAG, "Transfer complete: ${event.optString("file_path")}")
                     NxfrBridge.nxfr_close(handle)
                     activeSessionHandle = 0
@@ -250,18 +302,9 @@ class NxfrService : Service() {
         }
     }
 
-    /** Return the identity directory path. */
+    /** Return the identity directory path (persistent filesDir, never cacheDir). */
     private fun identityDir(): String {
         return filesDir.resolve("nxfr-identity").absolutePath
-    }
-
-    /** Ensure an identity exists; generate if not. */
-    private fun ensureIdentity(storeDir: String) {
-        val dir = java.io.File(storeDir)
-        if (!dir.exists() || !dir.resolve("identity.der").exists()) {
-            val result = NxfrBridge.nxfr_identity_generate(storeDir)
-            Log.i(TAG, "Generated identity: $result")
-        }
     }
 
     private val isActive: Boolean
