@@ -1,9 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App -->
     <string name="app_name">NXFR</string>
-    <string name="share_title">Send via NXFR</string>
-    <string name="no_devices">No devices found.\nMake sure both devices are on the same network.</string>
-    <string name="accept">Accept</string>
-    <string name="reject">Reject</string>
-    <string name="cancel_transfer">Cancel</string>
+    <string name="app_tagline">Nearby File Transfer</string>
+    <string name="app_version">0.1.0-alpha</string>
+
+    <!-- Navigation -->
+    <string name="nav_receive">Receive</string>
+    <string name="nav_send">Send</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Receive tab -->
+    <string name="receive_ready">Ready to receive</string>
+    <string name="receive_visibility_toggle">Visible to nearby devices</string>
+    <string name="receive_visibility_hint">Hidden by default for privacy</string>
+    <string name="receive_auto_accept_label">Auto-accept</string>
+    <string name="receive_auto_accept_off">Off</string>
+    <string name="receive_auto_accept_paired">Paired only</string>
+    <string name="receive_auto_accept_everyone">Everyone</string>
+    <string name="receive_auto_accept_paired_phase8">Phase 8</string>
+    <string name="receive_auto_accept_everyone_warning">Anyone on the same network will be able to send you files without your approval. Are you sure?</string>
+    <string name="receive_save_to">Save to</string>
+    <string name="receive_change_folder">Change folder</string>
+    <string name="receive_active_transfers">Active transfers</string>
+    <string name="receive_no_active">No active transfers</string>
+    <string name="receive_tap_to_rename">Tap to rename</string>
+    <string name="receive_rename_title">Rename device</string>
+    <string name="receive_rename_hint">Device name</string>
+
+    <!-- Send tab -->
+    <string name="send_file">File</string>
+    <string name="send_media">Media</string>
+    <string name="send_text">Text</string>
+    <string name="send_folder">Folder</string>
+    <string name="send_nearby_devices">Nearby devices</string>
+    <string name="send_refresh">Refresh</string>
+    <string name="send_manual_connect">Manual connect</string>
+    <string name="send_no_devices">No devices found</string>
+    <string name="send_no_devices_hint">Make sure both devices are on the same network</string>
+    <string name="send_troubleshoot">Troubleshoot</string>
+    <string name="send_troubleshoot_title">Connection troubleshooting</string>
+    <string name="send_check_network">Both devices are on the same Wi-Fi network</string>
+    <string name="send_check_receiver">The receiving device has NXFR running</string>
+    <string name="send_check_visible">The receiving device is set to \"Visible\"</string>
+    <string name="send_check_firewall">Port 17394 is not blocked by a firewall</string>
+    <string name="send_manual_title">Connect manually</string>
+    <string name="send_manual_hint">IP address:port (e.g. 192.168.1.5:17394)</string>
+    <string name="send_connect">Connect</string>
+    <string name="send_direct_badge">direct</string>
+    <string name="send_paired_badge">paired</string>
+    <string name="send_hotspot_banner">On a hotspot? Devices are found by direct probe — or add one manually.</string>
+    <string name="send_hotspot_dismiss">Dismiss</string>
+    <string name="send_scanning">Scanning…</string>
+    <string name="send_probing">Probing subnet…</string>
+
+    <!-- Transfer -->
+    <string name="transfer_sending">Sending</string>
+    <string name="transfer_receiving">Receiving</string>
+    <string name="transfer_progress">%1$d%%</string>
+    <string name="transfer_speed">%1$s/s</string>
+    <string name="transfer_eta">%1$s remaining</string>
     <string name="transfer_complete">Transfer complete</string>
+    <string name="transfer_failed">Transfer failed</string>
+    <string name="transfer_cancel">Cancel</string>
+    <string name="transfer_cancel_confirm">Cancel this transfer?</string>
+    <string name="transfer_of_files">%1$d of %2$d files</string>
+
+    <!-- Consent dialog -->
+    <string name="consent_title">Incoming transfer</string>
+    <string name="consent_from">From %1$s</string>
+    <string name="consent_files">%1$d files (%2$s)</string>
+    <string name="consent_single_file">%1$s (%2$s)</string>
+    <string name="consent_accept">Accept</string>
+    <string name="consent_reject">Reject</string>
+
+    <!-- Pairing dialog -->
+    <string name="pairing_title">Verify pairing code</string>
+    <string name="pairing_instruction">Does this code match on both devices?</string>
+    <string name="pairing_confirm">Yes, it matches</string>
+    <string name="pairing_reject">No, cancel</string>
+
+    <!-- Settings -->
+    <string name="settings_general">General</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_animations">Animations</string>
+    <string name="settings_animations_hint">Enable UI animations</string>
+
+    <string name="settings_identity">Identity</string>
+    <string name="settings_device_name">Device name</string>
+    <string name="settings_device_type">Device type</string>
+    <string name="settings_device_type_phone">Phone</string>
+    <string name="settings_device_type_tablet">Tablet</string>
+    <string name="settings_device_type_laptop">Laptop</string>
+    <string name="settings_device_id">Device ID</string>
+    <string name="settings_device_id_copied">Device ID copied to clipboard</string>
+    <string name="settings_tap_to_copy">Tap to copy full ID</string>
+
+    <string name="settings_network">Network</string>
+    <string name="settings_advanced">Advanced settings</string>
+    <string name="settings_port">Port</string>
+    <string name="settings_port_default">17394</string>
+    <string name="settings_discovery_timeout">Discovery timeout</string>
+    <string name="settings_discovery_timeout_hint">Seconds</string>
+    <string name="settings_multicast">Multicast address</string>
+    <string name="settings_encryption">Encryption</string>
+    <string name="settings_encryption_always">Always on (TLS 1.3)</string>
+
+    <string name="settings_security">Security</string>
+    <string name="settings_paired_devices">Paired devices</string>
+    <string name="settings_paired_empty">Pairing storage lands in Phase 8</string>
+    <string name="settings_unpair">Unpair</string>
+    <string name="settings_auto_accept_device">Auto-accept from this device</string>
+
+    <string name="settings_other">Other</string>
+    <string name="settings_about">About NXFR</string>
+    <string name="settings_about_desc">Open-source nearby file transfer protocol</string>
+    <string name="settings_changelog">Changelog</string>
+    <string name="settings_changelog_phase7">Phase 7: FFI transfer path + APK build</string>
+    <string name="settings_privacy">Privacy Policy</string>
+    <string name="settings_privacy_desc">No cloud, no telemetry, no tracking</string>
+    <string name="settings_support">Support</string>
+    <string name="settings_support_desc">Report issues on GitHub</string>
+    <string name="settings_github_url">https://github.com/nxfr/nxfr</string>
+
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="close">Close</string>
+    <string name="error">Error</string>
+    <string name="warning">Warning</string>
+    <string name="confirm">Confirm</string>
+    <string name="share_title">Send via NXFR</string>
+
+    <!-- Content descriptions (accessibility) -->
+    <string name="cd_app_logo">NXFR logo</string>
+    <string name="cd_refresh_devices">Refresh device list</string>
+    <string name="cd_manual_connect">Connect to device manually</string>
+    <string name="cd_close_sheet">Close</string>
+    <string name="cd_cancel_transfer">Cancel transfer</string>
+    <string name="cd_change_save_folder">Change save folder</string>
+    <string name="cd_copy_device_id">Copy device ID to clipboard</string>
+    <string name="cd_device_platform_android">Android device</string>
+    <string name="cd_device_platform_linux">Linux device</string>
+    <string name="cd_device_platform_windows">Windows device</string>
+    <string name="cd_device_paired">Paired device</string>
+    <string name="cd_device_direct">Directly connected device</string>
+    <string name="cd_encryption_lock">Encryption enabled</string>
+    <string name="cd_dismiss_banner">Dismiss banner</string>
+    <string name="cd_add_device">Add device</string>
+
+    <!-- Missing strings for subagent screens -->
+    <!-- ReceiveScreen -->
+    <string name="receive_auto_accept_title">Auto-accept</string>
+    <string name="receive_cancel">Cancel</string>
+    <string name="receive_confirm">Confirm</string>
+    <string name="receive_default_folder">Downloads/NXFR</string>
+    <string name="receive_device_name_label">Device name</string>
+    <string name="receive_folder_icon">Folder</string>
+    <string name="receive_rename_device">Rename device</string>
+    <string name="receive_save">Save</string>
+    <string name="receive_warning">Warning</string>
+
+    <!-- SendScreen -->
+    <string name="send_troubleshoot_step_1">Both devices are on the same Wi-Fi network</string>
+    <string name="send_troubleshoot_step_2">The receiving device has NXFR running</string>
+    <string name="send_troubleshoot_step_3">The receiving device is set to \"Visible\"</string>
+    <string name="send_troubleshoot_step_4">Port 17394 is not blocked by a firewall</string>
+
+    <!-- SettingsScreen -->
+    <string name="settings_copy">Copy</string>
+    <string name="settings_edit">Edit</string>
+    <string name="settings_encryption_enabled">Always on (TLS 1.3)</string>
+    <string name="settings_multicast_address">Multicast address</string>
+    <string name="settings_privacy_policy">Privacy Policy</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_section_identity">Identity</string>
+    <string name="settings_section_network">Network</string>
+    <string name="settings_section_other">Other</string>
+    <string name="settings_section_security">Security</string>
+    <string name="settings_support_github">Support &amp; GitHub</string>
 </resources>

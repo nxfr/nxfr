@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- NXFR launcher foreground: stylized transfer arrows -->
+<!-- NXFR adaptive icon foreground: stylized "N" mark -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Arrow pointing right (send) -->
+    <!-- N mark: left vertical stroke -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M38,42 L58,54 L38,66 Z" />
-    <!-- Arrow pointing left (receive) -->
+        android:fillColor="#00E5FF"
+        android:pathData="M34,32 L42,32 L42,76 L34,76 Z" />
+    <!-- N mark: diagonal stroke -->
     <path
-        android:fillColor="#FFFFFF"
-        android:alpha="0.6"
-        android:pathData="M70,42 L50,54 L70,66 Z" />
+        android:fillColor="#00E5FF"
+        android:pathData="M42,32 L74,76 L66,76 L34,32 Z" />
+    <!-- N mark: right vertical stroke -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M66,32 L74,32 L74,76 L66,76 Z" />
 </vector>

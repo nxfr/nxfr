@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0E7490</color>
+    <!-- Brand -->
+    <color name="electric_cyan">#FF00E5FF</color>
+    <color name="deep_slate">#FF0F172A</color>
+    <color name="accessible_cyan">#FF0891B2</color>
+    <color name="surface_light">#FFF5F7FA</color>
+
+    <!-- Adaptive icon -->
+    <color name="ic_launcher_background">#FF0F172A</color>
+
+    <!-- Splash screen -->
+    <color name="splash_background">#FF0F172A</color>
 </resources>
