@@ -16,6 +16,8 @@
 //! - Null pointer arguments return a JSON error string, never crash.
 //! - No panic ever crosses the FFI boundary.
 
+mod jni_bindings;
+
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::net::SocketAddr;
