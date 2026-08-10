@@ -1071,15 +1071,18 @@ name = "nxfr-ffi"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "log",
  "nxfr-common",
  "nxfr-core",
  "nxfr-crypto",
  "nxfr-transport",
  "ring",
+ "rustls-pki-types",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "zeroize",
 ]
 

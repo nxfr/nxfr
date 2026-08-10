@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NXFR launcher foreground: stylized transfer arrows -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Arrow pointing right (send) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,42 L58,54 L38,66 Z" />
+    <!-- Arrow pointing left (receive) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:alpha="0.6"
+        android:pathData="M70,42 L50,54 L70,66 Z" />
+</vector>

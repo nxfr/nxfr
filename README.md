@@ -110,7 +110,21 @@ The project is structured as a Cargo workspace containing the following crates:
 - `nxfr-discovery`: mDNS-based device discovery and advertising.
 - `nxfr-daemon`: The background service running on Linux.
 - `nxfr-cli`: The command-line interface for user interaction.
+- `nxfr-ffi`: C-ABI FFI bindings for JNI/Android (and future iOS/desktop use).
 - `nxfr-loopback`: Utilities for testing the protocol in a loopback environment.
+
+### Android Client (Alpha)
+
+The Android app lives in `apps/android/` and is powered by `nxfr-ffi`. All
+protocol logic (TLS, CBOR framing, chunking, SHA-256 verification) runs in Rust
+via JNI — Kotlin is a thin UI/service wrapper. Current capabilities:
+
+- TLS 1.3 mTLS connect/accept with HELLO exchange
+- File sending with chunked streaming (1 MiB chunks, 8 in-flight window)
+- File receiving with per-chunk SHA-256 verification
+- SAS pairing (simplified, no TLS exporter yet)
+
+Build: `cargo ndk -t aarch64-linux-android --platform 24 -o apps/android/app/src/main/jniLibs -- build --release -p nxfr-ffi`
 
 ## Documentation
 
