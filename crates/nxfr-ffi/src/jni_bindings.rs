@@ -241,16 +241,122 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     result.unwrap_or(std::ptr::null_mut())
 }
 
-/// `external fun nxfr_pair_confirm(handle: Long, accepted: Boolean): String`
+/// `external fun nxfr_pair_confirm(handle: Long, accepted: Boolean, storeDir: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1pair_1confirm(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     accepted: jboolean,
+    store_dir: JString,
 ) -> jstring {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let ptr = super::nxfr_pair_confirm(handle as u64, accepted != 0);
+        let dir_str = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let ptr = super::nxfr_pair_confirm(handle as u64, accepted != 0, c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_paired_list(storeDir: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1paired_1list(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir_str = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let ptr = super::nxfr_paired_list(c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_unpair(storeDir: String, deviceId: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1unpair(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+    device_id: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir_str = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let did_str = match jstring_to_string(&mut env, &device_id) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let c_did = std::ffi::CString::new(did_str).unwrap_or_default();
+        let ptr = super::nxfr_unpair(c_dir.as_ptr(), c_did.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_set_auto_accept(storeDir: String, deviceId: String, policy: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1set_1auto_1accept(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+    device_id: JString,
+    policy: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir_str = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let did_str = match jstring_to_string(&mut env, &device_id) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let pol_str = match jstring_to_string(&mut env, &policy) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let c_did = std::ffi::CString::new(did_str).unwrap_or_default();
+        let c_pol = std::ffi::CString::new(pol_str).unwrap_or_default();
+        let ptr = super::nxfr_set_auto_accept(c_dir.as_ptr(), c_did.as_ptr(), c_pol.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_set_name(storeDir: String, name: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1set_1name(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+    name: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir_str = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let name_str = match jstring_to_string(&mut env, &name) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let c_name = std::ffi::CString::new(name_str).unwrap_or_default();
+        let ptr = super::nxfr_set_name(c_dir.as_ptr(), c_name.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
     result.unwrap_or(std::ptr::null_mut())

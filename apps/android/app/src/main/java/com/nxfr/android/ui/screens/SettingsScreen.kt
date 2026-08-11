@@ -19,9 +19,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nxfr.android.R
 import com.nxfr.android.service.NxfrService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +43,65 @@ fun SettingsScreen(
     var animationsEnabled by remember { mutableStateOf(true) }
     
     val context = LocalContext.current
+    val storeDir = context.filesDir.absolutePath
+    val coroutineScope = rememberCoroutineScope()
+    
+    var pairedDevices by remember { mutableStateOf<List<PairedDevice>>(emptyList()) }
+    var deviceToUnpair by remember { mutableStateOf<PairedDevice?>(null) }
+    
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val jsonStr = NxfrService.NxfrBridge.nxfr_paired_list(storeDir)
+                val json = JSONObject(jsonStr)
+                if (json.has("devices")) {
+                    val devicesArray = json.getJSONArray("devices")
+                    val list = mutableListOf<PairedDevice>()
+                    for (i in 0 until devicesArray.length()) {
+                        val devObj = devicesArray.getJSONObject(i)
+                        list.add(
+                            PairedDevice(
+                                deviceId = devObj.getString("device_id"),
+                                name = devObj.getString("name"),
+                                autoAccept = devObj.optString("auto_accept") == "always"
+                            )
+                        )
+                    }
+                    pairedDevices = list
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    deviceToUnpair?.let { device ->
+        AlertDialog(
+            onDismissRequest = { deviceToUnpair = null },
+            title = { Text(stringResource(R.string.settings_unpair)) },
+            text = { Text(stringResource(R.string.settings_unpair_confirm, device.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        NxfrService.NxfrBridge.nxfr_unpair(storeDir, device.deviceId)
+                        val updatedList = pairedDevices.filter { it.deviceId != device.deviceId }
+                        withContext(Dispatchers.Main) {
+                            pairedDevices = updatedList
+                            Toast.makeText(context, context.getString(R.string.settings_unpaired), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    deviceToUnpair = null
+                }) {
+                    Text(stringResource(R.string.settings_unpair))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deviceToUnpair = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -90,6 +154,9 @@ fun SettingsScreen(
                         IconButton(onClick = {
                             isEditingName = false
                             onDeviceNameChanged(editNameValue)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                NxfrService.NxfrBridge.nxfr_set_name(storeDir, editNameValue)
+                            }
                         }) {
                             Icon(Icons.Default.Check, contentDescription = stringResource(R.string.settings_save))
                         }
@@ -146,6 +213,53 @@ fun SettingsScreen(
             }
         }
 
+        // Paired Devices Section
+        SettingsCard(title = stringResource(R.string.settings_paired_devices)) {
+            if (pairedDevices.isEmpty()) {
+                Text(stringResource(R.string.settings_no_paired_devices), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                pairedDevices.forEach { device ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${device.name} #${device.deviceId.take(4)}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(if (device.autoAccept) R.string.settings_pair_auto_accept_on else R.string.settings_pair_auto_accept_off),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = device.autoAccept,
+                            onCheckedChange = { checked ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    val policy = if (checked) "always" else "prompt"
+                                    NxfrService.NxfrBridge.nxfr_set_auto_accept(storeDir, device.deviceId, policy)
+                                    val updatedList = pairedDevices.map { 
+                                        if (it.deviceId == device.deviceId) it.copy(autoAccept = checked) else it 
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        pairedDevices = updatedList
+                                    }
+                                }
+                            }
+                        )
+                        IconButton(onClick = { deviceToUnpair = device }) {
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.settings_unpair))
+                        }
+                    }
+                }
+            }
+        }
+
         // Advanced Settings Toggle
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -196,11 +310,6 @@ fun SettingsScreen(
             }
         }
 
-        // Security Section
-        SettingsCard(title = stringResource(R.string.settings_section_security)) {
-            Text(stringResource(R.string.settings_paired_empty), style = MaterialTheme.typography.bodyMedium)
-        }
-
         // Other Section
         SettingsCard(title = stringResource(R.string.settings_section_other)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -241,6 +350,8 @@ fun SettingsScreen(
         }
     }
 }
+
+data class PairedDevice(val deviceId: String, val name: String, val autoAccept: Boolean)
 
 @Composable
 fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {

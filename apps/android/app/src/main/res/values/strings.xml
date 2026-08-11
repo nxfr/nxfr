@@ -193,4 +193,10 @@
     <string name="notification_running">NXFR is running</string>
     <string name="settings_clipboard_label">Device ID</string>
     <string name="settings_discovery_timeout_default">5000</string>
+    <string name="settings_no_paired_devices">No paired devices</string>
+    <string name="settings_auto_accept">Auto-accept transfers</string>
+    <string name="settings_unpair_confirm">Unpair %s?</string>
+    <string name="settings_unpaired">Device unpaired</string>
+    <string name="settings_pair_auto_accept_on">Auto-accept: ON</string>
+    <string name="settings_pair_auto_accept_off">Auto-accept: OFF</string>
 </resources>

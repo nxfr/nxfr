@@ -95,7 +95,11 @@ class NxfrService : Service() {
 
         // ── Pairing ────────────────────────────────────────
         external fun nxfr_pair_begin(handle: Long): String
-        external fun nxfr_pair_confirm(handle: Long, accepted: Boolean): String
+        external fun nxfr_pair_confirm(handle: Long, accepted: Boolean, storeDir: String): String
+        external fun nxfr_paired_list(storeDir: String): String
+        external fun nxfr_unpair(storeDir: String, deviceId: String): String
+        external fun nxfr_set_auto_accept(storeDir: String, deviceId: String, policy: String): String
+        external fun nxfr_set_name(storeDir: String, name: String): String
 
         // ── Utilities ──────────────────────────────────────
         external fun nxfr_sanitize_path(path: String): String

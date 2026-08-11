@@ -1227,18 +1227,27 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
     })
 }
 
-/// Confirm or reject a SAS pairing.
+/// Confirm or reject a SAS pairing. On accept, persist to paired.db.
 #[no_mangle]
-pub extern "C" fn nxfr_pair_confirm(handle: u64, accepted: bool) -> *mut c_char {
+pub extern "C" fn nxfr_pair_confirm(
+    handle: u64,
+    accepted: bool,
+    store_dir: *const c_char,
+) -> *mut c_char {
     ffi_guard(|| {
         let rt = get_runtime();
-        let (conn_arc, session_id) = {
+        let (conn_arc, session_id, peer_device_id, peer_name) = {
             let guard = sessions_map().lock().unwrap();
             let session = match guard.get(&handle) {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
             };
-            (session.conn.clone(), session.session_id)
+            (
+                session.conn.clone(),
+                session.session_id,
+                session.peer_device_id,
+                session.peer_name.clone(),
+            )
         };
 
         match rt.block_on(async {
@@ -1254,11 +1263,168 @@ pub extern "C" fn nxfr_pair_confirm(handle: u64, accepted: bool) -> *mut c_char 
                 .map_err(|e| format!("send: {e}"))?;
             Ok::<_, String>(())
         }) {
-            Ok(()) => json_ok(serde_json::json!({
-                "handle": handle,
-                "status": if accepted { "pair_confirmed" } else { "pair_rejected" },
-            })),
+            Ok(()) => {
+                // On accept: persist to paired.db.
+                if accepted {
+                    if let Ok(dir) = cstr_to_str(store_dir) {
+                        let db_path = std::path::Path::new(dir).join("paired.db");
+                        if let Ok(db) = nxfr_storage::db::PairedDeviceDb::open(&db_path) {
+                            let now = chrono::Utc::now().timestamp();
+                            let device = nxfr_storage::db::PairedDevice {
+                                device_id: hex::encode(peer_device_id),
+                                name: peer_name.clone(),
+                                public_key_spki: vec![], // SPKI extracted at connect time; placeholder for now
+                                first_seen: now,
+                                last_seen: now,
+                                trust_level: "paired".to_string(),
+                                auto_accept: "prompt".to_string(),
+                            };
+                            if let Err(e) = db.insert_or_update(&device) {
+                                log::warn!("Failed to persist pair: {e}");
+                            }
+                        }
+                    }
+                }
+                json_ok(serde_json::json!({
+                    "handle": handle,
+                    "status": if accepted { "pair_confirmed" } else { "pair_rejected" },
+                }))
+            }
             Err(e) => json_err(&e),
+        }
+    })
+}
+
+// ─── Paired Device Management ───────────────────────────────────────────
+
+/// List all paired devices. Returns JSON array.
+#[no_mangle]
+pub extern "C" fn nxfr_paired_list(store_dir: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let db_path = std::path::Path::new(dir).join("paired.db");
+        let db = match nxfr_storage::db::PairedDeviceDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open paired.db: {e}")),
+        };
+        let devices = match db.list_all() {
+            Ok(d) => d,
+            Err(e) => return json_err(&format!("list_all: {e}")),
+        };
+        let arr: Vec<serde_json::Value> = devices
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "device_id": d.device_id,
+                    "name": d.name,
+                    "first_seen": d.first_seen,
+                    "last_seen": d.last_seen,
+                    "trust_level": d.trust_level,
+                    "auto_accept": d.auto_accept,
+                })
+            })
+            .collect();
+        json_ok(serde_json::json!({ "devices": arr }))
+    })
+}
+
+/// Remove a paired device.
+#[no_mangle]
+pub extern "C" fn nxfr_unpair(store_dir: *const c_char, device_id: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let did = match cstr_to_str(device_id) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let db_path = std::path::Path::new(dir).join("paired.db");
+        let db = match nxfr_storage::db::PairedDeviceDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open paired.db: {e}")),
+        };
+        match db.remove(did) {
+            Ok(()) => json_ok(serde_json::json!({ "status": "unpaired", "device_id": did })),
+            Err(e) => json_err(&format!("unpair: {e}")),
+        }
+    })
+}
+
+/// Set auto-accept policy for a paired device ("prompt" or "always").
+#[no_mangle]
+pub extern "C" fn nxfr_set_auto_accept(
+    store_dir: *const c_char,
+    device_id: *const c_char,
+    policy: *const c_char,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let did = match cstr_to_str(device_id) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let pol = match cstr_to_str(policy) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        if pol != "prompt" && pol != "always" {
+            return json_err("policy must be 'prompt' or 'always'");
+        }
+        let db_path = std::path::Path::new(dir).join("paired.db");
+        let db = match nxfr_storage::db::PairedDeviceDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open paired.db: {e}")),
+        };
+        let mut device = match db.lookup(did) {
+            Ok(Some(d)) => d,
+            Ok(None) => return json_err("device not paired"),
+            Err(e) => return json_err(&format!("lookup: {e}")),
+        };
+        device.auto_accept = pol.to_string();
+        match db.insert_or_update(&device) {
+            Ok(()) => json_ok(serde_json::json!({
+                "status": "updated",
+                "device_id": did,
+                "auto_accept": pol,
+            })),
+            Err(e) => json_err(&format!("update: {e}")),
+        }
+    })
+}
+
+/// Set the local device's display name (persisted in config.toml).
+#[no_mangle]
+pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let new_name = match cstr_to_str(name) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        if new_name.is_empty() || new_name.len() > 64 {
+            return json_err("name must be 1-64 characters");
+        }
+        let config_path = std::path::Path::new(dir).join("config.toml");
+        let mut config =
+            nxfr_storage::config::NxfrConfig::load_from(&config_path).unwrap_or_default();
+        config.device_name = new_name.to_string();
+        match config.save_to(&config_path) {
+            Ok(()) => json_ok(serde_json::json!({
+                "status": "name_updated",
+                "name": new_name,
+            })),
+            Err(e) => json_err(&format!("save config: {e}")),
         }
     })
 }
@@ -1850,5 +2016,145 @@ mod tests {
         // mDNS multicast address per RFC 6762.
         let mdns_addr: std::net::Ipv4Addr = "224.0.0.251".parse().unwrap();
         assert_eq!(mdns_addr, std::net::Ipv4Addr::new(224, 0, 0, 251));
+    }
+    // ── Pairing storage tests (Phase 8) ──
+
+    #[test]
+    fn test_paired_list_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let r = parse_ffi_json(nxfr_paired_list(dir.as_ptr()));
+        assert!(
+            r.get("error").is_none(),
+            "paired_list should succeed on empty db"
+        );
+        let devices = r["devices"].as_array().unwrap();
+        assert!(devices.is_empty(), "should be empty initially");
+    }
+
+    #[test]
+    fn test_unpair_nonexistent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let did = CString::new("deadbeef").unwrap();
+        // unpair of non-existent device should succeed silently (remove is idempotent)
+        let r = parse_ffi_json(nxfr_unpair(dir.as_ptr(), did.as_ptr()));
+        assert!(
+            r.get("error").is_none(),
+            "unpair non-existent should not error"
+        );
+    }
+
+    #[test]
+    fn test_set_auto_accept_not_paired() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let did = CString::new("deadbeef").unwrap();
+        let pol = CString::new("always").unwrap();
+        let r = parse_ffi_json(nxfr_set_auto_accept(
+            dir.as_ptr(),
+            did.as_ptr(),
+            pol.as_ptr(),
+        ));
+        assert!(r.get("error").is_some(), "should error: device not paired");
+    }
+
+    #[test]
+    fn test_set_auto_accept_invalid_policy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let did = CString::new("deadbeef").unwrap();
+        let pol = CString::new("invalid").unwrap();
+        let r = parse_ffi_json(nxfr_set_auto_accept(
+            dir.as_ptr(),
+            did.as_ptr(),
+            pol.as_ptr(),
+        ));
+        assert!(r.get("error").is_some(), "should error: invalid policy");
+    }
+
+    #[test]
+    fn test_set_name_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let name = CString::new("My Phone").unwrap();
+        let r = parse_ffi_json(nxfr_set_name(dir.as_ptr(), name.as_ptr()));
+        assert!(r.get("error").is_none(), "set_name should succeed");
+        assert_eq!(r["name"].as_str().unwrap(), "My Phone");
+
+        // Verify config.toml was written.
+        let config_path = tmp.path().join("config.toml");
+        assert!(config_path.exists(), "config.toml should be created");
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("My Phone"),
+            "config should contain the name"
+        );
+    }
+
+    #[test]
+    fn test_set_name_empty_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+        let name = CString::new("").unwrap();
+        let r = parse_ffi_json(nxfr_set_name(dir.as_ptr(), name.as_ptr()));
+        assert!(r.get("error").is_some(), "empty name should be rejected");
+    }
+
+    #[test]
+    fn test_pair_storage_roundtrip() {
+        // Manually insert a pair via storage, then test list, auto_accept, unpair via FFI.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = CString::new(tmp.path().to_str().unwrap()).unwrap();
+
+        // Insert a fake paired device directly via storage.
+        let db_path = tmp.path().join("paired.db");
+        let db = nxfr_storage::db::PairedDeviceDb::open(&db_path).unwrap();
+        db.insert_or_update(&nxfr_storage::db::PairedDevice {
+            device_id: "aabbccdd".to_string(),
+            name: "Test Device".to_string(),
+            public_key_spki: vec![1, 2, 3],
+            first_seen: 1000,
+            last_seen: 2000,
+            trust_level: "paired".to_string(),
+            auto_accept: "prompt".to_string(),
+        })
+        .unwrap();
+        drop(db);
+
+        // List should return 1 device.
+        let r = parse_ffi_json(nxfr_paired_list(dir.as_ptr()));
+        assert!(r.get("error").is_none());
+        let devices = r["devices"].as_array().unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0]["device_id"].as_str().unwrap(), "aabbccdd");
+        assert_eq!(devices[0]["name"].as_str().unwrap(), "Test Device");
+        assert_eq!(devices[0]["auto_accept"].as_str().unwrap(), "prompt");
+
+        // Set auto-accept to "always".
+        let did = CString::new("aabbccdd").unwrap();
+        let pol = CString::new("always").unwrap();
+        let r = parse_ffi_json(nxfr_set_auto_accept(
+            dir.as_ptr(),
+            did.as_ptr(),
+            pol.as_ptr(),
+        ));
+        assert!(r.get("error").is_none());
+        assert_eq!(r["auto_accept"].as_str().unwrap(), "always");
+
+        // Verify via list.
+        let r = parse_ffi_json(nxfr_paired_list(dir.as_ptr()));
+        let devices = r["devices"].as_array().unwrap();
+        assert_eq!(devices[0]["auto_accept"].as_str().unwrap(), "always");
+
+        // Unpair.
+        let r = parse_ffi_json(nxfr_unpair(dir.as_ptr(), did.as_ptr()));
+        assert!(r.get("error").is_none());
+        assert_eq!(r["status"].as_str().unwrap(), "unpaired");
+
+        // List should now be empty.
+        let r = parse_ffi_json(nxfr_paired_list(dir.as_ptr()));
+        let devices = r["devices"].as_array().unwrap();
+        assert!(devices.is_empty(), "should be empty after unpair");
     }
 }
