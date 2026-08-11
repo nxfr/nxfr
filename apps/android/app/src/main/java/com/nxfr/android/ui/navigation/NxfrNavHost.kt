@@ -12,7 +12,10 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -84,7 +87,27 @@ fun NxfrNavHost(
                 )
             }
             composable(NxfrScreen.Send.route) {
-                SendScreen()
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val discovery = remember { com.nxfr.android.discovery.HotspotAwareDiscovery(context) }
+                val discoveredDevices by discovery.devices.collectAsState()
+                val isScanning by discovery.isScanning.collectAsState()
+                val isProbing by discovery.isProbing.collectAsState()
+                val showHotspot by discovery.showHotspotBanner.collectAsState()
+
+                DisposableEffect(Unit) {
+                    val storeDir = context.filesDir.absolutePath
+                    discovery.startDiscovery(storeDir, deviceId, deviceName)
+                    onDispose { discovery.stopDiscovery() }
+                }
+
+                SendScreen(
+                    devices = discoveredDevices,
+                    isScanning = isScanning,
+                    isProbing = isProbing,
+                    showHotspotBanner = showHotspot,
+                    onRefresh = { discovery.refreshProbe() },
+                    onDismissBanner = { discovery.dismissBanner() },
+                )
             }
             composable(NxfrScreen.Settings.route) {
                 SettingsScreen(

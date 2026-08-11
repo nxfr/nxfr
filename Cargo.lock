@@ -1130,12 +1130,14 @@ dependencies = [
 name = "nxfr-ffi"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "hex",
  "jni",
  "log",
  "nxfr-common",
  "nxfr-core",
  "nxfr-crypto",
+ "nxfr-storage",
  "nxfr-transport",
  "ring",
  "rustls-pki-types",

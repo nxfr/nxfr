@@ -328,72 +328,80 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
         let rt = get_runtime();
         let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32), String> = rt
             .block_on(async {
-                // Build TLS client config.
-                let client_config = nxfr_transport::tls::build_client_config(
-                    identity.private_key(),
-                    identity.certificate(),
-                )
-                .map_err(|e| format!("TLS config: {e}"))?;
+                match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    // Build TLS client config.
+                    let client_config = nxfr_transport::tls::build_client_config(
+                        identity.private_key(),
+                        identity.certificate(),
+                    )
+                    .map_err(|e| format!("TLS config: {e}"))?;
 
-                // TCP connect.
-                let tcp = TcpStream::connect(addr_str)
-                    .await
-                    .map_err(|e| format!("TCP connect to {addr_str}: {e}"))?;
+                    // TCP connect.
+                    let tcp = TcpStream::connect(addr_str)
+                        .await
+                        .map_err(|e| format!("TCP connect to {addr_str}: {e}"))?;
 
-                // TLS handshake.
-                let connector = TlsConnector::from(Arc::new(client_config));
-                let server_name = rustls_pki_types::ServerName::try_from("nxfr-node")
-                    .map_err(|e| format!("ServerName: {e}"))?
-                    .to_owned();
-                let tls = connector
-                    .connect(server_name, tcp)
-                    .await
-                    .map_err(|e| format!("TLS handshake: {e}"))?;
+                    // TLS handshake.
+                    let connector = TlsConnector::from(Arc::new(client_config));
+                    let server_name = rustls_pki_types::ServerName::try_from("nxfr-node")
+                        .map_err(|e| format!("ServerName: {e}"))?
+                        .to_owned();
+                    let tls = connector
+                        .connect(server_name, tcp)
+                        .await
+                        .map_err(|e| format!("TLS handshake: {e}"))?;
 
-                // Extract peer device_id from certificate.
-                let (_, client_conn) = tls.get_ref();
-                let peer_certs = client_conn
-                    .peer_certificates()
-                    .ok_or("no peer certificates")?;
-                let peer_cert = peer_certs.first().ok_or("empty peer cert chain")?;
-                let peer_device_id = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
-                    .map_err(|e| format!("peer device_id: {e}"))?;
+                    // Extract peer device_id from certificate.
+                    let (_, client_conn) = tls.get_ref();
+                    let peer_certs = client_conn
+                        .peer_certificates()
+                        .ok_or("no peer certificates")?;
+                    let peer_cert = peer_certs.first().ok_or("empty peer cert chain")?;
+                    let peer_device_id = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
+                        .map_err(|e| format!("peer device_id: {e}"))?;
 
-                // Wrap in NxfrConnection.
-                let mut conn = NxfrConnection::new(TlsStream::Client(tls));
+                    // Wrap in NxfrConnection.
+                    let mut conn = NxfrConnection::new(TlsStream::Client(tls));
 
-                // Send HELLO.
-                let hello = ControlMessage::Hello {
-                    protocol_version: ProtocolVersion::V0_1,
-                    device_id: DeviceId::from_bytes(identity.device_id),
-                    device_name: "NXFR-Android".to_string(),
-                    platform: Platform::Android,
-                    capabilities: vec![],
-                    is_paired: false,
-                };
-                conn.send_control(0, 0, &hello)
-                    .await
-                    .map_err(|e| format!("send HELLO: {e}"))?;
+                    // Send HELLO.
+                    let hello = ControlMessage::Hello {
+                        protocol_version: ProtocolVersion::V0_1,
+                        device_id: DeviceId::from_bytes(identity.device_id),
+                        device_name: "NXFR-Android".to_string(),
+                        platform: Platform::Android,
+                        capabilities: vec![],
+                        is_paired: false,
+                    };
+                    conn.send_control(0, 0, &hello)
+                        .await
+                        .map_err(|e| format!("send HELLO: {e}"))?;
 
-                // Receive HELLO_ACK.
-                let (hdr, payload) = conn
-                    .recv_frame()
-                    .await
-                    .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
-                if hdr.kind != FrameKind::Control {
-                    return Err("expected CONTROL frame for HELLO_ACK".into());
+                    // Receive HELLO_ACK.
+                    let (hdr, payload) = conn
+                        .recv_frame()
+                        .await
+                        .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
+                    if hdr.kind != FrameKind::Control {
+                        return Err("expected CONTROL frame for HELLO_ACK".into());
+                    }
+                    let msg =
+                        codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
+                    let (peer_name, session_id) = match msg {
+                        ControlMessage::HelloAck {
+                            device_name,
+                            session_id,
+                            ..
+                        } => (device_name, session_id),
+                        _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
+                    };
+
+                    Ok((conn, peer_device_id, peer_name, session_id))
+                })
+                .await
+                {
+                    Ok(inner) => inner,
+                    Err(_elapsed) => Err("connect timeout (5s)".to_string()),
                 }
-                let msg = codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
-                let (peer_name, session_id) = match msg {
-                    ControlMessage::HelloAck {
-                        device_name,
-                        session_id,
-                        ..
-                    } => (device_name, session_id),
-                    _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
-                };
-
-                Ok((conn, peer_device_id, peer_name, session_id))
             });
 
         let (conn, peer_device_id, peer_name, session_id) = match result {

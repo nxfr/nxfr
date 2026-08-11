@@ -188,14 +188,30 @@ class NxfrService : Service() {
     /** Accept loop: listen → accept → pump for offers. */
     private suspend fun startListening() {
         val storeDir = identityDir()
-        // Identity already loaded in onCreate.
 
-        val listenJson = withContext(Dispatchers.IO) {
-            NxfrBridge.nxfr_listen(17394, storeDir)
+        var listenJson = withContext(Dispatchers.IO) {
+            NxfrBridge.nxfr_listen(DEFAULT_PORT, storeDir)
         }
-        val listenResult = JSONObject(listenJson)
+        var listenResult = JSONObject(listenJson)
+
+        // EADDRINUSE retry: close stale listener, try once more.
+        if (listenResult.has("error") && listenResult.getString("error").contains("bind", ignoreCase = true)) {
+            Log.w(TAG, "Bind failed (EADDRINUSE?), closing stale listener and retrying")
+            if (listenerHandle != 0L) {
+                try { withContext(Dispatchers.IO) { NxfrBridge.nxfr_close(listenerHandle) } } catch (_: Throwable) {}
+                listenerHandle = 0
+            }
+            delay(500)
+            listenJson = withContext(Dispatchers.IO) {
+                NxfrBridge.nxfr_listen(DEFAULT_PORT, storeDir)
+            }
+            listenResult = JSONObject(listenJson)
+        }
+
         if (listenResult.has("error")) {
-            _nxfrState.value = NxfrState.Error(listenResult.getString("error"))
+            val msg = listenResult.getString("error")
+            Log.e(TAG, "Listen failed: $msg")
+            _nxfrState.value = NxfrState.Error(msg)
             return
         }
         listenerHandle = listenResult.getLong("listener")
@@ -223,25 +239,30 @@ class NxfrService : Service() {
 
     /** Connect to a remote device without sending a file yet. */
     private suspend fun doManualConnect(addr: String) {
-        val storeDir = identityDir()
-        // Identity already loaded in onCreate.
-        Log.i(TAG, "Manual connect to $addr")
+        try {
+            val storeDir = identityDir()
+            Log.i(TAG, "Manual connect to $addr")
 
-        val connJson = withContext(Dispatchers.IO) {
-            NxfrBridge.nxfr_connect(addr, storeDir)
-        }
-        val connResult = JSONObject(connJson)
-        if (connResult.has("error")) {
-            val msg = connResult.getString("error")
-            Log.e(TAG, "Manual connect failed: $msg")
+            val connJson = withContext(Dispatchers.IO) {
+                NxfrBridge.nxfr_connect(addr, storeDir)
+            }
+            val connResult = JSONObject(connJson)
+            if (connResult.has("error")) {
+                val msg = connResult.getString("error")
+                Log.e(TAG, "Manual connect failed: $msg")
+                _nxfrState.value = NxfrState.Error(msg)
+                return
+            }
+            val handle = connResult.getLong("handle")
+            val peerName = connResult.optString("peer_name", addr)
+            activeSessionHandle = handle
+            Log.i(TAG, "Manual connected to $addr, peer=$peerName, handle=$handle")
+            _nxfrState.value = NxfrState.ManualConnected(addr, peerName, handle)
+        } catch (e: Throwable) {
+            val msg = e.message ?: "Unknown connect error"
+            Log.e(TAG, "Manual connect exception: $msg", e)
             _nxfrState.value = NxfrState.Error(msg)
-            return
         }
-        val handle = connResult.getLong("handle")
-        val peerName = connResult.optString("peer_name", addr)
-        activeSessionHandle = handle
-        Log.i(TAG, "Manual connected to $addr, peer=$peerName, handle=$handle")
-        _nxfrState.value = NxfrState.ManualConnected(addr, peerName, handle)
     }
 
     /** Send a file to a remote device. */

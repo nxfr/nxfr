@@ -16,8 +16,9 @@ import java.net.NetworkInterface
 import java.net.Socket
 
 /**
- * 3-tier "discovery ladder" for hotspot-resilient device discovery:
+ * 4-tier "discovery ladder" for hotspot-resilient device discovery:
  *
+ * Tier 0 — UDP BEACON (instant, works on hotspots, every 1s)
  * Tier 1 — NSD (mDNS/DNS-SD via NsdDiscovery)
  * Tier 2 — TCP PROBE FALLBACK (scan local /24 subnets on port 17394)
  * Tier 3 — MANUAL (handled by UI, not by this class)
@@ -32,6 +33,7 @@ class HotspotAwareDiscovery(private val context: Context) {
     }
 
     private val nsdDiscovery = NsdDiscovery(context)
+    private val beacon = UdpBeacon(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _devices = MutableStateFlow<List<DeviceUiModel>>(emptyList())
@@ -48,15 +50,27 @@ class HotspotAwareDiscovery(private val context: Context) {
 
     private var nsdJob: Job? = null
     private var probeJob: Job? = null
+    private var beaconJob: Job? = null
     private var storeDir: String = ""
 
     /**
-     * Start Tier 1 (NSD) discovery, schedule Tier 2 fallback after 3 s.
+     * Start all tiers: Tier 0 (beacon), Tier 1 (NSD), Tier 2 fallback after 3 s.
      */
-    fun startDiscovery(storeDir: String) {
+    fun startDiscovery(storeDir: String, localDeviceId: String = "", localDeviceName: String = "NXFR-Android") {
         this.storeDir = storeDir
         _isScanning.value = true
         _showHotspotBanner.value = isOnHotspot()
+
+        // Tier 0: UDP beacon (instant).
+        beacon.localDeviceId = localDeviceId
+        beacon.localDeviceName = localDeviceName
+        beacon.start()
+
+        beaconJob = scope.launch {
+            beacon.peers.collect { beaconPeers ->
+                mergeDevices(beaconPeers)
+            }
+        }
 
         // Tier 1: NSD.
         nsdDiscovery.startDiscovery()
@@ -82,7 +96,7 @@ class HotspotAwareDiscovery(private val context: Context) {
             // Tier 2 fallback: wait 3 s, if no NSD results, probe.
             delay(NSD_TIMEOUT_MS)
             if (_devices.value.isEmpty()) {
-                Log.i(TAG, "NSD found 0 peers after ${NSD_TIMEOUT_MS}ms, starting TCP probe")
+                Log.i(TAG, "No peers after ${NSD_TIMEOUT_MS}ms, starting TCP probe")
                 runProbe()
             }
             _isScanning.value = false
@@ -93,7 +107,9 @@ class HotspotAwareDiscovery(private val context: Context) {
     fun stopDiscovery() {
         nsdJob?.cancel()
         probeJob?.cancel()
+        beaconJob?.cancel()
         nsdDiscovery.stopDiscovery()
+        beacon.stop()
         _isScanning.value = false
         _isProbing.value = false
     }
@@ -180,11 +196,14 @@ class HotspotAwareDiscovery(private val context: Context) {
         }
     }
 
-    /** Merge probe-found devices with NSD devices (dedup by host). */
+    /** Merge discovered devices (dedup by device_id, fallback host:port). */
     private fun mergeDevices(newDevices: List<DeviceUiModel>) {
         val current = _devices.value.toMutableList()
         for (device in newDevices) {
-            val existing = current.indexOfFirst { it.host == device.host && it.port == device.port }
+            val existing = current.indexOfFirst { existing ->
+                (existing.deviceId.isNotEmpty() && existing.deviceId == device.deviceId) ||
+                (existing.host == device.host && existing.port == device.port)
+            }
             if (existing >= 0) {
                 current[existing] = device
             } else {
