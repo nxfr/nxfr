@@ -104,39 +104,6 @@ fun SendScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // 1. File type chip row
-            FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
-                    selected = false,
-                    onClick = { },
-                    label = { Text(stringResource(R.string.send_file)) },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, contentDescription = null) }
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = { },
-                    label = { Text(stringResource(R.string.send_media)) },
-                    leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) }
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = { },
-                    label = { Text(stringResource(R.string.send_text)) },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.TextSnippet, contentDescription = null) }
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = { },
-                    label = { Text(stringResource(R.string.send_folder)) },
-                    leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) }
-                )
-            }
-
             // 2. Hotspot banner
             if (showHotspotBanner) {
                 Card(

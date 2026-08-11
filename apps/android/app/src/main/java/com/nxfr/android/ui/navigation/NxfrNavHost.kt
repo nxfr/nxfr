@@ -94,7 +94,9 @@ fun NxfrNavHost(
                 )
             }
             composable(NxfrScreen.Transfer.route) {
-                TransferScreen()
+                TransferScreen(
+                    onCancel = { navController.popBackStack() }
+                )
             }
         }
     }

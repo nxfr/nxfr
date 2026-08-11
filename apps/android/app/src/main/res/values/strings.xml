@@ -188,4 +188,9 @@
     <string name="settings_section_other">Other</string>
     <string name="settings_section_security">Security</string>
     <string name="settings_support_github">Support &amp; GitHub</string>
+
+    <string name="notification_title">NXFR</string>
+    <string name="notification_running">NXFR is running</string>
+    <string name="settings_clipboard_label">Device ID</string>
+    <string name="settings_discovery_timeout_default">5000</string>
 </resources>

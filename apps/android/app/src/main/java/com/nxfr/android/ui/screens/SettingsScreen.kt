@@ -3,7 +3,10 @@ package com.nxfr.android.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -110,7 +113,11 @@ fun SettingsScreen(
             var deviceType by remember { mutableStateOf(0) }
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 val types = listOf(Icons.Default.Phone, Icons.Default.Tablet, Icons.Default.Laptop)
-                val labels = listOf("Phone", "Tablet", "Laptop")
+                val labels = listOf(
+                    stringResource(R.string.settings_device_type_phone),
+                    stringResource(R.string.settings_device_type_tablet),
+                    stringResource(R.string.settings_device_type_laptop)
+                )
                 types.forEachIndexed { index, icon ->
                     SegmentedButton(
                         selected = deviceType == index,
@@ -130,7 +137,7 @@ fun SettingsScreen(
                 }
                 IconButton(onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Device ID", deviceId)
+                    val clip = ClipData.newPlainText(context.getString(R.string.settings_clipboard_label), deviceId)
                     clipboard.setPrimaryClip(clip)
                     Toast.makeText(context, context.getString(R.string.settings_device_id_copied), Toast.LENGTH_SHORT).show()
                 }) {
@@ -163,7 +170,7 @@ fun SettingsScreen(
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
-                var discoveryTimeout by remember { mutableStateOf("5000") }
+                var discoveryTimeout by remember { mutableStateOf(context.getString(R.string.settings_discovery_timeout_default)) }
                 OutlinedTextField(
                     value = discoveryTimeout,
                     onValueChange = { discoveryTimeout = it },
@@ -205,11 +212,32 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            Text(stringResource(R.string.settings_changelog))
+            Text(
+                text = stringResource(R.string.settings_changelog),
+                modifier = Modifier.clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nxfr/nxfr/releases"))
+                    context.startActivity(intent)
+                },
+                color = MaterialTheme.colorScheme.primary
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.settings_privacy_policy))
+            Text(
+                text = stringResource(R.string.settings_privacy_policy),
+                modifier = Modifier.clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://nxfr.github.io/nxfr/security/privacy/"))
+                    context.startActivity(intent)
+                },
+                color = MaterialTheme.colorScheme.primary
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.settings_support_github))
+            Text(
+                text = stringResource(R.string.settings_support_github),
+                modifier = Modifier.clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nxfr/nxfr/issues"))
+                    context.startActivity(intent)
+                },
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

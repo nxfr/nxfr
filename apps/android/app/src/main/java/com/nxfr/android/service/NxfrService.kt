@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.nxfr.android.NxfrApp
+import com.nxfr.android.R
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -292,7 +293,6 @@ class NxfrService : Service() {
                         totalFiles = event.optInt("total_files"),
                         peerName = event.optString("peer_name")
                     )
-                    // Auto-accept for now (Phase 8: consent notification).
                     val confirmJson = withContext(Dispatchers.IO) {
                         NxfrBridge.nxfr_confirm(handle, true)
                     }
@@ -344,7 +344,7 @@ class NxfrService : Service() {
         get() = serviceScope.isActive
 
     private fun startForegroundWithType() {
-        val notification = buildNotification("NXFR is running")
+        val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
@@ -352,12 +352,18 @@ class NxfrService : Service() {
         }
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(): Notification {
+        val intent = Intent(this, com.nxfr.android.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
+
         return NotificationCompat.Builder(this, NxfrApp.CHANNEL_TRANSFER)
-            .setContentTitle("NXFR")
-            .setContentText(text)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_running))
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .build()
     }
 

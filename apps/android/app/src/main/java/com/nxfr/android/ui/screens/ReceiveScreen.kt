@@ -32,7 +32,7 @@ import com.nxfr.android.R
 @Composable
 fun ReceiveScreen(
     deviceName: String = "My Device",
-    deviceId: String = "abcd1234efgh5678",
+    deviceId: String = "",
     onDeviceNameChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
