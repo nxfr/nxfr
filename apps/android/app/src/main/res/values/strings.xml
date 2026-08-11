@@ -47,6 +47,10 @@
     <string name="send_manual_title">Connect manually</string>
     <string name="send_manual_hint">IP address:port (e.g. 192.168.1.5:17394)</string>
     <string name="send_connect">Connect</string>
+    <string name="send_connect_invalid_addr">Invalid address. Use format: 192.168.1.5:17394</string>
+    <string name="send_connecting">Connecting…</string>
+    <string name="send_connected_to">Connected to %s</string>
+    <string name="send_manual_badge">manual</string>
     <string name="send_direct_badge">direct</string>
     <string name="send_paired_badge">paired</string>
     <string name="send_hotspot_banner">On a hotspot? Devices are found by direct probe — or add one manually.</string>

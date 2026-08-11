@@ -18,6 +18,11 @@ import org.json.JSONObject
 sealed class NxfrState {
     data object Idle : NxfrState()
     data object Listening : NxfrState()
+    data class ManualConnected(
+        val addr: String,
+        val peerName: String,
+        val handle: Long
+    ) : NxfrState()
     data class Offering(
         val handle: Long,
         val displayName: String,
@@ -40,6 +45,7 @@ class NxfrService : Service() {
     companion object {
         private const val TAG = "NxfrService"
         const val ACTION_SEND = "com.nxfr.android.SEND"
+        const val ACTION_CONNECT = "com.nxfr.android.CONNECT"
         const val EXTRA_ADDR = "addr"
         const val EXTRA_FILE_PATH = "file_path"
         const val DEFAULT_PORT = 17394
@@ -55,6 +61,9 @@ class NxfrService : Service() {
 
         private val _deviceName = MutableStateFlow("My Device")
         val deviceName: StateFlow<String> = _deviceName.asStateFlow()
+
+        private val _nxfrState = MutableStateFlow<NxfrState>(NxfrState.Idle)
+        val nxfrState: StateFlow<NxfrState> = _nxfrState.asStateFlow()
 
         fun setDeviceName(name: String) { _deviceName.value = name }
     }
@@ -99,9 +108,6 @@ class NxfrService : Service() {
 
         external fun nxfr_string_free(ptr: Long)
     }
-
-    private val _nxfrState = MutableStateFlow<NxfrState>(NxfrState.Idle)
-    val nxfrState: StateFlow<NxfrState> = _nxfrState.asStateFlow()
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var listenerHandle: Long = 0
@@ -153,6 +159,10 @@ class NxfrService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundWithType()
         when (intent?.action) {
+            ACTION_CONNECT -> {
+                val addr = intent.getStringExtra(EXTRA_ADDR) ?: return START_STICKY
+                serviceScope.launch { doManualConnect(addr) }
+            }
             ACTION_SEND -> {
                 val addr = intent.getStringExtra(EXTRA_ADDR) ?: return START_STICKY
                 val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return START_STICKY
@@ -208,6 +218,29 @@ class NxfrService : Service() {
             // Pump for events on this session.
             pumpLoop(handle, isSending = false)
         }
+    }
+
+    /** Connect to a remote device without sending a file yet. */
+    private suspend fun doManualConnect(addr: String) {
+        val storeDir = identityDir()
+        // Identity already loaded in onCreate.
+        Log.i(TAG, "Manual connect to $addr")
+
+        val connJson = withContext(Dispatchers.IO) {
+            NxfrBridge.nxfr_connect(addr, storeDir)
+        }
+        val connResult = JSONObject(connJson)
+        if (connResult.has("error")) {
+            val msg = connResult.getString("error")
+            Log.e(TAG, "Manual connect failed: $msg")
+            _nxfrState.value = NxfrState.Error(msg)
+            return
+        }
+        val handle = connResult.getLong("handle")
+        val peerName = connResult.optString("peer_name", addr)
+        activeSessionHandle = handle
+        Log.i(TAG, "Manual connected to $addr, peer=$peerName, handle=$handle")
+        _nxfrState.value = NxfrState.ManualConnected(addr, peerName, handle)
     }
 
     /** Send a file to a remote device. */
