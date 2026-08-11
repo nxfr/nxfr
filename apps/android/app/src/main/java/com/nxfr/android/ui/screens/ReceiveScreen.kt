@@ -38,7 +38,9 @@ fun ReceiveScreen(
 ) {
     val scrollState = rememberScrollState()
     var isVisible by remember { mutableStateOf(false) }
-    var autoAcceptState by remember { mutableIntStateOf(0) } // 0: Off, 1: Paired, 2: Everyone
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE) }
+    var autoAcceptState by remember { mutableIntStateOf(sharedPrefs.getInt("auto_accept_global", 0)) } // 0: Off, 1: Paired, 2: Everyone
     var showRenameDialog by remember { mutableStateOf(false) }
     var newDeviceName by remember { mutableStateOf(deviceName) }
     var showWarningDialog by remember { mutableStateOf(false) }
@@ -203,7 +205,7 @@ fun ReceiveScreen(
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 val options = listOf(
                     stringResource(R.string.receive_auto_accept_off),
-                    stringResource(R.string.receive_auto_accept_paired_phase8),
+                    stringResource(R.string.receive_auto_accept_paired),
                     stringResource(R.string.receive_auto_accept_everyone)
                 )
                 options.forEachIndexed { index, label ->
@@ -214,10 +216,11 @@ fun ReceiveScreen(
                                 showWarningDialog = true
                             } else {
                                 autoAcceptState = index 
+                                sharedPrefs.edit().putInt("auto_accept_global", index).apply()
                             }
                         },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
-                        enabled = index != 1 // Paired only is DISABLED
+                        enabled = true
                     ) {
                         Text(label)
                     }
@@ -233,6 +236,7 @@ fun ReceiveScreen(
                 confirmButton = {
                     TextButton(onClick = { 
                         autoAcceptState = 2
+                        sharedPrefs.edit().putInt("auto_accept_global", 2).apply()
                         showWarningDialog = false 
                     }) {
                         Text(stringResource(R.string.receive_confirm))

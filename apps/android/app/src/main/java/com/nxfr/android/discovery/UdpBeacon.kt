@@ -53,30 +53,29 @@ class UdpBeacon(private val context: Context) {
 
     /** Start announcing + listening. */
     fun start() {
-        if (listenJob?.isActive == true) return // Already running.
-        Log.i(TAG, "Starting UDP beacon on port $BEACON_PORT")
-
-        // Acquire multicast lock.
-        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        multicastLock = wifiManager.createMulticastLock("nxfr_beacon").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
-
-        try {
-            listenerSocket = DatagramSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(BEACON_PORT))
-                broadcast = true
+        if (listenJob?.isActive == true) return
+        // Launch all I/O off the calling thread.
+        scope.launch {
+            try {
+                Log.i(TAG, "Starting UDP beacon on port $BEACON_PORT")
+                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                multicastLock = wifiManager.createMulticastLock("nxfr_beacon").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                listenerSocket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(BEACON_PORT))
+                    broadcast = true
+                }
+                listenJob = launch { listenLoop() }
+                announceJob = launch { announceLoop() }
+                expiryJob = launch { expiryLoop() }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Beacon start failed (non-fatal): ${e.message}")
+                // Beacon silently off; NSD + probe still work.
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to bind UDP $BEACON_PORT: ${e.message}")
-            return
         }
-
-        listenJob = scope.launch { listenLoop() }
-        announceJob = scope.launch { announceLoop() }
-        expiryJob = scope.launch { expiryLoop() }
     }
 
     /** Stop all beacon activity. */

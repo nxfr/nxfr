@@ -318,10 +318,42 @@ class NxfrService : Service() {
                         totalFiles = event.optInt("total_files"),
                         peerName = event.optString("peer_name")
                     )
-                    val confirmJson = withContext(Dispatchers.IO) {
-                        NxfrBridge.nxfr_confirm(handle, true)
+
+                    val prefs = getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
+                    val globalAuto = prefs.getInt("auto_accept_global", 0)
+
+                    var shouldAccept = false
+                    if (globalAuto == 2) {
+                        shouldAccept = true
+                    } else if (globalAuto == 1) {
+                        val peerDeviceId = event.optString("device_id")
+                        val storeDir = identityDir()
+                        val pairedListJson = withContext(Dispatchers.IO) {
+                            NxfrBridge.nxfr_paired_list(storeDir)
+                        }
+                        val pairedList = JSONObject(pairedListJson)
+                        if (!pairedList.has("error")) {
+                            val devices = pairedList.optJSONArray("devices")
+                            if (devices != null) {
+                                for (i in 0 until devices.length()) {
+                                    val dev = devices.getJSONObject(i)
+                                    if (dev.optString("device_id") == peerDeviceId && dev.optString("auto_accept") == "always") {
+                                        shouldAccept = true
+                                        break
+                                    }
+                                }
+                            }
+                        }
                     }
-                    Log.i(TAG, "Auto-accepted transfer: $confirmJson")
+
+                    if (shouldAccept) {
+                        val confirmJson = withContext(Dispatchers.IO) {
+                            NxfrBridge.nxfr_confirm(handle, true)
+                        }
+                        Log.i(TAG, "Auto-accepted transfer: $confirmJson")
+                    } else {
+                        Log.i(TAG, "Transfer offer pending manual approval.")
+                    }
                 }
                 "progress" -> {
                     val sent = event.optLong("bytes_sent")

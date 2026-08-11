@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -15,6 +16,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.navigation.NxfrNavHost
 import com.nxfr.android.ui.theme.NxfrTheme
+import com.nxfr.android.ui.theme.ThemePreference
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,8 +27,11 @@ class MainActivity : ComponentActivity() {
         // Start the foreground service (loads/generates identity in onCreate).
         startService(Intent(this, NxfrService::class.java))
 
+        ThemePreference.init(this)
+
         setContent {
-            NxfrTheme {
+            val themeMode by ThemePreference.themeMode.collectAsState()
+            NxfrTheme(darkTheme = when(themeMode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

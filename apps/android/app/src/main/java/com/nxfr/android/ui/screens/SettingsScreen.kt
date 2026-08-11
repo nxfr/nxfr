@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import com.nxfr.android.ui.theme.ThemePreference
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,7 +40,8 @@ fun SettingsScreen(
     var showAdvancedSettings by remember { mutableStateOf(false) }
     var isEditingName by remember { mutableStateOf(false) }
     var editNameValue by remember { mutableStateOf(deviceName) }
-    var themeSelection by remember { mutableStateOf(0) } // 0: System, 1: Light, 2: Dark
+    val themeMode by ThemePreference.themeMode.collectAsState()
+    val themeSelection = when (themeMode) { ThemePreference.LIGHT -> 1; ThemePreference.DARK -> 2; else -> 0 }
     var animationsEnabled by remember { mutableStateOf(true) }
     
     val context = LocalContext.current
@@ -123,7 +125,10 @@ fun SettingsScreen(
                 options.forEachIndexed { index, label ->
                     SegmentedButton(
                         selected = themeSelection == index,
-                        onClick = { themeSelection = index },
+                        onClick = {
+                            val mode = when (index) { 1 -> ThemePreference.LIGHT; 2 -> ThemePreference.DARK; else -> ThemePreference.SYSTEM }
+                            ThemePreference.setTheme(context, mode)
+                        },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
                     ) {
                         Text(label)

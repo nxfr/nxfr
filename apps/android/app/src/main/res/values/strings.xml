@@ -18,7 +18,6 @@
     <string name="receive_auto_accept_off">Off</string>
     <string name="receive_auto_accept_paired">Paired only</string>
     <string name="receive_auto_accept_everyone">Everyone</string>
-    <string name="receive_auto_accept_paired_phase8">Phase 8</string>
     <string name="receive_auto_accept_everyone_warning">Anyone on the same network will be able to send you files without your approval. Are you sure?</string>
     <string name="receive_save_to">Save to</string>
     <string name="receive_change_folder">Change folder</string>
@@ -115,7 +114,6 @@
 
     <string name="settings_security">Security</string>
     <string name="settings_paired_devices">Paired devices</string>
-    <string name="settings_paired_empty">Pairing storage lands in Phase 8</string>
     <string name="settings_unpair">Unpair</string>
     <string name="settings_auto_accept_device">Auto-accept from this device</string>
 
