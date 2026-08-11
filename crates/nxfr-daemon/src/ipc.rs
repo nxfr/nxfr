@@ -478,21 +478,8 @@ async fn cmd_transfer_confirm(state: &DaemonState, req: IpcRequest) -> IpcEvent 
             // Clean up the offer entry.
             state.pending_offers.lock().await.remove(&transfer_id);
 
-            // Broadcast resolution to all watchers.
-            let reason = if accepted {
-                None
-            } else {
-                Some("user_declined".to_string())
-            };
-            broadcast_to_watchers(
-                state,
-                &IpcEvent::TransferResolved {
-                    transfer_id: transfer_id.clone(),
-                    accepted,
-                    reason,
-                },
-            )
-            .await;
+            // NOTE: handler.rs broadcasts TransferResolved when consent_rx
+            // resolves — do NOT duplicate the broadcast here.
 
             IpcEvent::ok_response(serde_json::json!({
                 "transfer_id": transfer_id,
