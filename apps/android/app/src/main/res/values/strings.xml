@@ -16,9 +16,9 @@
     <string name="receive_visibility_hint">Hidden by default for privacy</string>
     <string name="receive_auto_accept_label">Auto-accept</string>
     <string name="receive_auto_accept_off">Off</string>
-    <string name="receive_auto_accept_paired">Paired only</string>
-    <string name="receive_auto_accept_everyone">Everyone</string>
-    <string name="receive_auto_accept_everyone_warning">Anyone on the same network will be able to send you files without your approval. Are you sure?</string>
+    <string name="receive_auto_accept_paired">Paired (per-device)</string>
+    <string name="receive_auto_accept_everyone">All paired</string>
+    <string name="receive_auto_accept_everyone_warning">All paired devices will be able to send you files without approval. Unpaired devices will always require consent. Continue?</string>
     <string name="receive_save_to">Save to</string>
     <string name="receive_change_folder">Change folder</string>
     <string name="receive_active_transfers">Active transfers</string>

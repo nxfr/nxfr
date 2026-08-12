@@ -27,7 +27,9 @@ class HotspotAwareDiscovery(private val context: Context) {
     companion object {
         private const val TAG = "HotspotDiscovery"
         private const val NXFR_PORT = 17394
-        private const val PROBE_TIMEOUT_MS = 300
+        private const val PROBE_TIMEOUT_NORMAL_MS = 300
+        private const val PROBE_TIMEOUT_CONGESTED_MS = 750
+        private const val BEACON_CONGESTION_THRESHOLD = 0.5f
         private const val NSD_TIMEOUT_MS = 3000L
         private const val MAX_CONCURRENT_PROBES = 32
     }
@@ -53,6 +55,24 @@ class HotspotAwareDiscovery(private val context: Context) {
     private var beaconJob: Job? = null
     private var storeDir: String = ""
 
+    // Adaptive probe: track beacon reception rate.
+    private var beaconStartTimeMs: Long = 0L
+    @Volatile private var beaconsReceived: Int = 0
+
+    /** Compute adaptive probe timeout based on beacon success rate. */
+    private fun adaptiveProbeTimeoutMs(): Int {
+        val elapsed = System.currentTimeMillis() - beaconStartTimeMs
+        val expectedBeacons = (elapsed / 1000).coerceAtLeast(1) // 1 beacon/s
+        val rate = beaconsReceived.toFloat() / expectedBeacons.toFloat()
+        val timeout = if (rate < BEACON_CONGESTION_THRESHOLD) {
+            PROBE_TIMEOUT_CONGESTED_MS
+        } else {
+            PROBE_TIMEOUT_NORMAL_MS
+        }
+        Log.d(TAG, "Adaptive timeout: rate=${"%,.2f".format(rate)} (${beaconsReceived}/${expectedBeacons}) → ${timeout}ms")
+        return timeout
+    }
+
     /**
      * Start all tiers: Tier 0 (beacon), Tier 1 (NSD), Tier 2 fallback after 3 s.
      */
@@ -65,9 +85,12 @@ class HotspotAwareDiscovery(private val context: Context) {
         beacon.localDeviceId = localDeviceId
         beacon.localDeviceName = localDeviceName
         beacon.start()
+        beaconStartTimeMs = System.currentTimeMillis()
+        beaconsReceived = 0
 
         beaconJob = scope.launch {
             beacon.peers.collect { beaconPeers ->
+                beaconsReceived = beaconPeers.size.coerceAtLeast(beaconsReceived)
                 mergeDevices(beaconPeers)
             }
         }
@@ -159,12 +182,13 @@ class HotspotAwareDiscovery(private val context: Context) {
         Log.i(TAG, "Probe complete: found ${found.size} device(s)")
     }
 
-    /** TCP connect to host:port with timeout, then TLS+HELLO via FFI. */
+    /** TCP connect to host:port with adaptive timeout, then TLS+HELLO via FFI. */
     private fun probeHost(ip: String, port: Int): DeviceUiModel? {
         return try {
-            // Quick TCP connect test.
+            // Quick TCP connect test with adaptive timeout.
+            val timeout = adaptiveProbeTimeoutMs()
             Socket().use { sock ->
-                sock.connect(InetSocketAddress(ip, port), PROBE_TIMEOUT_MS)
+                sock.connect(InetSocketAddress(ip, port), timeout)
             }
             // TCP open — try full TLS+HELLO via FFI.
             if (storeDir.isEmpty()) return null

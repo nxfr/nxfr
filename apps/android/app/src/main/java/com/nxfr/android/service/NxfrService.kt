@@ -338,10 +338,10 @@ class NxfrService : Service() {
                     val prefs = getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
                     val globalAuto = prefs.getInt("auto_accept_global", 0)
 
+                    // TOFU Lock: auto-accept ONLY applies to paired devices.
+                    // Unpaired senders always require manual consent.
                     var shouldAccept = false
-                    if (globalAuto == 2) {
-                        shouldAccept = true
-                    } else if (globalAuto == 1) {
+                    if (globalAuto >= 1) {
                         val peerDeviceId = event.optString("device_id")
                         val storeDir = identityDir()
                         val pairedListJson = withContext(Dispatchers.IO) {
@@ -353,12 +353,22 @@ class NxfrService : Service() {
                             if (devices != null) {
                                 for (i in 0 until devices.length()) {
                                     val dev = devices.getJSONObject(i)
-                                    if (dev.optString("device_id") == peerDeviceId && dev.optString("auto_accept") == "always") {
-                                        shouldAccept = true
+                                    if (dev.optString("device_id") == peerDeviceId) {
+                                        // Peer IS paired.
+                                        if (globalAuto == 2) {
+                                            // "Everyone" (really: all paired devices)
+                                            shouldAccept = true
+                                        } else if (globalAuto == 1 && dev.optString("auto_accept") == "always") {
+                                            // "Paired" with per-device auto-accept
+                                            shouldAccept = true
+                                        }
                                         break
                                     }
                                 }
                             }
+                        }
+                        if (!shouldAccept && peerDeviceId.isNotEmpty()) {
+                            Log.i(TAG, "TOFU: peer $peerDeviceId NOT paired — forcing consent dialog")
                         }
                     }
 

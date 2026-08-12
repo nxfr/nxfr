@@ -13,7 +13,7 @@ use nxfr_common::{DeviceId, Platform, ProtocolVersion, TransferId};
 use nxfr_core::codec;
 use nxfr_core::frame::FrameKind;
 use nxfr_core::messages::{ControlMessage, ManifestEntryType, TransferAckStatus};
-use nxfr_core::path::sanitize_path;
+use nxfr_core::path::{sanitize_path, resolve_safe_path};
 use nxfr_crypto::device_id_from_cert;
 use nxfr_storage::db::IdentityCheck;
 use nxfr_storage::resume::{ResumeManifestEntry, ResumeState};
@@ -618,8 +618,21 @@ async fn handle_incoming_transfer<S: AsyncRead + AsyncWrite + Unpin>(
                         };
                         conn.send_control(session_id, 0, &ack).await?;
 
-                        // Prepare destination path.
-                        let dest = receive_dir.join(&sanitized);
+                        // Prepare destination path with path-jail guard.
+                        let dest = match resolve_safe_path(&receive_dir, &sanitized) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("PATH JAIL: \"{sanitized}\" escapes download root — {e}");
+                                let err = ControlMessage::Error {
+                                    code: nxfr_core::error_code::ErrorCode::PathRejected,
+                                    message: Some(format!("PathTraversalAttempt: {e}")),
+                                    fatal: false,
+                                    details: None,
+                                };
+                                conn.send_control(session_id, 0, &err).await?;
+                                continue;
+                            }
+                        };
                         if let Some(parent) = dest.parent() {
                             std::fs::create_dir_all(parent)?;
                         }

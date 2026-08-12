@@ -2,6 +2,7 @@
 
 use nxfr_common::error::PathError;
 use nxfr_common::limits::{MAX_PATH_COMPONENT, MAX_RELATIVE_PATH};
+use std::path::{Path, PathBuf};
 
 pub fn sanitize_path(input: &str) -> Result<String, PathError> {
     if input.is_empty() {
@@ -94,6 +95,49 @@ pub fn sanitize_path(input: &str) -> Result<String, PathError> {
     }
 
     Ok(normalized_path)
+}
+
+/// Defense-in-depth path jail: sanitize + canonicalize + assert within root.
+///
+/// 1. Sanitize the relative path (reject .., absolute, etc.).
+/// 2. Join it to the download root.
+/// 3. Canonicalize (resolve symlinks, .., etc.).
+/// 4. Assert the final path starts_with the canonicalized root.
+///
+/// Returns the safe absolute path on success, PathError on jail escape.
+pub fn resolve_safe_path(download_root: &Path, relative: &str) -> Result<PathBuf, PathError> {
+    let sanitized = sanitize_path(relative)?;
+    let canon_root = download_root.canonicalize().map_err(|e| {
+        PathError::AbsolutePath(format!("cannot canonicalize root: {e}"))
+    })?;
+    let joined = canon_root.join(&sanitized);
+    // For new files that don't exist yet, canonicalize the parent.
+    let check_path = if joined.exists() {
+        joined.canonicalize().map_err(|e| {
+            PathError::AbsolutePath(format!("cannot canonicalize dest: {e}"))
+        })?
+    } else {
+        // Canonicalize the parent directory, then append the filename.
+        let parent = joined.parent().unwrap_or(&canon_root);
+        let filename = joined.file_name().ok_or_else(|| {
+            PathError::EmptyPath
+        })?;
+        if parent.exists() {
+            parent.canonicalize().map_err(|e| {
+                PathError::AbsolutePath(format!("cannot canonicalize parent: {e}"))
+            })?.join(filename)
+        } else {
+            // Parent doesn't exist yet — we'll create it. Just check prefix.
+            joined.clone()
+        }
+    };
+    if !check_path.starts_with(&canon_root) {
+        return Err(PathError::ParentTraversal(format!(
+            "path escapes download root: {}",
+            check_path.display()
+        )));
+    }
+    Ok(joined)
 }
 
 #[cfg(test)]
@@ -236,5 +280,39 @@ mod tests {
             sanitize_path(&path),
             Err(PathError::PathTooLong { len: _ })
         ));
+    }
+
+    #[test]
+    fn test_reject_absolute_path_traversal() {
+        let tmp = std::env::temp_dir().join("nxfr_test_jail");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Normal file inside root: OK.
+        let result = resolve_safe_path(&tmp, "photo.jpg");
+        assert!(result.is_ok(), "normal file should succeed: {result:?}");
+        assert!(result.unwrap().starts_with(&tmp));
+
+        // Subdirectory inside root: OK.
+        let result = resolve_safe_path(&tmp, "subdir/file.txt");
+        assert!(result.is_ok());
+
+        // Traversal attempt: MUST fail.
+        let result = resolve_safe_path(&tmp, "../../../etc/passwd");
+        assert!(result.is_err(), "traversal must be rejected");
+
+        // Absolute path: MUST fail.
+        let result = resolve_safe_path(&tmp, "/etc/shadow");
+        assert!(result.is_err(), "absolute path must be rejected");
+
+        // Windows drive: MUST fail.
+        let result = resolve_safe_path(&tmp, "C:\\Windows\\System32\\cmd.exe");
+        assert!(result.is_err(), "windows drive must be rejected");
+
+        // Null byte: MUST fail.
+        let result = resolve_safe_path(&tmp, "safe\x00evil");
+        assert!(result.is_err(), "null byte must be rejected");
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

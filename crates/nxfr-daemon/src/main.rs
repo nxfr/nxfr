@@ -23,6 +23,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("nxfr-daemon starting...");
 
+    // Entropy guard: verify system RNG works before any keygen.
+    match nxfr_crypto::check_entropy() {
+        Ok(()) => info!("Entropy check passed"),
+        Err(e) => warn!("CRITICAL: {e} — key generation may produce weak keys"),
+    }
+
     // ── Fix C: Single-instance guard ──
     if ipc::check_existing_instance().await {
         error!("nxfr-daemon is already running (IPC socket responded to status ping)");

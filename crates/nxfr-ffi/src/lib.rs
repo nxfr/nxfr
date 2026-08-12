@@ -271,6 +271,10 @@ pub extern "C" fn nxfr_identity_generate(store_dir: *const c_char) -> *mut c_cha
             Ok(s) => s,
             Err(e) => return json_err(&e),
         };
+        // Entropy guard: verify system RNG works before keygen.
+        if let Err(e) = nxfr_crypto::check_entropy() {
+            log::error!("CRITICAL: {e}");
+        }
         let identity = match nxfr_crypto::identity::generate_identity() {
             Ok(id) => id,
             Err(e) => return json_err(&format!("keygen failed: {e}")),
