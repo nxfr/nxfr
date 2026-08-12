@@ -119,7 +119,7 @@ pub fn resolve_safe_path(download_root: &Path, relative: &str) -> Result<PathBuf
     } else {
         // Canonicalize the parent directory, then append the filename.
         let parent = joined.parent().unwrap_or(&canon_root);
-        let filename = joined.file_name().ok_or_else(|| PathError::EmptyPath)?;
+        let filename = joined.file_name().ok_or(PathError::EmptyPath)?;
         if parent.exists() {
             parent
                 .canonicalize()
