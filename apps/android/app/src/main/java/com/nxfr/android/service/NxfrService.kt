@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.nxfr.android.NxfrApp
 import com.nxfr.android.R
+import com.nxfr.android.discovery.HotspotAwareDiscovery
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,6 +68,10 @@ class NxfrService : Service() {
         val nxfrState: StateFlow<NxfrState> = _nxfrState.asStateFlow()
 
         fun setDeviceName(name: String) { _deviceName.value = name }
+
+        /** Service-owned discovery — shared across all tabs. */
+        private var _discovery: HotspotAwareDiscovery? = null
+        val discovery: HotspotAwareDiscovery? get() = _discovery
     }
 
     /**
@@ -123,6 +128,7 @@ class NxfrService : Service() {
     override fun onCreate() {
         super.onCreate()
         loadOrGenerateIdentity()
+        _discovery = HotspotAwareDiscovery(this)
     }
 
     /**
@@ -181,6 +187,8 @@ class NxfrService : Service() {
     }
 
     override fun onDestroy() {
+        _discovery?.stopDiscovery()
+        _discovery = null
         super.onDestroy()
         serviceScope.cancel()
         if (activeSessionHandle != 0L) {
@@ -192,6 +200,14 @@ class NxfrService : Service() {
     /** Accept loop: listen → accept → pump for offers. */
     private suspend fun startListening() {
         val storeDir = identityDir()
+
+        // Start beacon announcer so this device is discoverable.
+        val did = _deviceId.value
+        val dname = _deviceName.value
+        if (did.isNotEmpty()) {
+            _discovery?.startDiscovery(storeDir, did, dname)
+            Log.i(TAG, "Beacon announcer started (Visible=ON)")
+        }
 
         var listenJson = withContext(Dispatchers.IO) {
             NxfrBridge.nxfr_listen(DEFAULT_PORT, storeDir)

@@ -1,6 +1,10 @@
 package com.nxfr.android.ui.navigation
 
 
+import android.content.Intent
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,7 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -24,6 +30,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.nxfr.android.discovery.DeviceUiModel
+import com.nxfr.android.discovery.HotspotAwareDiscovery
+import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.screens.ReceiveScreen
 import com.nxfr.android.ui.screens.SendScreen
 import com.nxfr.android.ui.screens.SettingsScreen
@@ -88,16 +97,48 @@ fun NxfrNavHost(
             }
             composable(NxfrScreen.Send.route) {
                 val context = androidx.compose.ui.platform.LocalContext.current
-                val discovery = remember { com.nxfr.android.discovery.HotspotAwareDiscovery(context) }
+                // Use service-owned discovery (beacon runs from service, not UI).
+                val discovery = NxfrService.discovery
+                    ?: remember { HotspotAwareDiscovery(context) }
                 val discoveredDevices by discovery.devices.collectAsState()
                 val isScanning by discovery.isScanning.collectAsState()
                 val isProbing by discovery.isProbing.collectAsState()
                 val showHotspot by discovery.showHotspotBanner.collectAsState()
 
+                // If service discovery not yet started, start from Send tab as fallback.
                 DisposableEffect(Unit) {
-                    val storeDir = context.filesDir.absolutePath
-                    discovery.startDiscovery(storeDir, deviceId, deviceName)
-                    onDispose { discovery.stopDiscovery() }
+                    if (NxfrService.discovery == null) {
+                        val storeDir = context.filesDir.absolutePath
+                        discovery.startDiscovery(storeDir, deviceId, deviceName)
+                    }
+                    onDispose {
+                        if (NxfrService.discovery == null) {
+                            discovery.stopDiscovery()
+                        }
+                    }
+                }
+
+                // SAF file picker launcher.
+                var pendingDevice by remember { mutableStateOf<DeviceUiModel?>(null) }
+                val filePicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    val dev = pendingDevice ?: return@rememberLauncherForActivityResult
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    // Copy URI to cache dir for FFI access.
+                    val cacheFile = java.io.File(context.cacheDir, "send_${System.currentTimeMillis()}")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        cacheFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    // Start send via service.
+                    val sendIntent = Intent(context, NxfrService::class.java).apply {
+                        action = NxfrService.ACTION_SEND
+                        putExtra(NxfrService.EXTRA_ADDR, "${dev.host}:${dev.port}")
+                        putExtra(NxfrService.EXTRA_FILE_PATH, cacheFile.absolutePath)
+                    }
+                    context.startService(sendIntent)
+                    Log.i("NxfrNavHost", "Send started: ${cacheFile.name} → ${dev.name} (${dev.host}:${dev.port})")
+                    navController.navigate(NxfrScreen.Transfer.route)
                 }
 
                 SendScreen(
@@ -107,6 +148,11 @@ fun NxfrNavHost(
                     showHotspotBanner = showHotspot,
                     onRefresh = { discovery.refreshProbe() },
                     onDismissBanner = { discovery.dismissBanner() },
+                    onDeviceTap = { device ->
+                        Log.i("NxfrNavHost", "Device tapped: ${device.name} @ ${device.host}:${device.port}")
+                        pendingDevice = device
+                        filePicker.launch(arrayOf("*/*"))
+                    },
                 )
             }
             composable(NxfrScreen.Settings.route) {

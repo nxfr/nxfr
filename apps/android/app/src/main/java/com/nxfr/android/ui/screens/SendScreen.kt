@@ -259,7 +259,10 @@ fun SendScreen(
                 ) {
                     items(sortedDevices, key = { it.deviceId }) { device ->
                         ElevatedCard(
-                            onClick = { onDeviceTap(device) },
+                            onClick = {
+                                android.util.Log.i("SendScreen", "Card tapped: ${device.name} @ ${device.host}:${device.port}")
+                                onDeviceTap(device)
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.medium
                         ) {
