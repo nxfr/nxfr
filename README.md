@@ -44,6 +44,7 @@ Unlike AirDrop or Quick Share, NXFR is an open specification designed with trans
 - **mDNS Zero-Config Discovery:** Instantly find other NXFR-enabled devices on your LAN.
 - **Interactive User Consent Model:** Receive explicit prompts before any file is saved.
 - **SAS-Based Pairing:** Secure device pairing using Short Authentication Strings (4-digit codes) to prevent MITM attacks.
+- **Privacy-Preserving Discovery:** Beacons use daily-rotating IDs (`advertised_id`) to prevent passive Wi-Fi tracking; real device identity is only revealed over TLS 1.3.
 
 ## Quick Start
 

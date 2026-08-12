@@ -143,6 +143,63 @@ TXT record values MUST conform to the DNS-SD TXT record format (key=value, each
 Browsing SHOULD be time-limited. Implementations SHOULD stop active browsing after
 60 seconds of inactivity in the send UI, resumable on user interaction.
 
+### 5.6 UDP Beacon Discovery (Port 17395)
+
+In addition to mDNS/DNS-SD, implementations MAY support UDP beacon discovery for
+environments where multicast DNS is unreliable (e.g., mobile hotspots, guest Wi-Fi
+networks that block mDNS traffic).
+
+#### 5.6.1 Protocol
+
+| Parameter | Value |
+|-----------|-------|
+| Transport | UDP |
+| Port | 17395 (`0x43E3`) |
+| Direction | Broadcast (directed + multicast `224.0.0.251`) |
+| Interval | Every 1000 ms while in send/receive mode |
+| Expiry | Peers not seen for 4000 ms are removed |
+
+#### 5.6.2 Beacon Payload
+
+The beacon is a UTF-8 JSON datagram (< 256 bytes) with the following structure:
+
+```json
+{"v":1,"advertised_id":"a1b2c3d4e5f67890","name":"My Phone","plat":"android","tcp_port":17394}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `v` | integer | REQUIRED | Beacon version. MUST be `1`. |
+| `advertised_id` | string | REQUIRED | 16-char hex rotating ID (see §6.3.4). MUST NOT be the real `device_id`. |
+| `name` | string | REQUIRED | Human-readable device name. |
+| `plat` | string | REQUIRED | Platform identifier: `"linux"`, `"android"`, `"windows"`, etc. |
+| `tcp_port` | integer | REQUIRED | TCP port for NXFR TLS connections. |
+
+> **SECURITY: The beacon MUST NEVER broadcast the real `device_id`.** The
+> `advertised_id` is derived via `SHA-256(device_id || YYYY-MM-DD)` (see §6.3.4)
+> and rotates daily, preventing passive tracking. The real `device_id` is only
+> exchanged inside the encrypted TLS 1.3 HELLO message after mutual authentication.
+
+#### 5.6.3 Self-Ignore and Deduplication
+
+Receivers MUST ignore beacons where `advertised_id` matches their own computed
+`advertised_id` for the current date. Peer deduplication SHOULD use `advertised_id`
+as the merge key. When a beacon peer is subsequently connected via TLS, the real
+`device_id` from the peer's certificate replaces the `advertised_id` for identity
+pinning and pairing checks.
+
+#### 5.6.4 Integration with Discovery Ladder
+
+Implementations supporting beacon discovery SHOULD integrate it as the fastest
+discovery tier, with mDNS/DNS-SD as a fallback:
+
+| Tier | Mechanism | Latency | Hotspot-Safe |
+|------|-----------|---------|--------------|
+| 0 | UDP Beacon (port 17395) | ~1 s | Yes |
+| 1 | NSD / mDNS (DNS-SD) | 2–5 s | No |
+| 2 | TCP Subnet Probe (port 17394) | 5–30 s | Yes |
+| 3 | Manual IP:Port entry | User-initiated | Yes |
+
 ---
 
 ## 6. Transport & Security

@@ -90,10 +90,43 @@ sequenceDiagram
 - JDK 17 (via Android Studio JBR)
 - AGP 8.7 + Kotlin 2.0 + Jetpack Compose
 
-## Current Limitations (Phase 7)
+## Discovery (4-Tier Ladder)
+
+The Android client uses a multi-tier discovery strategy for hotspot-resilient
+peer finding. All discovery runs off-main via `Dispatchers.IO`.
+
+| Tier | Mechanism | Implementation | Latency | Hotspot-Safe |
+|------|-----------|----------------|---------|--------------|
+| 0 | **UDP Beacon** | `UdpBeacon.kt` — broadcasts on port 17395 every 1 s | ~1 s | ✅ Yes |
+| 1 | **NSD (mDNS/DNS-SD)** | `NsdDiscovery.kt` — `android.net.nsd.NsdManager` | 2–5 s | ❌ No |
+| 2 | **TCP Subnet Probe** | `HotspotAwareDiscovery.kt` — scan /24 on port 17394 | 5–30 s | ✅ Yes |
+| 3 | **Manual Connect** | UI-driven IP:port → `nxfr_connect()` | User-initiated | ✅ Yes |
+
+`HotspotAwareDiscovery.kt` orchestrates all tiers, merging results into a
+single `StateFlow<List<DeviceUiModel>>` with deduplication by `advertised_id`
+(beacon) or `device_id` (NSD/probe).
+
+### Privacy: Beacon advertised_id
+
+!!! warning "Privacy-Critical"
+    The UDP beacon **NEVER** broadcasts the real `device_id`. Beacons use a
+    daily-rotating `advertised_id` derived via `SHA-256(device_id || YYYY-MM-DD)`.
+
+On `UdpBeacon.start()`, the Kotlin layer calls
+`NxfrBridge.nxfr_advertised_id(deviceIdHex, LocalDate.now().toString())` to
+compute today's rotating ID via the Rust FFI (HKDF-SHA256). The beacon payload
+is:
+
+```json
+{"v":1,"advertised_id":"a1b2c3d4e5f67890","name":"My Phone","plat":"android","tcp_port":17394}
+```
+
+The real `device_id` is only revealed after the TLS 1.3 handshake, inside the
+encrypted HELLO message. This two-layer model prevents passive Wi-Fi observers
+from fingerprinting or tracking devices across networks.
+
+## Current Limitations
 
 - **No resume journal** — interrupted transfers restart from zero.
-- **Auto-accept** — incoming offers are accepted immediately (no consent UI).
-- **No mDNS discovery** — devices must connect by IP:port.
 - **Single session** — one active transfer at a time.
 - **No Android Keystore** — identity stored in app private files.

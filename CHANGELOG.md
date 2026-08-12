@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead UI controls**: About links, notification PendingIntent, transfer cancel, hardcoded strings
 - **CLI double-print**: removed redundant TransferResolved broadcast in ipc.rs
 - **Duplicate string resources**: cleaned up subagent-introduced duplicates
+- **Send tab crash** (Phase 7.8): UdpBeacon.start() ran DatagramSocket.bind() on main thread → NetworkOnMainThreadException. Moved all socket I/O to Dispatchers.IO with try/catch(Throwable).
+- **Dead theme picker** (Phase 7.8): theme preference now persisted in SharedPreferences, applied instantly via ThemePreference singleton.
+- **Stale Phase-8 stubs** (Phase 7.8): removed placeholder strings, enabled Paired auto-accept, wired global auto-accept policy to NxfrService pump loop.
+
+### Security
+- **Privacy hotfix** (Phase 7.9): UDP beacon now broadcasts a daily-rotating `advertised_id` (HKDF-SHA256 of device_id + date) instead of the permanent `device_id`, preventing passive Wi-Fi tracking. Added `test_advertised_id_rotates_daily` host test.
+- New threat T10 documented in SECURITY.md: "Passive Tracking via UDP Beacon Sniffing" with mitigation details.
+- Protocol §5.6 added: UDP Beacon Discovery specification with privacy-preserving payload format.
 
 ## [0.1.0] - 2026-08-09
 

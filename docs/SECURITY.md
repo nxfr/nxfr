@@ -197,8 +197,20 @@ This section exhaustively details the anticipated threats to the NXFR protocol, 
 - **Impact:** Loss of physical privacy and anonymity. Creation of behavioral profiles.
 - **Mitigations:**
   - The primary mitigation is the "hidden by default" policy. The device only advertises when explicitly set to receive mode by the user.
-  - Section 5 of the protocol recommends that the `id` field in the TXT record should be rotated daily to prevent long-term tracking.
-- **Residual Risk:** While in active receiving mode, the device is trackable. The persistent `device_id` used for authentication could potentially be correlated if the attacker can repeatedly trigger connections.
+  - The `id` field in the mDNS TXT record is a daily-rotating `advertised_id` derived via `SHA-256(device_id || YYYY-MM-DD)` (see Protocol §6.3.4). This breaks long-term correlation across days.
+  - The real `device_id` is **never** transmitted in cleartext discovery traffic — it is only revealed inside the encrypted TLS 1.3 session after mutual authentication.
+- **Residual Risk:** While in active receiving mode, the device is trackable within a single day via its `advertised_id`. Cross-day correlation requires breaking the SHA-256 pre-image.
+
+### T10: Passive Tracking via UDP Beacon Sniffing
+- **Description:** An attacker with a Wi-Fi sniffer records UDP beacon datagrams (port 17395) to track a device's physical movements across different networks over time.
+- **Preconditions:** Attacker monitors UDP broadcast traffic on the local network. No TLS or encryption is involved in beacon payloads.
+- **Execution:** The attacker captures the `advertised_id` field from UDP beacon JSON payloads at multiple locations (e.g., home, office, café) and attempts to correlate them to track a single device.
+- **Impact:** If the `advertised_id` were static (e.g., the real `device_id`), the attacker could build a complete movement profile of the user.
+- **Mitigations:**
+  - NXFR beacons use a daily-rotating `advertised_id` derived via `SHA-256(device_id || YYYY-MM-DD)`. The beacon payload changes every 24 hours, breaking long-term correlation.
+  - The permanent `device_id` is **never** included in beacon payloads. It is only revealed post-TLS handshake to authenticated peers.
+  - Beacons are only sent while the send/receive UI is active — not 24/7.
+- **Residual Risk:** Within a single calendar day, an attacker who monitors multiple networks can correlate the same `advertised_id`. This window is bounded to ≤24 hours. Implementations MAY reduce this window by rotating more frequently (e.g., hourly) at the cost of paired-peer lookup complexity.
 
 ---
 
