@@ -1737,6 +1737,23 @@ mod tests {
     }
 
     #[test]
+    fn test_advertised_id_rotates_daily() {
+        let id_hex = CString::new("ab".repeat(32)).unwrap();
+        let day1 = CString::new("2025-06-01").unwrap();
+        let day2 = CString::new("2025-06-02").unwrap();
+        let r1 = parse_ffi_json(nxfr_advertised_id(id_hex.as_ptr(), day1.as_ptr()));
+        let r2 = parse_ffi_json(nxfr_advertised_id(id_hex.as_ptr(), day2.as_ptr()));
+        assert!(r1.get("error").is_none());
+        assert!(r2.get("error").is_none());
+        let aid1 = r1["advertised_id"].as_str().unwrap();
+        let aid2 = r2["advertised_id"].as_str().unwrap();
+        assert_ne!(aid1, aid2, "advertised_id must change when date changes");
+        // Same date → same result (deterministic).
+        let r3 = parse_ffi_json(nxfr_advertised_id(id_hex.as_ptr(), day1.as_ptr()));
+        assert_eq!(r3["advertised_id"].as_str().unwrap(), aid1);
+    }
+
+    #[test]
     fn test_string_free_null() {
         unsafe { nxfr_string_free(std::ptr::null_mut()) };
     }

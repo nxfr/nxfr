@@ -3,6 +3,7 @@ package com.nxfr.android.discovery
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
+import com.nxfr.android.service.NxfrService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 import java.net.*
+import java.time.LocalDate
 
 /**
  * UDP beacon discovery — LocalSend-style instant device finding.
@@ -21,8 +23,12 @@ import java.net.*
  * to all site-local directed broadcast addresses + multicast 224.0.0.251.
  * Peers do the same; we listen on 0.0.0.0:17395.
  *
+ * PRIVACY: The beacon broadcasts a rotating advertised_id (HKDF-derived,
+ * changes daily) — NEVER the real device_id. The real identity is only
+ * revealed inside the TLS 1.3 handshake (encrypted, authenticated).
+ *
  * Beacon format (JSON, < 256 bytes):
- *   {"v":1,"device_id":"hex","name":"My Phone","plat":"android","tcp_port":17394}
+ *   {"v":1,"advertised_id":"hex16","name":"...","plat":"android","tcp_port":17394}
  */
 class UdpBeacon(private val context: Context) {
     companion object {
@@ -45,11 +51,14 @@ class UdpBeacon(private val context: Context) {
     private var expiryJob: Job? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
-    // device_id → (DeviceUiModel, lastSeenMs)
+    // advertised_id → (DeviceUiModel, lastSeenMs)
     private val peerMap = mutableMapOf<String, Pair<DeviceUiModel, Long>>()
 
     var localDeviceId: String = ""
     var localDeviceName: String = "NXFR-Android"
+
+    /** Rotating advertised_id for privacy; computed on start(). */
+    private var localAdvertisedId: String = ""
 
     /** Start announcing + listening. */
     fun start() {
@@ -58,6 +67,11 @@ class UdpBeacon(private val context: Context) {
         scope.launch {
             try {
                 Log.i(TAG, "Starting UDP beacon on port $BEACON_PORT")
+
+                // Compute today's rotating advertised_id via FFI.
+                localAdvertisedId = computeAdvertisedId()
+                Log.i(TAG, "Beacon advertised_id=${localAdvertisedId.take(8)}…")
+
                 val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                 multicastLock = wifiManager.createMulticastLock("nxfr_beacon").apply {
                     setReferenceCounted(false)
@@ -171,8 +185,9 @@ class UdpBeacon(private val context: Context) {
             val version = obj.optInt("v", 0)
             if (version != 1) return
 
-            val deviceId = obj.optString("device_id", "")
-            if (deviceId.isEmpty() || deviceId == localDeviceId) return // Ignore self.
+            // Privacy: beacons carry advertised_id (rotating), NOT device_id.
+            val advertisedId = obj.optString("advertised_id", "")
+            if (advertisedId.isEmpty() || advertisedId == localAdvertisedId) return // Ignore self.
 
             val name = obj.optString("name", "Unknown")
             val plat = obj.optString("plat", "unknown")
@@ -183,14 +198,14 @@ class UdpBeacon(private val context: Context) {
                 name = name,
                 host = host,
                 port = tcpPort,
-                deviceId = deviceId,
+                deviceId = advertisedId, // Use advertised_id for dedup; real id comes via TLS.
                 platform = plat,
                 isPaired = false,
                 isDirect = false,
             )
 
             synchronized(peerMap) {
-                peerMap[deviceId] = device to System.currentTimeMillis()
+                peerMap[advertisedId] = device to System.currentTimeMillis()
                 _peers.value = peerMap.values.map { it.first }
                     .sortedBy { it.name }
             }
@@ -220,11 +235,28 @@ class UdpBeacon(private val context: Context) {
     private fun buildBeaconPayload(): String {
         return JSONObject().apply {
             put("v", 1)
-            put("device_id", localDeviceId)
+            put("advertised_id", localAdvertisedId) // NEVER broadcast real device_id.
             put("name", localDeviceName)
             put("plat", "android")
             put("tcp_port", TCP_PORT)
         }.toString()
+    }
+
+    /**
+     * Derive today's rotating advertised_id via FFI HKDF.
+     * Falls back to empty string on error (beacon will be ignored by peers).
+     */
+    private fun computeAdvertisedId(): String {
+        if (localDeviceId.isEmpty()) return ""
+        return try {
+            val today = LocalDate.now().toString() // e.g. "2026-08-12"
+            val json = NxfrService.NxfrBridge.nxfr_advertised_id(localDeviceId, today)
+            val result = JSONObject(json)
+            result.optString("advertised_id", "")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to compute advertised_id: ${e.message}")
+            ""
+        }
     }
 
     /** Get directed broadcast addresses for all site-local interfaces. */
