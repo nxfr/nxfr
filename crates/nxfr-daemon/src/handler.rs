@@ -289,8 +289,15 @@ pub async fn handle_incoming(
                         }
 
                         // Accept transfer.
+                        info!("accept: writing TransferAccept for {}", hex::encode(transfer_id.as_bytes()));
                         let accept = ControlMessage::TransferAccept { transfer_id };
-                        conn.send_control(session_id, 0, &accept).await?;
+                        match conn.send_control(session_id, 0, &accept).await {
+                            Ok(_) => info!("accept: TransferAccept written OK"),
+                            Err(e) => {
+                                error!("accept: TransferAccept write FAILED: {e}");
+                                continue;
+                            }
+                        }
                         info!("Accepted transfer {}", hex::encode(transfer_id.as_bytes()));
 
                         // Receive files.

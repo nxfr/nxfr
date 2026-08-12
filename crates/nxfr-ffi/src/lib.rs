@@ -781,16 +781,41 @@ async fn do_send_file(
         },
     )
     .await?;
+    log::info!("[sender] TransferRequest sent ({})", file_name);
 
-    // Wait for TransferAccept/Reject.
-    let (_, payload) = conn.recv_frame().await?;
+    // Wait for TransferAccept/Reject with 120s timeout.
+    log::info!("[sender] Waiting for TransferAccept...");
+    let accept_result = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        conn.recv_frame(),
+    ).await;
+    let (_, payload) = match accept_result {
+        Ok(Ok(frame)) => frame,
+        Ok(Err(e)) => {
+            log::error!("[sender] recv_frame error while waiting for accept: {e}");
+            return Err(format!("accept recv error: {e}").into());
+        }
+        Err(_) => {
+            log::error!("[sender] TransferAccept timeout (120s)");
+            let _ = event_tx.send(FfiEvent::Error {
+                msg: "Accept timeout: peer did not respond within 120s".to_string(),
+            }).await;
+            return Err("accept timeout (120s)".into());
+        }
+    };
     let msg = codec::decode_control(&payload)?;
     match msg {
-        ControlMessage::TransferAccept { .. } => {}
+        ControlMessage::TransferAccept { .. } => {
+            log::info!("[sender] TransferAccept received");
+        }
         ControlMessage::TransferReject { reason, .. } => {
+            log::info!("[sender] TransferReject: {:?}", reason);
             return Err(format!("rejected: {}", reason.unwrap_or_default()).into());
         }
-        other => return Err(format!("expected Accept/Reject, got {other:?}").into()),
+        other => {
+            log::error!("[sender] unexpected message instead of Accept/Reject: {other:?}");
+            return Err(format!("expected Accept/Reject, got {other:?}").into());
+        }
     }
 
     // Send FileMetadata.
@@ -857,6 +882,9 @@ async fn do_send_file(
         conn.send_chunk(session_id, stream_id, flags, payload)
             .await?;
         in_flight += 1;
+        if offset == end || is_last {
+            log::debug!("[sender] chunk @ offset={offset} len={} is_last={is_last}", end - (offset - (end - offset).min(offset)));
+        }
         offset = end;
     }
 
@@ -883,14 +911,17 @@ async fn do_send_file(
         &ControlMessage::TransferComplete { transfer_id },
     )
     .await?;
+    log::info!("[sender] TransferComplete sent, waiting for TransferAck");
     let (_, pl) = conn.recv_frame().await?;
     let msg = codec::decode_control(&pl)?;
     match msg {
         ControlMessage::TransferAck {
             status: TransferAckStatus::Success,
             ..
-        } => {}
-        other => log::warn!("unexpected TransferAck: {other:?}"),
+        } => {
+            log::info!("[sender] TransferAck(Success) received — transfer done");
+        }
+        other => log::warn!("[sender] unexpected TransferAck: {other:?}"),
     }
 
     let _ = event_tx.send(FfiEvent::Complete { file_path: None }).await;

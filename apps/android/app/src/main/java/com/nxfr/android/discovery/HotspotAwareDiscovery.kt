@@ -95,8 +95,12 @@ class HotspotAwareDiscovery(private val context: Context) {
             }
         }
 
-        // Tier 1: NSD.
-        nsdDiscovery.startDiscovery()
+        // Tier 1: NSD (non-fatal — wrapped so NSD failure degrades to beacon + probe).
+        try {
+            nsdDiscovery.startDiscovery()
+        } catch (e: Throwable) {
+            Log.w(TAG, "NSD tier failed (non-fatal, beacon+probe still active)", e)
+        }
 
         nsdJob = scope.launch {
             // Collect NSD results.

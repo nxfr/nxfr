@@ -122,13 +122,29 @@ class NxfrService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var listenerHandle: Long = 0
     private var activeSessionHandle: Long = 0
+    @Volatile private var listening = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        installCrashCatcher()
         loadOrGenerateIdentity()
         _discovery = HotspotAwareDiscovery(this)
+    }
+
+    /** Write crash stack to filesDir before rethrowing — survives logcat rotation. */
+    private fun installCrashCatcher() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val ts = System.currentTimeMillis()
+                val crashFile = java.io.File(filesDir, "crash-$ts.log")
+                crashFile.writeText("Thread: ${thread.name}\n${android.util.Log.getStackTraceString(throwable)}")
+                Log.e(TAG, "Crash logged to ${crashFile.absolutePath}")
+            } catch (_: Throwable) { /* best effort */ }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
     }
 
     /**
@@ -199,6 +215,11 @@ class NxfrService : Service() {
 
     /** Accept loop: listen → accept → pump for offers. */
     private suspend fun startListening() {
+        if (listening) {
+            Log.w(TAG, "startListening: already active, skipping")
+            return
+        }
+        listening = true
         val storeDir = identityDir()
 
         // Start beacon announcer so this device is discoverable.
