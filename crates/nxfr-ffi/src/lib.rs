@@ -785,10 +785,8 @@ async fn do_send_file(
 
     // Wait for TransferAccept/Reject with 120s timeout.
     log::info!("[sender] Waiting for TransferAccept...");
-    let accept_result = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        conn.recv_frame(),
-    ).await;
+    let accept_result =
+        tokio::time::timeout(std::time::Duration::from_secs(120), conn.recv_frame()).await;
     let (_, payload) = match accept_result {
         Ok(Ok(frame)) => frame,
         Ok(Err(e)) => {
@@ -797,9 +795,11 @@ async fn do_send_file(
         }
         Err(_) => {
             log::error!("[sender] TransferAccept timeout (120s)");
-            let _ = event_tx.send(FfiEvent::Error {
-                msg: "Accept timeout: peer did not respond within 120s".to_string(),
-            }).await;
+            let _ = event_tx
+                .send(FfiEvent::Error {
+                    msg: "Accept timeout: peer did not respond within 120s".to_string(),
+                })
+                .await;
             return Err("accept timeout (120s)".into());
         }
     };
@@ -883,7 +883,10 @@ async fn do_send_file(
             .await?;
         in_flight += 1;
         if offset == end || is_last {
-            log::debug!("[sender] chunk @ offset={offset} len={} is_last={is_last}", end - (offset - (end - offset).min(offset)));
+            log::debug!(
+                "[sender] chunk @ offset={offset} len={} is_last={is_last}",
+                end - (offset - (end - offset).min(offset))
+            );
         }
         offset = end;
     }

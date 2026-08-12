@@ -107,25 +107,24 @@ pub fn sanitize_path(input: &str) -> Result<String, PathError> {
 /// Returns the safe absolute path on success, PathError on jail escape.
 pub fn resolve_safe_path(download_root: &Path, relative: &str) -> Result<PathBuf, PathError> {
     let sanitized = sanitize_path(relative)?;
-    let canon_root = download_root.canonicalize().map_err(|e| {
-        PathError::AbsolutePath(format!("cannot canonicalize root: {e}"))
-    })?;
+    let canon_root = download_root
+        .canonicalize()
+        .map_err(|e| PathError::AbsolutePath(format!("cannot canonicalize root: {e}")))?;
     let joined = canon_root.join(&sanitized);
     // For new files that don't exist yet, canonicalize the parent.
     let check_path = if joined.exists() {
-        joined.canonicalize().map_err(|e| {
-            PathError::AbsolutePath(format!("cannot canonicalize dest: {e}"))
-        })?
+        joined
+            .canonicalize()
+            .map_err(|e| PathError::AbsolutePath(format!("cannot canonicalize dest: {e}")))?
     } else {
         // Canonicalize the parent directory, then append the filename.
         let parent = joined.parent().unwrap_or(&canon_root);
-        let filename = joined.file_name().ok_or_else(|| {
-            PathError::EmptyPath
-        })?;
+        let filename = joined.file_name().ok_or_else(|| PathError::EmptyPath)?;
         if parent.exists() {
-            parent.canonicalize().map_err(|e| {
-                PathError::AbsolutePath(format!("cannot canonicalize parent: {e}"))
-            })?.join(filename)
+            parent
+                .canonicalize()
+                .map_err(|e| PathError::AbsolutePath(format!("cannot canonicalize parent: {e}")))?
+                .join(filename)
         } else {
             // Parent doesn't exist yet — we'll create it. Just check prefix.
             joined.clone()

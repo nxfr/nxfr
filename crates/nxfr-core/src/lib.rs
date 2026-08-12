@@ -33,7 +33,7 @@ pub use error_code::ErrorCode;
 pub use frame::{FrameHeader, FrameKind};
 pub use keepalive::KeepalivePayload;
 pub use messages::ControlMessage;
-pub use path::{sanitize_path, resolve_safe_path};
+pub use path::{resolve_safe_path, sanitize_path};
 pub use session::{SessionAction, SessionEvent, SessionState};
 pub use transfer::{TransferAction, TransferEvent, TransferState};
 

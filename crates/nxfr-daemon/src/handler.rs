@@ -13,7 +13,7 @@ use nxfr_common::{DeviceId, Platform, ProtocolVersion, TransferId};
 use nxfr_core::codec;
 use nxfr_core::frame::FrameKind;
 use nxfr_core::messages::{ControlMessage, ManifestEntryType, TransferAckStatus};
-use nxfr_core::path::{sanitize_path, resolve_safe_path};
+use nxfr_core::path::{resolve_safe_path, sanitize_path};
 use nxfr_crypto::device_id_from_cert;
 use nxfr_storage::db::IdentityCheck;
 use nxfr_storage::resume::{ResumeManifestEntry, ResumeState};
@@ -289,7 +289,10 @@ pub async fn handle_incoming(
                         }
 
                         // Accept transfer.
-                        info!("accept: writing TransferAccept for {}", hex::encode(transfer_id.as_bytes()));
+                        info!(
+                            "accept: writing TransferAccept for {}",
+                            hex::encode(transfer_id.as_bytes())
+                        );
                         let accept = ControlMessage::TransferAccept { transfer_id };
                         match conn.send_control(session_id, 0, &accept).await {
                             Ok(_) => info!("accept: TransferAccept written OK"),
