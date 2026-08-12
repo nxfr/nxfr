@@ -629,7 +629,7 @@ async fn handle_incoming_transfer<S: AsyncRead + AsyncWrite + Unpin>(
                         conn.send_control(session_id, 0, &ack).await?;
 
                         // Prepare destination path with path-jail guard.
-                        let dest = match resolve_safe_path(&receive_dir, &sanitized) {
+                        let dest = match resolve_safe_path(receive_dir, &sanitized) {
                             Ok(p) => p,
                             Err(e) => {
                                 error!("PATH JAIL: \"{sanitized}\" escapes download root — {e}");
