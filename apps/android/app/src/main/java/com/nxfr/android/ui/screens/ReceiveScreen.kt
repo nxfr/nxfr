@@ -1,5 +1,6 @@
 package com.nxfr.android.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nxfr.android.R
+import com.nxfr.android.service.NxfrService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +39,7 @@ fun ReceiveScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    var isVisible by remember { mutableStateOf(false) }
+    val isVisible by NxfrService.isListening.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE) }
     var autoAcceptState by remember { mutableIntStateOf(sharedPrefs.getInt("auto_accept_global", 0)) } // 0: Off, 1: Paired, 2: Everyone
@@ -189,7 +191,17 @@ fun ReceiveScreen(
                 }
                 Switch(
                     checked = isVisible,
-                    onCheckedChange = { isVisible = it },
+                    onCheckedChange = { enabled ->
+                        val prefs = context.getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
+                        prefs.edit().putBoolean("visible_enabled", enabled).apply()
+                        val intent = Intent(context, NxfrService::class.java)
+                        if (enabled) {
+                            context.startService(intent)
+                        } else {
+                            // Stop listening but keep service alive
+                            NxfrService.cancelActiveTransfer()
+                        }
+                    },
                     modifier = Modifier.padding(start = 16.dp)
                 )
             }

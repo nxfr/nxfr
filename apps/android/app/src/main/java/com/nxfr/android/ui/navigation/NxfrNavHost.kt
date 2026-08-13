@@ -37,6 +37,21 @@ import com.nxfr.android.ui.screens.ReceiveScreen
 import com.nxfr.android.ui.screens.SendScreen
 import com.nxfr.android.ui.screens.SettingsScreen
 import com.nxfr.android.ui.screens.TransferScreen
+import com.nxfr.android.service.NxfrState
+import com.nxfr.android.ui.dialogs.ConsentDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.rememberCoroutineScope
+
+private fun formatBytes(bytes: Long): String {
+    return when {
+        bytes >= 1_073_741_824 -> String.format(java.util.Locale.getDefault(), "%.1f GB", bytes / 1_073_741_824.0)
+        bytes >= 1_048_576 -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / 1_048_576.0)
+        bytes >= 1024 -> String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+        else -> "$bytes B"
+    }
+}
 
 @Composable
 fun NxfrNavHost(
@@ -173,6 +188,35 @@ fun NxfrNavHost(
                     }
                 )
             }
+        }
+        
+        val nxfrState by NxfrService.nxfrState.collectAsState()
+        val scope = rememberCoroutineScope()
+        
+        if (nxfrState is NxfrState.Offering) {
+            val offering = nxfrState as NxfrState.Offering
+            ConsentDialog(
+                senderName = offering.peerName,
+                fileCount = offering.totalFiles,
+                totalSizeFormatted = formatBytes(offering.totalSize),
+                onAccept = {
+                    scope.launch {
+                        val confirmJson = withContext(Dispatchers.IO) {
+                            NxfrService.NxfrBridge.nxfr_confirm(offering.handle, true)
+                        }
+                        android.util.Log.i("NxfrNavHost", "Consent accepted: $confirmJson")
+                        navController.navigate(NxfrScreen.Transfer.route)
+                    }
+                },
+                onReject = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            NxfrService.NxfrBridge.nxfr_confirm(offering.handle, false)
+                        }
+                        android.util.Log.i("NxfrNavHost", "Consent rejected")
+                    }
+                }
+            )
         }
     }
 }
