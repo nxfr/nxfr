@@ -269,7 +269,7 @@ fun SettingsScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "Scan a device's QR in the Send tab to pair",
+                            text = "Scan a device's QR in the Send tab, or tick 'pair' when accepting a transfer.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

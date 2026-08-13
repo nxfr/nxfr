@@ -91,6 +91,74 @@ fun SendScreen(
         }
     }
 
+    var showCameraPermissionRationale by remember { mutableStateOf(false) }
+
+    val qrScanLauncher = rememberLauncherForActivityResult(
+        contract = com.journeyapps.barcodescanner.ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            when (val scanRes = com.nxfr.android.transfer.NxfrQrTicketParser.parse(result.contents)) {
+                is com.nxfr.android.transfer.QrScanResult.ConnectTicket -> {
+                    val addr = scanRes.addr
+                    val intent = Intent(context, NxfrService::class.java).apply {
+                        action = NxfrService.ACTION_CONNECT
+                        putExtra(NxfrService.EXTRA_ADDR, addr)
+                    }
+                    context.startService(intent)
+                    isConnecting = true
+                    android.widget.Toast.makeText(context, "Connecting to ${scanRes.deviceId.take(8)}...", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                is com.nxfr.android.transfer.QrScanResult.WebUploadLink -> {
+                    android.widget.Toast.makeText(context, "That's a web-upload link — open it in a browser", android.widget.Toast.LENGTH_LONG).show()
+                }
+                is com.nxfr.android.transfer.QrScanResult.Invalid -> {
+                    android.widget.Toast.makeText(context, "Not an NXFR code", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val options = com.journeyapps.barcodescanner.ScanOptions().apply {
+                setPrompt("Scan an NXFR QR code")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }
+            qrScanLauncher.launch(options)
+        } else {
+            android.widget.Toast.makeText(context, "Camera permission denied — fallback to manual connect", android.widget.Toast.LENGTH_LONG).show()
+            showTroubleshootSheet = true
+        }
+    }
+
+    if (showCameraPermissionRationale) {
+        AlertDialog(
+            onDismissRequest = { showCameraPermissionRationale = false },
+            title = { Text("Camera Permission Required") },
+            text = { Text("Camera permission is required to scan NXFR device QR codes for fast connection and pairing.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCameraPermissionRationale = false
+                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                }) {
+                    Text("Grant")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showCameraPermissionRationale = false
+                    android.widget.Toast.makeText(context, "Camera permission denied — fallback to manual connect", android.widget.Toast.LENGTH_LONG).show()
+                    showTroubleshootSheet = true
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -161,6 +229,24 @@ fun SendScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Row {
+                    IconButton(onClick = {
+                        val permissionState = androidx.core.content.ContextCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.CAMERA
+                        )
+                        if (permissionState == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            val options = com.journeyapps.barcodescanner.ScanOptions().apply {
+                                setPrompt("Scan an NXFR QR code")
+                                setBeepEnabled(false)
+                                setOrientationLocked(false)
+                            }
+                            qrScanLauncher.launch(options)
+                        } else {
+                            showCameraPermissionRationale = true
+                        }
+                    }) {
+                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = "Scan QR code")
+                    }
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.cd_refresh_devices))
                     }

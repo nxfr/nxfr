@@ -24,6 +24,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        handleDeepLink(intent)
+
         // Start the foreground service (loads/generates identity in onCreate).
         startService(Intent(this, NxfrService::class.java))
 
@@ -51,6 +53,28 @@ class MainActivity : ComponentActivity() {
                         onDeviceNameChanged = { NxfrService.setDeviceName(it) },
                     )
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    private fun handleDeepLink(intent: Intent?) {
+        val dataStr = intent?.dataString ?: return
+        if (dataStr.startsWith("nxfr://connect", ignoreCase = true)) {
+            when (val scanRes = com.nxfr.android.transfer.NxfrQrTicketParser.parse(dataStr)) {
+                is com.nxfr.android.transfer.QrScanResult.ConnectTicket -> {
+                    val connectIntent = Intent(this, NxfrService::class.java).apply {
+                        action = NxfrService.ACTION_CONNECT
+                        putExtra(NxfrService.EXTRA_ADDR, scanRes.addr)
+                    }
+                    startService(connectIntent)
+                    android.widget.Toast.makeText(this, "Connecting to ${scanRes.deviceId.take(8)}...", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                else -> {}
             }
         }
     }
