@@ -90,6 +90,28 @@ class NxfrService : Service() {
                 Log.i("NxfrService", "Active transfer cancelled")
             }
         }
+
+        /** Stop the TCP listener and mDNS discovery without killing the service. */
+        fun stopListening(context: android.content.Context? = null) {
+            instance?.let { svc ->
+                Log.i("NxfrService", "Stopping listener and discovery...")
+                _discovery?.stopDiscovery()
+                if (svc.listenerHandle != 0L) {
+                    try { NxfrBridge.nxfr_close(svc.listenerHandle) } catch (e: Throwable) {
+                        Log.e("NxfrService", "Failed to close listener: ${e.message}")
+                        context?.let { ctx ->
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                android.widget.Toast.makeText(ctx, "Stop failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    svc.listenerHandle = 0
+                }
+                svc.listening = false
+                _isListening.value = false
+                Log.i("NxfrService", "Listener stopped.")
+            }
+        }
     }
 
     /**
@@ -109,6 +131,10 @@ class NxfrService : Service() {
         external fun nxfr_connect(addr: String, storeDir: String): String
         external fun nxfr_listen(port: Int, storeDir: String): String
         external fun nxfr_accept(listener: Long): String
+
+        // ── Web Upload ─────────────────────────────────────
+        external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String
+        external fun nxfr_web_stop(): String
 
         // ── Transfer ───────────────────────────────────────
         external fun nxfr_send_file(handle: Long, path: String): String
@@ -224,11 +250,13 @@ class NxfrService : Service() {
                 serviceScope.launch { doSendFile(addr, filePath) }
             }
             else -> {
-                // Reconcile: if visible was persisted ON, start listening.
+                // Reconcile: start on boot/intent ONLY if persisted flag is true.
                 val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
                 val visibleOn = prefs.getBoolean("visible_enabled", false)
-                if (visibleOn || intent?.action == null) {
+                if (visibleOn) {
                     serviceScope.launch { startListening() }
+                } else {
+                    Log.i(TAG, "Service started, but visibility is OFF. Not listening.")
                 }
             }
         }
@@ -290,6 +318,9 @@ class NxfrService : Service() {
             _nxfrState.value = NxfrState.Error(msg)
             _isListening.value = false
             listening = false
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this@NxfrService, "Listen failed: $msg", android.widget.Toast.LENGTH_LONG).show()
+            }
             return
         }
         listenerHandle = listenResult.getLong("listener")
@@ -468,6 +499,10 @@ class NxfrService : Service() {
                     return
                 }
                 "error" -> {
+                    if (handle != activeSessionHandle) {
+                        Log.i(TAG, "Transfer cancelled locally, ignoring error.")
+                        return
+                    }
                     val raw = event.optString("message")
                     // Map storage errors to human-readable messages.
                     val human = when {
@@ -488,6 +523,7 @@ class NxfrService : Service() {
                     return
                 }
                 "disconnected" -> {
+                    if (handle != activeSessionHandle) return
                     _nxfrState.value = NxfrState.Error("Session disconnected")
                     activeSessionHandle = 0
                     return

@@ -18,6 +18,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +39,7 @@ fun ReceiveScreen(
     deviceName: String = "My Device",
     deviceId: String = "",
     onDeviceNameChanged: (String) -> Unit = {},
+    onReceiveViaLink: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -48,6 +51,7 @@ fun ReceiveScreen(
     var newDeviceName by remember { mutableStateOf(deviceName) }
     var showWarningDialog by remember { mutableStateOf(false) }
     var saveFolderPath by remember { mutableStateOf<Uri?>(null) }
+    var showInfoSheet by remember { mutableStateOf(false) }
     
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
@@ -62,6 +66,18 @@ fun ReceiveScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
+        // Top-right icons
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            IconButton(onClick = { /* TODO: history */ }) {
+                Icon(Icons.Default.History, contentDescription = "History")
+            }
+            IconButton(onClick = { showInfoSheet = true }) {
+                Icon(Icons.Default.Info, contentDescription = "Info")
+            }
+        }
         
         // 1. Centered NXFR logo with infinite radar-pulse animation
         val infiniteTransition = rememberInfiniteTransition(label = "RadarPulse")
@@ -200,7 +216,7 @@ fun ReceiveScreen(
                             context.startService(intent)
                         } else {
                             // Stop listening but keep service alive
-                            NxfrService.cancelActiveTransfer()
+                            NxfrService.stopListening(context)
                         }
                     },
                     modifier = Modifier.padding(start = 16.dp)
@@ -208,34 +224,9 @@ fun ReceiveScreen(
             }
         }
 
-        // Info card
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = stringResource(R.string.receive_info_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row {
-                    Text("IP: ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(getDeviceIp(context), style = MaterialTheme.typography.bodySmall)
-                }
-                Row {
-                    Text("Port: ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("17394", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
         if (isVisible) {
             OutlinedButton(
-                onClick = { /* TODO: navigate to WebUploadScreen */ },
+                onClick = onReceiveViaLink,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -365,12 +356,57 @@ fun ReceiveScreen(
         // Add bottom padding for better scroll feel
         Spacer(modifier = Modifier.height(16.dp))
     }
+
+    if (showInfoSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showInfoSheet = false },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.receive_info_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Device Name: $deviceName",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                
+                HorizontalDivider()
+                
+                Text("IP Addresses", style = MaterialTheme.typography.titleMedium)
+                val ips = getDeviceIps(context)
+                if (ips.isEmpty()) {
+                    Text("Not connected", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    ips.forEach { ip ->
+                        Text(ip, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                HorizontalDivider()
+                
+                Text("Ports", style = MaterialTheme.typography.titleMedium)
+                Text("17394 (NXFR Protocol)", style = MaterialTheme.typography.bodyMedium)
+                Text("17396 (Web Upload)", style = MaterialTheme.typography.bodyMedium)
+                
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
 }
 
-private fun getDeviceIp(context: android.content.Context): String {
+private fun getDeviceIps(context: android.content.Context): List<String> {
     try {
         val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
-        val ips = mutableListOf<String>()
+        val ips = mutableListOf<Pair<String, String>>()
         while (interfaces.hasMoreElements()) {
             val iface = interfaces.nextElement()
             if (iface.isLoopback || !iface.isUp) continue
@@ -378,12 +414,15 @@ private fun getDeviceIp(context: android.content.Context): String {
             while (addrs.hasMoreElements()) {
                 val addr = addrs.nextElement()
                 if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                    ips.add(addr.hostAddress ?: "")
+                    ips.add(iface.name to (addr.hostAddress ?: ""))
                 }
             }
         }
-        return if (ips.isEmpty()) "Not connected" else ips.joinToString(", ")
+        // Prioritize wlan0 and ap0
+        return ips.sortedByDescending { 
+            it.first.startsWith("wlan") || it.first.startsWith("ap") 
+        }.map { "${it.second} (${it.first})" }
     } catch (_: Exception) {
-        return "Unknown"
+        return emptyList()
     }
 }

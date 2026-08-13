@@ -29,36 +29,36 @@ val InterFontFamily = FontFamily(
     Font(R.font.inter_bold, FontWeight.Bold),
 )
 
-// ── Typography ────────────────────────────────────────────────────────
+// ── Typography Scale ──────────────────────────────────────────────────
 private val NxfrTypography = Typography().let { base ->
     Typography(
-        displayLarge = base.displayLarge.copy(fontFamily = InterFontFamily),
-        displayMedium = base.displayMedium.copy(fontFamily = InterFontFamily),
-        displaySmall = base.displaySmall.copy(fontFamily = InterFontFamily),
-        headlineLarge = base.headlineLarge.copy(fontFamily = InterFontFamily),
-        headlineMedium = base.headlineMedium.copy(fontFamily = InterFontFamily),
-        headlineSmall = base.headlineSmall.copy(fontFamily = InterFontFamily),
-        titleLarge = base.titleLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Bold),
+        displayLarge = base.displayLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Bold),
+        displayMedium = base.displayMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Bold),
+        displaySmall = base.displaySmall.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
+        headlineLarge = base.headlineLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
+        headlineMedium = base.headlineMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
+        headlineSmall = base.headlineSmall.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
+        titleLarge = base.titleLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
         titleMedium = base.titleMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Medium),
         titleSmall = base.titleSmall.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Medium),
-        bodyLarge = base.bodyLarge.copy(fontFamily = InterFontFamily),
-        bodyMedium = base.bodyMedium.copy(fontFamily = InterFontFamily),
-        bodySmall = base.bodySmall.copy(fontFamily = InterFontFamily),
+        bodyLarge = base.bodyLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Normal),
+        bodyMedium = base.bodyMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Normal),
+        bodySmall = base.bodySmall.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Normal),
         labelLarge = base.labelLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Medium),
         labelMedium = base.labelMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Medium),
-        labelSmall = base.labelSmall.copy(fontFamily = InterFontFamily),
+        labelSmall = base.labelSmall.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Normal),
     )
 }
 
-// ── Shapes ────────────────────────────────────────────────────────────
+// ── Shapes (8/12/16/24 dp tokens) ─────────────────────────────────────
 private val NxfrShapes = Shapes(
     small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
-// ── Color schemes ─────────────────────────────────────────────────────
+// ── Bold Identity Color Schemes ───────────────────────────────────────
 private val NxfrDarkColorScheme = darkColorScheme(
     primary = ElectricCyan,
     onPrimary = DarkOnPrimary,
@@ -99,11 +99,11 @@ private val NxfrLightColorScheme = lightColorScheme(
     onBackground = LightOnSurface,
 )
 
-// ── Theme composable ──────────────────────────────────────────────────
+// ── Theme Composable ──────────────────────────────────────────────────
 @Composable
 fun NxfrTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // Default: Bold Identity brand palette
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

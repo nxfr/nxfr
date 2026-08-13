@@ -1,0 +1,20 @@
+[package]
+name = "nxfr-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+nxfr-crypto = { workspace = true }
+nxfr-storage = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

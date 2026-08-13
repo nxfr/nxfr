@@ -136,6 +136,21 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+            val useDynamicColor by ThemePreference.useDynamicColor.collectAsState()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Material You Dynamic Color", style = MaterialTheme.typography.bodyMedium)
+                    Text("Adapt palette to system wallpaper (Default: Bold Identity)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(
+                    checked = useDynamicColor,
+                    onCheckedChange = { ThemePreference.setDynamicColor(context, it) }
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()

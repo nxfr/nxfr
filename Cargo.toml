@@ -49,6 +49,7 @@ nxfr-crypto = { path = "crates/nxfr-crypto" }
 nxfr-transport = { path = "crates/nxfr-transport" }
 nxfr-storage = { path = "crates/nxfr-storage" }
 nxfr-discovery = { path = "crates/nxfr-discovery" }
+nxfr-web = { path = "crates/nxfr-web" }
 
 # Dev / Util
 hex = "0.4"

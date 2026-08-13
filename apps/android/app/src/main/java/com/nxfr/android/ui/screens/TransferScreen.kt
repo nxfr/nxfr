@@ -35,6 +35,8 @@ fun TransferScreen(
             onComplete()
         }
     }
+    
+    androidx.activity.compose.BackHandler(onBack = onCancel)
 
     Column(
         modifier = modifier

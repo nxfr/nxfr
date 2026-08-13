@@ -1553,6 +1553,7 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
         let session = sessions_map().lock().unwrap().remove(&handle);
         if let Some(session) = session {
+            log::info!("[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}", handle);
             let rt = get_runtime();
             rt.block_on(async {
                 let mut conn_guard = session.conn.lock().await;
@@ -1567,6 +1568,8 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
                 }
                 *conn_guard = None;
             });
+        } else {
+            log::info!("[nxfr-ffi] nxfr_close: Session {} not found or already closed", handle);
         }
         json_ok(serde_json::json!({ "handle": handle, "status": "closed" }))
     })
@@ -1692,6 +1695,89 @@ pub unsafe extern "C" fn nxfr_string_free(ptr: *mut c_char) {
     if !ptr.is_null() {
         let _ = unsafe { CString::from_raw(ptr) };
     }
+}
+// ─── Web Upload Server ──────────────────────────────────────────────────
+
+static WEB_SERVER: std::sync::OnceLock<std::sync::Mutex<Option<nxfr_web::WebServerHandle>>> = std::sync::OnceLock::new();
+
+fn web_server_lock() -> &'static std::sync::Mutex<Option<nxfr_web::WebServerHandle>> {
+    WEB_SERVER.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Start the token-gated HTTPS web upload endpoint.
+/// `port` = preferred port (e.g. 17396; retries port+1 if bound).
+/// `store_dir` = path to identity directory.
+/// `pin` = optional PIN (null or empty string if none).
+/// Returns JSON: `{"port": 17396, "token": "...", "status": "started"}` or `{"error": "..."}`.
+#[no_mangle]
+pub extern "C" fn nxfr_web_start(port: u16, store_dir: *const c_char, pin: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let pin_opt = if !pin.is_null() {
+            match cstr_to_str(pin) {
+                Ok(s) if !s.is_empty() => Some(s.to_string()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let identity = match load_identity(dir) {
+            Ok(id) => id,
+            Err(e) => return json_err(&e),
+        };
+
+        let receive_dir = match receive_dir_override().lock().unwrap().clone() {
+            Some(d) => d,
+            None => PathBuf::from(dir).join("inbox"),
+        };
+
+        if let Some(existing) = web_server_lock().lock().unwrap().take() {
+            existing.stop();
+        }
+
+        let rt = get_runtime();
+        let preferred_port = if port == 0 { nxfr_web::DEFAULT_WEB_PORT } else { port };
+
+        let handle_res = rt.block_on(async {
+            nxfr_web::WebServer::start(
+                &identity.key_der,
+                &identity.cert_der,
+                receive_dir,
+                preferred_port,
+                pin_opt,
+            ).await
+        });
+
+        match handle_res {
+            Ok(handle) => {
+                let actual_port = handle.port;
+                let token = handle.token.clone();
+                *web_server_lock().lock().unwrap() = Some(handle);
+                json_ok(serde_json::json!({
+                    "port": actual_port,
+                    "token": token,
+                    "status": "started"
+                }))
+            }
+            Err(e) => json_err(&format!("web_start failed: {e}")),
+        }
+    })
+}
+
+/// Stop the running web upload server.
+#[no_mangle]
+pub extern "C" fn nxfr_web_stop() -> *mut c_char {
+    ffi_guard(|| {
+        if let Some(server) = web_server_lock().lock().unwrap().take() {
+            server.stop();
+            log::info!("[nxfr-ffi] Web server stopped.");
+        }
+        json_ok(serde_json::json!({ "status": "stopped" }))
+    })
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────

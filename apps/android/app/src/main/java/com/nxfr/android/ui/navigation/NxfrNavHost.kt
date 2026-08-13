@@ -109,6 +109,7 @@ fun NxfrNavHost(
                     deviceName = deviceName,
                     deviceId = deviceId,
                     onDeviceNameChanged = onDeviceNameChanged,
+                    onReceiveViaLink = { navController.navigate(NxfrScreen.WebUpload.route) },
                 )
             }
             composable(NxfrScreen.Send.route) {
@@ -181,6 +182,7 @@ fun NxfrNavHost(
             composable(NxfrScreen.Transfer.route) {
                 TransferScreen(
                     onCancel = {
+                        Log.i("NxfrNavHost", "TransferScreen: Cancel button tapped")
                         NxfrService.cancelActiveTransfer()
                         navController.popBackStack()
                     },

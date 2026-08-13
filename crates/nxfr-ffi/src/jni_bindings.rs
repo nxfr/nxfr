@@ -495,3 +495,41 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     }));
     result.unwrap_or(std::ptr::null_mut())
 }
+
+// ─── Web Upload Server ──────────────────────────────────────────────────
+
+/// `external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1start(
+    mut env: JNIEnv,
+    _class: JClass,
+    port: jint,
+    store_dir: JString,
+    pin: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let pin_str = jstring_to_string(&mut env, &pin).unwrap_or_default();
+        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_pin = std::ffi::CString::new(pin_str).unwrap_or_default();
+        let ptr = super::nxfr_web_start(port as u16, c_dir.as_ptr(), c_pin.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_web_stop(): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1stop(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ptr = super::nxfr_web_stop();
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
