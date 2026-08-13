@@ -38,7 +38,7 @@ use nxfr_core::messages::{
 use nxfr_transport::connection::NxfrConnection;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use zeroize::Zeroize;
@@ -195,12 +195,12 @@ struct Session {
     pending_offer: Arc<std::sync::Mutex<Option<PendingOffer>>>,
 }
 
-/// An active listener (TCP accept loop + queue of pending TLS connections).
-#[allow(dead_code)]
 struct Listener {
     pending_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcceptedConn>>>,
     identity: FfiIdentity,
     port: u16,
+    cancel_token: tokio_util::sync::CancellationToken,
+    accept_task: tokio::task::JoinHandle<()>,
 }
 
 /// A TLS connection accepted by the listener, awaiting HELLO exchange.
@@ -483,6 +483,41 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
 
 // ─── Connection: Listen + Accept ────────────────────────────────────────
 
+fn create_reuseaddr_listener(port: u16) -> Result<tokio::net::TcpListener, String> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    use std::net::SocketAddr;
+
+    let domain = Domain::IPV4;
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| format!("socket creation failed: {e}"))?;
+    socket.set_reuse_address(true).map_err(|e| format!("set_reuse_address failed: {e}"))?;
+    socket.set_nonblocking(true).map_err(|e| format!("set_nonblocking failed: {e}"))?;
+    
+    let address: SocketAddr = format!("0.0.0.0:{port}").parse().map_err(|e| format!("invalid addr: {e}"))?;
+    socket.bind(&address.into()).map_err(|e| format!("bind: {e}"))?;
+    socket.listen(128).map_err(|e| format!("listen: {e}"))?;
+
+    let std_listener: std::net::TcpListener = socket.into();
+    tokio::net::TcpListener::from_std(std_listener).map_err(|e| format!("from_std: {e}"))
+}
+
+async fn bind_listener_with_retry(port: u16) -> Result<tokio::net::TcpListener, String> {
+    let mut last_err = String::new();
+    for attempt in 1..=3 {
+        match create_reuseaddr_listener(port) {
+            Ok(l) => return Ok(l),
+            Err(e) => {
+                last_err = e.clone();
+                if attempt < 3 {
+                    log::warn!("[nxfr-ffi] Bind attempt {attempt}/3 on port {port} failed: {e}, retrying in 250ms...");
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
 /// Bind a listening TLS socket. Returns `{ listener, port }`.
 /// `store_dir` = path to identity directory.
 #[no_mangle]
@@ -508,50 +543,59 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
         let rt = get_runtime();
         let (pending_tx, pending_rx) = mpsc::channel::<AcceptedConn>(16);
 
-        let actual_port = match rt.block_on(async {
-            let listener = TcpListener::bind(format!("0.0.0.0:{port}"))
-                .await
-                .map_err(|e| format!("bind: {e}"))?;
+        let (actual_port, cancel_token, accept_task) = match rt.block_on(async {
+            let listener = bind_listener_with_retry(port).await?;
             let actual_port = listener
                 .local_addr()
                 .map_err(|e| format!("local_addr: {e}"))?
                 .port();
 
+            let cancel_token = tokio_util::sync::CancellationToken::new();
+            let cancel_clone = cancel_token.clone();
+
             // Spawn accept loop.
             let acceptor = TlsAcceptor::from(Arc::new(server_config));
-            tokio::spawn(async move {
+            let accept_task = tokio::spawn(async move {
                 loop {
-                    match listener.accept().await {
-                        Ok((tcp, addr)) => {
-                            let acc = acceptor.clone();
-                            let tx = pending_tx.clone();
-                            tokio::spawn(async move {
-                                match acc.accept(tcp).await {
-                                    Ok(tls) => {
-                                        let _ = tx
-                                            .send(AcceptedConn {
-                                                stream: TlsStream::Server(tls),
-                                                addr,
-                                            })
-                                            .await;
-                                    }
-                                    Err(e) => {
-                                        log::warn!("TLS accept from {addr}: {e}");
-                                    }
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            log::error!("TCP accept failed: {e}");
+                    tokio::select! {
+                        _ = cancel_clone.cancelled() => {
+                            log::info!("[nxfr-ffi] Accept loop cancelled, releasing TCP listener.");
                             break;
+                        }
+                        res = listener.accept() => {
+                            match res {
+                                Ok((tcp, addr)) => {
+                                    let acc = acceptor.clone();
+                                    let tx = pending_tx.clone();
+                                    tokio::spawn(async move {
+                                        match acc.accept(tcp).await {
+                                            Ok(tls) => {
+                                                let _ = tx
+                                                    .send(AcceptedConn {
+                                                        stream: TlsStream::Server(tls),
+                                                        addr,
+                                                    })
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                log::warn!("TLS accept from {addr}: {e}");
+                                            }
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    log::error!("TCP accept failed: {e}");
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             });
 
-            Ok::<_, String>(actual_port)
+            Ok::<_, String>((actual_port, cancel_token, accept_task))
         }) {
-            Ok(p) => p,
+            Ok(v) => v,
             Err(e) => return json_err(&e),
         };
 
@@ -562,6 +606,8 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
                 pending_rx: Arc::new(tokio::sync::Mutex::new(pending_rx)),
                 identity,
                 port: actual_port,
+                cancel_token,
+                accept_task,
             },
         );
 
@@ -1551,6 +1597,16 @@ pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -
 #[no_mangle]
 pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
+        if let Some(listener) = listeners_map().lock().unwrap().remove(&handle) {
+            log::info!("[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}", handle, listener.port);
+            listener.cancel_token.cancel();
+            listener.accept_task.abort();
+            let rt = get_runtime();
+            let _ = rt.block_on(async { listener.accept_task.await });
+            log::info!("[nxfr-ffi] nxfr_close: Listener on port {} dropped and socket freed.", listener.port);
+            return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
+        }
+
         let session = sessions_map().lock().unwrap().remove(&handle);
         if let Some(session) = session {
             log::info!("[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}", handle);
@@ -1569,7 +1625,7 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
                 *conn_guard = None;
             });
         } else {
-            log::info!("[nxfr-ffi] nxfr_close: Session {} not found or already closed", handle);
+            log::info!("[nxfr-ffi] nxfr_close: Handle {} not found or already closed", handle);
         }
         json_ok(serde_json::json!({ "handle": handle, "status": "closed" }))
     })
@@ -2375,5 +2431,44 @@ mod tests {
         let r = parse_ffi_json(nxfr_paired_list(dir.as_ptr()));
         let devices = r["devices"].as_array().unwrap();
         assert!(devices.is_empty(), "should be empty after unpair");
+    }
+
+    #[test]
+    fn test_listener_teardown_and_rapid_rebind() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = CString::new(dir.path().to_str().unwrap()).unwrap();
+
+        // Generate identity.
+        let gen = parse_ffi_json(nxfr_identity_generate(dir_str.as_ptr()));
+        assert!(gen.get("error").is_none());
+
+        // 1. Single bind -> close -> rebind test on same port
+        let res1 = parse_ffi_json(nxfr_listen(0, dir_str.as_ptr()));
+        assert!(res1.get("error").is_none(), "first listen failed: {:?}", res1);
+        let port = res1["port"].as_u64().unwrap() as u16;
+        let handle1 = res1["listener"].as_u64().unwrap();
+
+        let close_res1 = parse_ffi_json(nxfr_close(handle1));
+        assert_eq!(close_res1["status"].as_str().unwrap(), "closed");
+
+        // Rebind on EXACT same port
+        let res2 = parse_ffi_json(nxfr_listen(port, dir_str.as_ptr()));
+        assert!(res2.get("error").is_none(), "rebind on same port failed: {:?}", res2);
+        let handle2 = res2["listener"].as_u64().unwrap();
+        let close_res2 = parse_ffi_json(nxfr_close(handle2));
+        assert_eq!(close_res2["status"].as_str().unwrap(), "closed");
+
+        // 2. Rapid toggle 5x with zero backoff
+        for i in 1..=5 {
+            let res = parse_ffi_json(nxfr_listen(port, dir_str.as_ptr()));
+            assert!(
+                res.get("error").is_none(),
+                "rapid toggle iteration {i} failed: {:?}",
+                res
+            );
+            let h = res["listener"].as_u64().unwrap();
+            let c = parse_ffi_json(nxfr_close(h));
+            assert_eq!(c["status"].as_str().unwrap(), "closed");
+        }
     }
 }

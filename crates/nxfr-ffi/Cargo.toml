@@ -22,7 +22,9 @@ chrono = { workspace = true }
 ring = { workspace = true }
 zeroize = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tokio-rustls = { workspace = true }
+socket2 = { workspace = true }
 rustls-pki-types = { workspace = true }
 log = { workspace = true }
 jni = "0.21"

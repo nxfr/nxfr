@@ -54,6 +54,7 @@ nxfr-web = { path = "crates/nxfr-web" }
 # Dev / Util
 hex = "0.4"
 log = "0.4"
+socket2 = "0.5"
 env_logger = "0.11"
 
 # CLI
