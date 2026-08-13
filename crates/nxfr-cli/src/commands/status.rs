@@ -33,6 +33,7 @@ pub async fn handle() -> anyhow::Result<()> {
     println!("  State:      {}", state);
     println!("  Device ID:  {}", device_id);
     println!("  Receiving:  {}", receiving_str);
+    println!("  Receive dir: {}", resp["receive_dir"].as_str().unwrap_or("?"));
     println!("  Discovery:  {}", discovery);
     println!("  Paired:     {} devices", paired);
     println!("  Transfers:  {}", transfers_str);

@@ -13,7 +13,7 @@ pub async fn handle() -> anyhow::Result<()> {
     // Wait for the initial ack before entering the event loop.
     if let Some(ack) = client.read_event().await? {
         if ack["ok"].as_bool() != Some(true) {
-            let err = ack["error"].as_str().unwrap_or("Unknown error");
+            let err = ack["error"].as_str().unwrap_or("no error detail");
             anyhow::bail!("Watch failed: {err}");
         }
     }
@@ -104,12 +104,13 @@ pub async fn handle() -> anyhow::Result<()> {
                 if let Some(p) = pb.take() {
                     p.finish_and_clear();
                 }
-                let err_msg = event["message"].as_str().unwrap_or("Unknown error");
+                let err_msg = event["message"].as_str().unwrap_or("no error detail");
                 eprintln!("Error: {err_msg}");
             }
             _ => {}
         }
     }
 
+    println!("Watch connection closed.");
     Ok(())
 }

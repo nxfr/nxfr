@@ -36,16 +36,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Load config.
-    let config = NxfrConfig::load().unwrap_or_else(|e| {
+    let mut config = NxfrConfig::load().unwrap_or_else(|e| {
         info!("Config load failed ({e}), using defaults");
         NxfrConfig::default()
     });
+    // Sanitize /tmp test path leftover.
+    {
+        let recv_str = config.receive_dir.to_string_lossy().to_string();
+        if recv_str.contains("/tmp") || recv_str.contains("nxfr-test-recv") {
+            let new_default = NxfrConfig::default().receive_dir;
+            warn!("Receive dir '{}' contains /tmp test path — replacing with '{}'",
+                config.receive_dir.display(), new_default.display());
+            config.receive_dir = new_default;
+            if let Err(e) = config.save() {
+                warn!("Failed to persist updated config: {e}");
+            }
+        }
+    }
     info!("Device name: {}", config.device_name);
     info!("Receive dir: {}", config.receive_dir.display());
     info!("Receiving enabled: {}", config.receiving_enabled);
 
-    // Ensure receive dir exists.
+    // Create receive dir with mode 0700.
     std::fs::create_dir_all(&config.receive_dir)?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config.receive_dir,
+            std::fs::Permissions::from_mode(0o700));
+    }
 
     // Open paired device DB.
     let db = PairedDeviceDb::open_default()?;
@@ -119,6 +137,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ipc_handle = tokio::spawn(async move {
         if let Err(e) = ipc::run_ipc_server(state_ipc).await {
             error!("IPC server error: {e}");
+        }
+    });
+
+    // Offer expiry: auto-reject offers older than 120s.
+    let expiry_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let mut offers = expiry_state.pending_offers.lock().await;
+            let now = std::time::Instant::now();
+            let expired: Vec<String> = offers.iter()
+                .filter(|(_, o)| now >= o.expires_at)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for tid in expired {
+                if let Some(mut offer) = offers.remove(&tid) {
+                    if let Some(tx) = offer.respond_to.take() {
+                        let _ = tx.send(false);
+                    }
+                    info!("Offer {tid} expired (120s timeout), auto-rejected");
+                }
+            }
         }
     });
 

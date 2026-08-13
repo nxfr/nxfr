@@ -352,6 +352,7 @@ async fn cmd_status(state: &DaemonState) -> IpcEvent {
         "state": "running",
         "device_name": config.device_name,
         "receiving_enabled": config.receiving_enabled,
+        "receive_dir": config.receive_dir.display().to_string(),
         "discovery": discovery_status,
         "active_transfers": transfers,
         "paired_devices": paired_count,
