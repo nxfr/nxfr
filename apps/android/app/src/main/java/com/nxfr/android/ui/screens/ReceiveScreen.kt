@@ -79,56 +79,96 @@ fun ReceiveScreen(
             }
         }
         
-        // 1. Centered NXFR logo with infinite radar-pulse animation
+        // 1. Dual-Ring Radar Pulse Hero (200dp) with status chip
+        val isListening by NxfrService.isListening.collectAsState()
         val infiniteTransition = rememberInfiniteTransition(label = "RadarPulse")
-        val alpha by infiniteTransition.animateFloat(
-            initialValue = 0.3f,
-            targetValue = 1.0f,
+        
+        val maxScale = if (isListening) 1.5f else 1.1f
+        val maxAlpha = if (isListening) 0.6f else 0.15f
+
+        val pulseProgress by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
             animationSpec = infiniteRepeatable(
                 animation = tween(2000, easing = EaseInOut),
-                repeatMode = RepeatMode.Reverse
+                repeatMode = RepeatMode.Restart
             ),
-            label = "AlphaPulse"
-        )
-        val scale by infiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.15f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(2000, easing = EaseInOut),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "ScalePulse"
+            label = "PulseProgress"
         )
 
         Box(
             contentAlignment = Alignment.Center, 
-            modifier = Modifier.padding(top = 32.dp, bottom = 16.dp)
+            modifier = Modifier
+                .size(220.dp)
+                .padding(top = 16.dp, bottom = 8.dp)
         ) {
-            // Outer ring
+            // Ring 1 (Inner expanding pulse)
+            val ring1Scale = 1.0f + (pulseProgress * (maxScale - 1.0f))
+            val ring1Alpha = maxAlpha * (1.0f - pulseProgress)
             Surface(
                 modifier = Modifier
-                    .size(140.dp)
+                    .size(160.dp)
                     .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        this.alpha = alpha
+                        scaleX = ring1Scale
+                        scaleY = ring1Scale
+                        this.alpha = ring1Alpha
                     },
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+            ) {}
+
+            // Ring 2 (Outer delayed pulse)
+            val ring2Progress = (pulseProgress + 0.5f) % 1.0f
+            val ring2Scale = 1.0f + (ring2Progress * (maxScale - 1.0f))
+            val ring2Alpha = maxAlpha * (1.0f - ring2Progress)
+            Surface(
+                modifier = Modifier
+                    .size(160.dp)
+                    .graphicsLayer {
+                        scaleX = ring2Scale
+                        scaleY = ring2Scale
+                        this.alpha = ring2Alpha
+                    },
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
             ) {}
             
-            // Inner logo
+            // Central Glowing Node
             Surface(
-                modifier = Modifier.size(100.dp),
+                modifier = Modifier.size(90.dp),
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                tonalElevation = 6.dp,
+                shadowElevation = if (isListening) 8.dp else 2.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = "N",
-                        fontSize = 72.sp,
-                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 54.sp,
+                        color = if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Status Chip Overlay at bottom of hero
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 0.dp),
+                shape = MaterialTheme.shapes.small,
+                color = if (isListening) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isListening) "🏠 Visible on LAN" else "🙈 Hidden",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isListening) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }

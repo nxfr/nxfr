@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -82,7 +84,7 @@ tasks.register("verifyNativeSymbols") {
         for (abi in jniDirs) {
             val soFile = file("$jniBase/$abi/libnxfr_ffi.so")
             if (soFile.exists()) {
-                val output = java.io.ByteArrayOutputStream()
+                val output = ByteArrayOutputStream()
                 exec {
                     commandLine("nm", "-D", soFile.absolutePath)
                     standardOutput = output
