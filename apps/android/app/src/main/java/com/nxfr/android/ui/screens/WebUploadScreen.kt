@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.QrCode
@@ -22,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -166,19 +169,32 @@ fun WebUploadScreen(
                     
                     Spacer(modifier = Modifier.height(12.dp))
                     
+                    var isCopied by remember { mutableStateOf(false) }
+                    val coroutineScope = rememberCoroutineScope()
+
                     OutlinedButton(
                         onClick = {
                             if (webUrl.isNotEmpty()) {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Upload Link", webUrl))
                                 Toast.makeText(context, context.getString(R.string.receive_web_link_copied), Toast.LENGTH_SHORT).show()
+                                isCopied = true
+                                coroutineScope.launch {
+                                    kotlinx.coroutines.delay(1200)
+                                    isCopied = false
+                                }
                             }
                         },
                         enabled = !isStarting
                     ) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (isCopied) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.receive_web_copy_link))
+                        Text(if (isCopied) "Link Copied ✓" else stringResource(R.string.receive_web_copy_link))
                     }
                 }
             }

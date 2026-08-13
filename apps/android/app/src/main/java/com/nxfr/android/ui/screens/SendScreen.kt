@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -227,10 +228,22 @@ fun SendScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
+                    val floatTransition = rememberInfiniteTransition(label = "EmptyFloat")
+                    val floatOffset by floatTransition.animateFloat(
+                        initialValue = -4f,
+                        targetValue = 4f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(2000, easing = EaseInOut),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "FloatOffset"
+                    )
+
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .size(120.dp)
+                            .offset(y = floatOffset.dp)
                             .padding(8.dp)
                     ) {
                         Surface(
