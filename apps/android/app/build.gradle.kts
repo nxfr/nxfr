@@ -14,8 +14,8 @@ android {
         applicationId = "com.nxfr.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.2.1-alpha"
+        versionCode = 9
+        versionName = "0.2.2-alpha"
     }
 
     buildTypes {
@@ -99,6 +99,33 @@ tasks.register("verifyNativeSymbols") {
     }
 }
 
+tasks.register("verifyNativeFresh") {
+    doLast {
+        val jniDirs = listOf("arm64-v8a", "x86_64")
+        val jniBase = file("src/main/jniLibs")
+        val cratesDir = file("../../crates")
+        
+        var newestRsTime = 0L
+        if (cratesDir.exists()) {
+            cratesDir.walkTopDown().filter { it.isFile && it.extension == "rs" }.forEach { file ->
+                if (file.lastModified() > newestRsTime) {
+                    newestRsTime = file.lastModified()
+                }
+            }
+        }
+
+        for (abi in jniDirs) {
+            val soFile = file("$jniBase/$abi/libnxfr_ffi.so")
+            if (soFile.exists() && newestRsTime > 0) {
+                check(soFile.lastModified() >= newestRsTime) {
+                    "STALE NATIVE LIB — run cargo ndk -t arm64-v8a -t x86_64 -o apps/android/app/src/main/jniLibs build --release -p nxfr-ffi"
+                }
+                println("Verified native freshness for ${soFile.name} ($abi)")
+            }
+        }
+    }
+}
+
 tasks.named("preBuild") {
-    dependsOn("verifyNativeSymbols")
+    dependsOn("verifyNativeSymbols", "verifyNativeFresh")
 }
