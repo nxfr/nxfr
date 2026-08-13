@@ -474,3 +474,24 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
         }
     });
 }
+
+// ─── Storage ────────────────────────────────────────────────────────────
+
+/// `external fun nxfr_set_receive_dir(path: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1set_1receive_1dir(
+    mut env: JNIEnv,
+    _class: JClass,
+    path: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let path_str = match jstring_to_string(&mut env, &path) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_path = std::ffi::CString::new(path_str).unwrap_or_default();
+        let ptr = super::nxfr_set_receive_dir(c_path.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}

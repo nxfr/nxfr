@@ -36,6 +36,7 @@ chrono = { workspace = true }
 futures-util = { workspace = true }
 dirs = { workspace = true }
 mdns-sd = { workspace = true }
+getrandom = { workspace = true }
 nix = { workspace = true }
 
 [dev-dependencies]

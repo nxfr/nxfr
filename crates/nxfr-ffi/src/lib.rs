@@ -23,7 +23,7 @@ use std::ffi::{CStr, CString};
 use std::net::SocketAddr;
 use std::os::raw::c_char;
 use std::panic;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -57,6 +57,26 @@ pub extern "C" fn JNI_OnLoad(
     );
     log::info!("[nxfr-ffi] JNI_OnLoad: android_logger initialized");
     0x00010006 // JNI_VERSION_1_6
+}
+
+/// Set the receive directory for incoming files.
+/// Must be called before any transfers. On Android, pass
+/// `context.getExternalFilesDir(null)/inbox`.
+#[no_mangle]
+pub extern "C" fn nxfr_set_receive_dir(path: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(path) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let p = PathBuf::from(dir);
+        if let Err(e) = std::fs::create_dir_all(&p) {
+            return json_err(&format!("create receive dir: {e}"));
+        }
+        *receive_dir_override().lock().unwrap() = Some(p);
+        log::info!("[nxfr-ffi] receive_dir set to: {dir}");
+        json_ok(serde_json::json!({"receive_dir": dir}))
+    })
 }
 
 // ─── TlsStream ──────────────────────────────────────────────────────────
@@ -196,6 +216,14 @@ static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static SESSIONS: OnceLock<std::sync::Mutex<HashMap<u64, Session>>> = OnceLock::new();
 static LISTENERS: OnceLock<std::sync::Mutex<HashMap<u64, Listener>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+
+/// Global receive-dir override set by the host (Android).
+/// Checked FIRST in do_receive_file; falls back to NxfrConfig if unset.
+static RECEIVE_DIR: OnceLock<std::sync::Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn receive_dir_override() -> &'static std::sync::Mutex<Option<PathBuf>> {
+    RECEIVE_DIR.get_or_init(|| std::sync::Mutex::new(None))
+}
 
 fn get_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
@@ -1111,12 +1139,28 @@ async fn do_receive_file(
     )
     .await?;
 
-    // Receive chunks.
+    // Receive chunks — resolve receive directory.
     let receive_dir = {
-        let cfg = nxfr_storage::config::NxfrConfig::load().unwrap_or_default();
-        cfg.receive_dir
+        // 1. Global override (set by Android via nxfr_set_receive_dir)
+        let ovr = receive_dir_override().lock().unwrap().clone();
+        match ovr {
+            Some(p) => p,
+            None => {
+                // 2. NxfrConfig fallback (Linux/daemon)
+                let cfg = nxfr_storage::config::NxfrConfig::load().unwrap_or_default();
+                cfg.receive_dir
+            }
+        }
     };
-    std::fs::create_dir_all(&receive_dir).map_err(|e| format!("create receive dir: {e}"))?;
+    if let Err(e) = std::fs::create_dir_all(&receive_dir) {
+        let code = match e.raw_os_error() {
+            Some(30) | Some(13) => "storage_error",  // EROFS / EACCES
+            Some(28) => "disk_full",                  // ENOSPC
+            _ => "storage_error",
+        };
+        log::error!("Cannot create receive dir {:?}: {e} (mapped to {code})", receive_dir);
+        return Err(format!("StorageError: {e} — receive dir {:?}", receive_dir).into());
+    }
 
     let canonical_root = std::fs::canonicalize(&receive_dir)
         .map_err(|e| format!("canonicalize receive_dir: {e}"))?;
