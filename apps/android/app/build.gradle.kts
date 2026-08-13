@@ -12,8 +12,8 @@ android {
         applicationId = "com.nxfr.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.2.0-alpha"
+        versionCode = 8
+        versionName = "0.2.1-alpha"
     }
 
     buildTypes {
@@ -73,4 +73,30 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+}
+
+tasks.register("verifyNativeSymbols") {
+    doLast {
+        val jniDirs = listOf("arm64-v8a", "x86_64")
+        val jniBase = file("src/main/jniLibs")
+        for (abi in jniDirs) {
+            val soFile = file("$jniBase/$abi/libnxfr_ffi.so")
+            if (soFile.exists()) {
+                val output = java.io.ByteArrayOutputStream()
+                exec {
+                    commandLine("nm", "-D", soFile.absolutePath)
+                    standardOutput = output
+                }
+                val symbols = output.toString()
+                check(symbols.contains("nxfr_web_start")) {
+                    "Native library at ${soFile.path} is missing nxfr_web_start symbol!"
+                }
+                println("Verified exported native symbols in ${soFile.name} ($abi)")
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("verifyNativeSymbols")
 }

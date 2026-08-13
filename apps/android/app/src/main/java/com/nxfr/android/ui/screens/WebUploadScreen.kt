@@ -51,8 +51,8 @@ fun WebUploadScreen(
     DisposableEffect(Unit) {
         Log.i("WebUploadScreen", "Starting web upload server...")
         val storeDir = File(context.filesDir, "nxfr_identity").absolutePath
-        val resultJson = NxfrService.NxfrBridge.nxfr_web_start(17396, storeDir, "")
         try {
+            val resultJson = NxfrService.NxfrBridge.nxfr_web_start(17396, storeDir, "")
             val json = JSONObject(resultJson)
             if (json.has("error")) {
                 errorMessage = json.getString("error")
@@ -63,6 +63,11 @@ fun WebUploadScreen(
                 isStarting = false
                 Log.i("WebUploadScreen", "Started on port $uploadPort, token $uploadToken")
             }
+        } catch (e: UnsatisfiedLinkError) {
+            val msg = "Native library outdated — rebuild APK"
+            errorMessage = msg
+            Log.e("WebUploadScreen", "JNI link error: ${e.message}", e)
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             errorMessage = e.message
             Log.e("WebUploadScreen", "Start parse exception: ${e.message}", e)
@@ -70,7 +75,11 @@ fun WebUploadScreen(
 
         onDispose {
             Log.i("WebUploadScreen", "Stopping web upload server...")
-            NxfrService.NxfrBridge.nxfr_web_stop()
+            try {
+                NxfrService.NxfrBridge.nxfr_web_stop()
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e("WebUploadScreen", "JNI stop error: ${e.message}")
+            }
         }
     }
 
