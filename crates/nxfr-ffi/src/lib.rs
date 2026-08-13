@@ -1601,9 +1601,8 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
             log::info!("[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}", handle, listener.port);
             listener.cancel_token.cancel();
             listener.accept_task.abort();
-            let rt = get_runtime();
-            let _ = rt.block_on(async { listener.accept_task.await });
-            log::info!("[nxfr-ffi] nxfr_close: Listener on port {} dropped and socket freed.", listener.port);
+            drop(listener);
+            log::info!("[nxfr-ffi] listener dropped, port released");
             return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
         }
 
@@ -1760,6 +1759,24 @@ fn web_server_lock() -> &'static std::sync::Mutex<Option<nxfr_web::WebServerHand
     WEB_SERVER.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+fn load_or_create_identity(dir: &str) -> Result<FfiIdentity, String> {
+    match load_identity(dir) {
+        Ok(id) => Ok(id),
+        Err(_) => {
+            log::info!("[nxfr-ffi] Identity missing in {}, auto-generating...", dir);
+            let dir_path = Path::new(dir);
+            std::fs::create_dir_all(dir_path).map_err(|e| format!("mkdir failed: {e}"))?;
+            let identity = nxfr_crypto::identity::generate_identity()
+                .map_err(|e| format!("keygen failed: {e}"))?;
+            std::fs::write(dir_path.join("identity.der"), &identity.private_key_der)
+                .map_err(|e| format!("write key failed: {e}"))?;
+            std::fs::write(dir_path.join("identity.crt"), &identity.cert_der)
+                .map_err(|e| format!("write cert failed: {e}"))?;
+            load_identity(dir)
+        }
+    }
+}
+
 /// Start the token-gated HTTPS web upload endpoint.
 /// `port` = preferred port (e.g. 17396; retries port+1 if bound).
 /// `store_dir` = path to identity directory.
@@ -1781,7 +1798,7 @@ pub extern "C" fn nxfr_web_start(port: u16, store_dir: *const c_char, pin: *cons
             None
         };
 
-        let identity = match load_identity(dir) {
+        let identity = match load_or_create_identity(dir) {
             Ok(id) => id,
             Err(e) => return json_err(&e),
         };
@@ -2470,5 +2487,45 @@ mod tests {
             let c = parse_ffi_json(nxfr_close(h));
             assert_eq!(c["status"].as_str().unwrap(), "closed");
         }
+    }
+
+    #[test]
+    fn test_web_upload_identity_and_endpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = CString::new(dir.path().to_str().unwrap()).unwrap();
+        let null_pin = std::ptr::null();
+
+        // 1. Start web upload (auto-generates identity if absent)
+        let start_res = parse_ffi_json(nxfr_web_start(0, dir_str.as_ptr(), null_pin));
+        assert!(
+            start_res.get("error").is_none(),
+            "web_start failed: {:?}",
+            start_res
+        );
+        let port = start_res["port"].as_u64().unwrap() as u16;
+        let token = start_res["token"].as_str().unwrap().to_string();
+        assert!(!token.is_empty());
+
+        // 2. Test endpoints with HTTPS client accepting self-signed cert
+        let client = reqwest::blocking::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap();
+
+        let get_resp = client
+            .get(format!("https://127.0.0.1:{port}/"))
+            .send()
+            .unwrap();
+        assert_eq!(get_resp.status(), 200);
+
+        let post_no_token = client
+            .post(format!("https://127.0.0.1:{port}/upload"))
+            .body("test payload")
+            .send()
+            .unwrap();
+        assert_eq!(post_no_token.status(), 403);
+
+        let stop_res = parse_ffi_json(nxfr_web_stop());
+        assert_eq!(stop_res["status"].as_str().unwrap(), "stopped");
     }
 }
