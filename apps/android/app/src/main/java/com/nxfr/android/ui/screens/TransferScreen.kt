@@ -225,23 +225,11 @@ fun TransferScreen(
                 }
             }
             is NxfrState.Error -> {
-                Text(
-                    text = "Transfer Error",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Bold
+                ErrorScreen(
+                    title = "Transfer Error",
+                    message = state.msg,
+                    onBack = onCancel
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = state.msg,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(32.dp))
-                OutlinedButton(onClick = onCancel) {
-                    Text("Back")
-                }
             }
             else -> {
                 Box(

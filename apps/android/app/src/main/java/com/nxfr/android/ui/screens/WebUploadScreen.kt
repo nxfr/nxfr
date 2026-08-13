@@ -99,6 +99,15 @@ fun WebUploadScreen(
     val qrContent = if (isDualModeAppQr) appTicketUrl else webUrl
     val qrBitmap = remember(qrContent) { generateQrBitmap(qrContent) }
 
+    if (errorMessage != null) {
+        ErrorScreen(
+            title = "Web Upload Error",
+            message = errorMessage!!,
+            onBack = onStop
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
