@@ -1,7 +1,7 @@
+use crate::db::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::db::Result;
 
 const MAX_HISTORY_ROWS: usize = 200;
 
@@ -14,7 +14,7 @@ pub struct TransferHistoryRecord {
     pub peer_id: String,
     pub file_count: u32,
     pub total_bytes: u64,
-    pub status: String,    // 'complete' | 'rejected' | 'failed' | 'cancelled'
+    pub status: String, // 'complete' | 'rejected' | 'failed' | 'cancelled'
     pub file_paths: Vec<String>,
 }
 
@@ -55,8 +55,8 @@ impl HistoryDb {
     }
 
     pub fn add(&self, record: &TransferHistoryRecord) -> Result<i64> {
-        let paths_json = serde_json::to_string(&record.file_paths)
-            .unwrap_or_else(|_| "[]".to_string());
+        let paths_json =
+            serde_json::to_string(&record.file_paths).unwrap_or_else(|_| "[]".to_string());
         let ts = if record.ts_ms > 0 {
             record.ts_ms
         } else {

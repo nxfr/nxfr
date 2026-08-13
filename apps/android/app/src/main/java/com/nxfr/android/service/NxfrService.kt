@@ -144,6 +144,7 @@ class NxfrService : Service() {
                 svc.listening = false
                 _isListening.value = false
                 Log.i("NxfrService", "Listener stopped.")
+                svc.evaluateLifecycleContract()
             }
         }
     }
@@ -294,12 +295,77 @@ class NxfrService : Service() {
                 val visibleOn = prefs.getBoolean("visible_enabled", false)
                 if (visibleOn) {
                     serviceScope.launch { startListening() }
-                } else {
-                    Log.i(TAG, "Service started, but visibility is OFF. Not listening.")
+                } else if (activeSessionHandle == 0L) {
+                    Log.i(TAG, "Service started, but visibility is OFF and no active transfer. Stopping service.")
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(true)
+                        }
+                    } catch (_: Throwable) {}
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
             }
         }
         return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "onTaskRemoved: User swiped app away, evaluating lifecycle contract...")
+        evaluateLifecycleContract()
+    }
+
+    fun evaluateLifecycleContract() {
+        val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
+        val isVisible = prefs.getBoolean("visible_enabled", false)
+        val hasActiveTransfer = activeSessionHandle != 0L
+
+        Log.i(TAG, "[evaluateLifecycleContract] visible=$isVisible listening=$listening activeSession=$hasActiveTransfer")
+
+        if (!isVisible && !listening && !hasActiveTransfer) {
+            Log.i(TAG, "[evaluateLifecycleContract] Visibility OFF, idle, zero active transfers. Stopping foreground & service.")
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "stopForeground error: ${e.message}")
+            }
+            stopSelf()
+        } else {
+            updateNotificationContent(isVisible, hasActiveTransfer)
+        }
+    }
+
+    private fun updateNotificationContent(isVisible: Boolean, hasActiveTransfer: Boolean) {
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val text = when {
+            hasActiveTransfer -> "Transfer in progress…"
+            isVisible -> "NXFR visible on LAN — tap to manage"
+            else -> "NXFR direct transfer"
+        }
+        val intent = Intent(this, com.nxfr.android.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NxfrApp.CHANNEL_TRANSFER)
+            .setContentTitle("NXFR Direct Transfer")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setOngoing(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        notificationManager.notify(1, notification)
     }
 
     override fun onDestroy() {

@@ -72,7 +72,10 @@ xhr.send(fd);
 };
 </script></body></html>"#;
 
-fn build_web_tls_config(key_der: &[u8], cert_der: &[u8]) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
+fn build_web_tls_config(
+    key_der: &[u8],
+    cert_der: &[u8],
+) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let cert = CertificateDer::from(cert_der.to_vec());
@@ -90,8 +93,21 @@ fn generate_token() -> String {
 }
 
 fn sanitize_filename(name: &str) -> String {
-    let sanitized: String = name.chars().map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' }).collect();
-    if sanitized.is_empty() { "uploaded_file.bin".to_string() } else { sanitized }
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "uploaded_file.bin".to_string()
+    } else {
+        sanitized
+    }
 }
 
 pub struct WebServerHandle {
@@ -119,7 +135,12 @@ pub struct WebServer {
 }
 
 impl WebServer {
-    pub fn new(receive_dir: PathBuf, port: u16, max_file_size: u64, pin: Option<String>) -> (Self, CancellationToken) {
+    pub fn new(
+        receive_dir: PathBuf,
+        port: u16,
+        max_file_size: u64,
+        pin: Option<String>,
+    ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let token = generate_token();
         let expiry = Instant::now() + EXPIRY_DURATION;
@@ -163,7 +184,14 @@ impl WebServer {
 
         let listener = match listener {
             Some(l) => l,
-            None => return Err(format!("Could not bind to any port in range {}..{}", preferred_port, preferred_port + MAX_PORT_ATTEMPTS).into()),
+            None => {
+                return Err(format!(
+                    "Could not bind to any port in range {}..{}",
+                    preferred_port,
+                    preferred_port + MAX_PORT_ATTEMPTS
+                )
+                .into())
+            }
         };
 
         let (server, cancel) = Self::new(receive_dir, actual_port, 1024 * 1024 * 1024, pin);
@@ -177,8 +205,12 @@ impl WebServer {
         let token_for_log = token.clone();
         let cancel_clone = cancel.clone();
         let join_handle = tokio::spawn(async move {
-            log::info!("[nxfr-web] Web upload server started on port {}, token={}", actual_port, token_for_log);
-            
+            log::info!(
+                "[nxfr-web] Web upload server started on port {}, token={}",
+                actual_port,
+                token_for_log
+            );
+
             loop {
                 tokio::select! {
                     _ = cancel_clone.cancelled() => {
@@ -260,7 +292,10 @@ impl WebServer {
             }
             headers_buf.extend_from_slice(&buf[..n]);
 
-            if let Some(pos) = headers_buf.windows(4).position(|window| window == b"\r\n\r\n") {
+            if let Some(pos) = headers_buf
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
                 body_start = pos + 4;
                 break;
             }
@@ -272,7 +307,7 @@ impl WebServer {
         let headers_str = String::from_utf8_lossy(&headers_buf[..body_start]);
         let mut lines = headers_str.lines();
         let request_line = lines.next().unwrap_or("");
-        
+
         let mut parts = request_line.split_whitespace();
         let method = parts.next().unwrap_or("");
         let raw_path = parts.next().unwrap_or("");
@@ -369,14 +404,14 @@ impl WebServer {
 
                 let inbox_dir = self.receive_dir.join("web-inbox");
                 std::fs::create_dir_all(&inbox_dir)?;
-                
+
                 let mut rand_bytes = [0u8; 8];
                 getrandom::getrandom(&mut rand_bytes).expect("getrandom failed");
                 let filename = format!("web_upload_{}.tmp", hex::encode(rand_bytes));
                 let final_path = inbox_dir.join(sanitize_filename(&filename));
-                
+
                 let mut file = tokio::fs::File::create(&final_path).await?;
-                
+
                 let mut buffer = headers_buf.split_off(body_start);
                 let mut file_started = false;
 
@@ -386,10 +421,14 @@ impl WebServer {
                             buffer.drain(..pos + 4);
                             file_started = true;
                         } else {
-                            if length == 0 { break; }
+                            if length == 0 {
+                                break;
+                            }
                             let mut read_buf = vec![0; std::cmp::min(8192, length)];
                             let n = stream.read(&mut read_buf).await?;
-                            if n == 0 { break; }
+                            if n == 0 {
+                                break;
+                            }
                             length -= n;
                             buffer.extend_from_slice(&read_buf[..n]);
                             continue;
@@ -397,7 +436,10 @@ impl WebServer {
                     }
 
                     if file_started {
-                        if let Some(pos) = buffer.windows(boundary_bytes.len()).position(|w| w == boundary_bytes.as_slice()) {
+                        if let Some(pos) = buffer
+                            .windows(boundary_bytes.len())
+                            .position(|w| w == boundary_bytes.as_slice())
+                        {
                             let write_len = if pos >= 2 { pos - 2 } else { 0 };
                             file.write_all(&buffer[..write_len]).await?;
                             break;
@@ -413,13 +455,18 @@ impl WebServer {
 
                         let mut read_buf = vec![0; std::cmp::min(8192, length)];
                         let n = stream.read(&mut read_buf).await?;
-                        if n == 0 { break; }
+                        if n == 0 {
+                            break;
+                        }
                         length -= n;
                         buffer.extend_from_slice(&read_buf[..n]);
                     }
                 }
 
-                log::info!("[nxfr-web] Web upload successfully received: {}", final_path.display());
+                log::info!(
+                    "[nxfr-web] Web upload successfully received: {}",
+                    final_path.display()
+                );
                 let response = "HTTP/1.1 200 OK\r\n\
                                 Content-Type: text/plain\r\n\
                                 Connection: close\r\n\

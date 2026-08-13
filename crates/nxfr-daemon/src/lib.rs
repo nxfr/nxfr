@@ -5,7 +5,6 @@ pub mod listener;
 pub mod receiver;
 pub mod sender;
 
-
 // Re-export key types
 pub use identity::PersistentIdentity;
 

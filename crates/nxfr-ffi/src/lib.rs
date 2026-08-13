@@ -46,10 +46,7 @@ use zeroize::Zeroize;
 /// Initialize android_logger so Rust log:: macros appear in logcat with tag "nxfr".
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn JNI_OnLoad(
-    _vm: *mut std::ffi::c_void,
-    _reserved: *mut std::ffi::c_void,
-) -> i32 {
+pub extern "C" fn JNI_OnLoad(_vm: *mut std::ffi::c_void, _reserved: *mut std::ffi::c_void) -> i32 {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Info)
@@ -490,11 +487,19 @@ fn create_reuseaddr_listener(port: u16) -> Result<tokio::net::TcpListener, Strin
     let domain = Domain::IPV4;
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
         .map_err(|e| format!("socket creation failed: {e}"))?;
-    socket.set_reuse_address(true).map_err(|e| format!("set_reuse_address failed: {e}"))?;
-    socket.set_nonblocking(true).map_err(|e| format!("set_nonblocking failed: {e}"))?;
-    
-    let address: SocketAddr = format!("0.0.0.0:{port}").parse().map_err(|e| format!("invalid addr: {e}"))?;
-    socket.bind(&address.into()).map_err(|e| format!("bind: {e}"))?;
+    socket
+        .set_reuse_address(true)
+        .map_err(|e| format!("set_reuse_address failed: {e}"))?;
+    socket
+        .set_nonblocking(true)
+        .map_err(|e| format!("set_nonblocking failed: {e}"))?;
+
+    let address: SocketAddr = format!("0.0.0.0:{port}")
+        .parse()
+        .map_err(|e| format!("invalid addr: {e}"))?;
+    socket
+        .bind(&address.into())
+        .map_err(|e| format!("bind: {e}"))?;
     socket.listen(128).map_err(|e| format!("listen: {e}"))?;
 
     let std_listener: std::net::TcpListener = socket.into();
@@ -1200,11 +1205,14 @@ async fn do_receive_file(
     };
     if let Err(e) = std::fs::create_dir_all(&receive_dir) {
         let code = match e.raw_os_error() {
-            Some(30) | Some(13) => "storage_error",  // EROFS / EACCES
-            Some(28) => "disk_full",                  // ENOSPC
+            Some(30) | Some(13) => "storage_error", // EROFS / EACCES
+            Some(28) => "disk_full",                // ENOSPC
             _ => "storage_error",
         };
-        log::error!("Cannot create receive dir {:?}: {e} (mapped to {code})", receive_dir);
+        log::error!(
+            "Cannot create receive dir {:?}: {e} (mapped to {code})",
+            receive_dir
+        );
         return Err(format!("StorageError: {e} — receive dir {:?}", receive_dir).into());
     }
 
@@ -1598,7 +1606,11 @@ pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -
 pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
         if let Some(listener) = listeners_map().lock().unwrap().remove(&handle) {
-            log::info!("[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}", handle, listener.port);
+            log::info!(
+                "[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}",
+                handle,
+                listener.port
+            );
             listener.cancel_token.cancel();
             listener.accept_task.abort();
             drop(listener);
@@ -1608,7 +1620,10 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
 
         let session = sessions_map().lock().unwrap().remove(&handle);
         if let Some(session) = session {
-            log::info!("[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}", handle);
+            log::info!(
+                "[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}",
+                handle
+            );
             let rt = get_runtime();
             rt.block_on(async {
                 let mut conn_guard = session.conn.lock().await;
@@ -1624,7 +1639,10 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
                 *conn_guard = None;
             });
         } else {
-            log::info!("[nxfr-ffi] nxfr_close: Handle {} not found or already closed", handle);
+            log::info!(
+                "[nxfr-ffi] nxfr_close: Handle {} not found or already closed",
+                handle
+            );
         }
         json_ok(serde_json::json!({ "handle": handle, "status": "closed" }))
     })
@@ -1753,7 +1771,8 @@ pub unsafe extern "C" fn nxfr_string_free(ptr: *mut c_char) {
 }
 // ─── Web Upload Server ──────────────────────────────────────────────────
 
-static WEB_SERVER: std::sync::OnceLock<std::sync::Mutex<Option<nxfr_web::WebServerHandle>>> = std::sync::OnceLock::new();
+static WEB_SERVER: std::sync::OnceLock<std::sync::Mutex<Option<nxfr_web::WebServerHandle>>> =
+    std::sync::OnceLock::new();
 
 fn web_server_lock() -> &'static std::sync::Mutex<Option<nxfr_web::WebServerHandle>> {
     WEB_SERVER.get_or_init(|| std::sync::Mutex::new(None))
@@ -1783,7 +1802,11 @@ fn load_or_create_identity(dir: &str) -> Result<FfiIdentity, String> {
 /// `pin` = optional PIN (null or empty string if none).
 /// Returns JSON: `{"port": 17396, "token": "...", "status": "started"}` or `{"error": "..."}`.
 #[no_mangle]
-pub extern "C" fn nxfr_web_start(port: u16, store_dir: *const c_char, pin: *const c_char) -> *mut c_char {
+pub extern "C" fn nxfr_web_start(
+    port: u16,
+    store_dir: *const c_char,
+    pin: *const c_char,
+) -> *mut c_char {
     ffi_guard(|| {
         let dir = match cstr_to_str(store_dir) {
             Ok(s) => s,
@@ -1813,7 +1836,11 @@ pub extern "C" fn nxfr_web_start(port: u16, store_dir: *const c_char, pin: *cons
         }
 
         let rt = get_runtime();
-        let preferred_port = if port == 0 { nxfr_web::DEFAULT_WEB_PORT } else { port };
+        let preferred_port = if port == 0 {
+            nxfr_web::DEFAULT_WEB_PORT
+        } else {
+            port
+        };
 
         let handle_res = rt.block_on(async {
             nxfr_web::WebServer::start(
@@ -1822,7 +1849,8 @@ pub extern "C" fn nxfr_web_start(port: u16, store_dir: *const c_char, pin: *cons
                 receive_dir,
                 preferred_port,
                 pin_opt,
-            ).await
+            )
+            .await
         });
 
         match handle_res {
@@ -1867,10 +1895,11 @@ pub extern "C" fn nxfr_history_add(
             Ok(s) => s,
             Err(e) => return json_err(&e),
         };
-        let record: nxfr_storage::history::TransferHistoryRecord = match serde_json::from_str(json_str) {
-            Ok(r) => r,
-            Err(e) => return json_err(&format!("json parse error: {e}")),
-        };
+        let record: nxfr_storage::history::TransferHistoryRecord =
+            match serde_json::from_str(json_str) {
+                Ok(r) => r,
+                Err(e) => return json_err(&format!("json parse error: {e}")),
+            };
 
         let db_path = std::path::Path::new(dir).join("history.db");
         let db = match nxfr_storage::history::HistoryDb::open(&db_path) {
@@ -1889,10 +1918,7 @@ pub extern "C" fn nxfr_history_add(
 }
 
 #[no_mangle]
-pub extern "C" fn nxfr_history_list(
-    limit: u32,
-    store_dir: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn nxfr_history_list(limit: u32, store_dir: *const c_char) -> *mut c_char {
     ffi_guard(|| {
         let dir = match cstr_to_str(store_dir) {
             Ok(s) => s,
@@ -1914,9 +1940,7 @@ pub extern "C" fn nxfr_history_list(
 }
 
 #[no_mangle]
-pub extern "C" fn nxfr_history_clear(
-    store_dir: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn nxfr_history_clear(store_dir: *const c_char) -> *mut c_char {
     ffi_guard(|| {
         let dir = match cstr_to_str(store_dir) {
             Ok(s) => s,
@@ -2545,7 +2569,11 @@ mod tests {
 
         // 1. Single bind -> close -> rebind test on same port
         let res1 = parse_ffi_json(nxfr_listen(0, dir_str.as_ptr()));
-        assert!(res1.get("error").is_none(), "first listen failed: {:?}", res1);
+        assert!(
+            res1.get("error").is_none(),
+            "first listen failed: {:?}",
+            res1
+        );
         let port = res1["port"].as_u64().unwrap() as u16;
         let handle1 = res1["listener"].as_u64().unwrap();
 
@@ -2554,7 +2582,11 @@ mod tests {
 
         // Rebind on EXACT same port
         let res2 = parse_ffi_json(nxfr_listen(port, dir_str.as_ptr()));
-        assert!(res2.get("error").is_none(), "rebind on same port failed: {:?}", res2);
+        assert!(
+            res2.get("error").is_none(),
+            "rebind on same port failed: {:?}",
+            res2
+        );
         let handle2 = res2["listener"].as_u64().unwrap();
         let close_res2 = parse_ffi_json(nxfr_close(handle2));
         assert_eq!(close_res2["status"].as_str().unwrap(), "closed");
@@ -2628,7 +2660,8 @@ mod tests {
             "total_bytes": 4096,
             "status": "complete",
             "file_paths": ["/sdcard/Download/NXFR/photo.jpg"]
-        }).to_string();
+        })
+        .to_string();
 
         let rec_cstr = CString::new(rec_json).unwrap();
         let add_res = parse_ffi_json(nxfr_history_add(rec_cstr.as_ptr(), dir_str.as_ptr()));

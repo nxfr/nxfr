@@ -776,10 +776,11 @@ pub async fn connect_to_peer(
     info!("Connecting to {target_addr} ...");
     let tcp_stream = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        TcpStream::connect(target_addr)
-    ).await
-        .map_err(|_| "connect timed out after 5s — is the receiver online?")?
-        .map_err(|e| format!("connect failed: {e}"))?;
+        TcpStream::connect(target_addr),
+    )
+    .await
+    .map_err(|_| "connect timed out after 5s — is the receiver online?")?
+    .map_err(|e| format!("connect failed: {e}"))?;
     info!("TCP connected, starting TLS handshake ...");
     let server_name = ServerName::try_from("nxfr-node").unwrap();
     let tls_stream = connector.connect(server_name, tcp_stream).await?;
@@ -904,12 +905,9 @@ pub async fn handle_outbound_send(
 
     info!("TransferRequest sent, waiting for accept ...");
     // Receive TRANSFER_ACCEPT or TRANSFER_REJECT.
-    let recv_result = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        conn.recv_frame(),
-    )
-    .await
-    .map_err(|_| "timeout waiting for TransferAccept")?;
+    let recv_result = tokio::time::timeout(std::time::Duration::from_secs(120), conn.recv_frame())
+        .await
+        .map_err(|_| "timeout waiting for TransferAccept")?;
     let (_, payload) = recv_result?;
     let msg = codec::decode_control(&payload)?;
     match &msg {

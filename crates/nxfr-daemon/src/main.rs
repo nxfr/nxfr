@@ -45,8 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let recv_str = config.receive_dir.to_string_lossy().to_string();
         if recv_str.contains("/tmp") || recv_str.contains("nxfr-test-recv") {
             let new_default = NxfrConfig::default().receive_dir;
-            warn!("Receive dir '{}' contains /tmp test path — replacing with '{}'",
-                config.receive_dir.display(), new_default.display());
+            warn!(
+                "Receive dir '{}' contains /tmp test path — replacing with '{}'",
+                config.receive_dir.display(),
+                new_default.display()
+            );
             config.receive_dir = new_default;
             if let Err(e) = config.save() {
                 warn!("Failed to persist updated config: {e}");
@@ -59,10 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create receive dir with mode 0700.
     std::fs::create_dir_all(&config.receive_dir)?;
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&config.receive_dir,
-            std::fs::Permissions::from_mode(0o700));
+        let _ =
+            std::fs::set_permissions(&config.receive_dir, std::fs::Permissions::from_mode(0o700));
     }
 
     // Open paired device DB.
@@ -147,7 +151,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             let mut offers = expiry_state.pending_offers.lock().await;
             let now = std::time::Instant::now();
-            let expired: Vec<String> = offers.iter()
+            let expired: Vec<String> = offers
+                .iter()
                 .filter(|(_, o)| now >= o.expires_at)
                 .map(|(k, _)| k.clone())
                 .collect();
