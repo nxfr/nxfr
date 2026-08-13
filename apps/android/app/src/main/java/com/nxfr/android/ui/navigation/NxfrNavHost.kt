@@ -5,9 +5,12 @@ import android.content.Intent
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -101,8 +104,18 @@ fun NxfrNavHost(
             navController = navController,
             startDestination = NxfrScreen.Receive.route,
             modifier = Modifier.padding(innerPadding),
-            enterTransition = { fadeIn(tween(200)) },
-            exitTransition = { fadeOut(tween(200)) },
+            enterTransition = {
+                slideInHorizontally(initialOffsetX = { 120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut))
+            },
+            exitTransition = {
+                slideOutHorizontally(targetOffsetX = { -120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut))
+            },
+            popEnterTransition = {
+                slideInHorizontally(initialOffsetX = { -120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut))
+            },
+            popExitTransition = {
+                slideOutHorizontally(targetOffsetX = { 120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut))
+            },
         ) {
             composable(NxfrScreen.Receive.route) {
                 ReceiveScreen(
