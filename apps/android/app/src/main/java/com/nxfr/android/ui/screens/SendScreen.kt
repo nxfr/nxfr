@@ -21,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nxfr.android.R
 import com.nxfr.android.discovery.DeviceUiModel
@@ -220,28 +222,62 @@ fun SendScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.WifiFind,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(120.dp)
+                            .padding(8.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainer
+                        ) {}
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PhoneAndroid,
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Icon(
+                                imageVector = Icons.Outlined.Wifi,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .padding(horizontal = 2.dp),
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                            )
+                            Icon(
+                                imageVector = Icons.Outlined.Devices,
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = stringResource(R.string.send_no_devices),
-                        style = MaterialTheme.typography.titleMedium
+                        text = "Searching local network…",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = stringResource(R.string.send_no_devices_hint),
+                        text = "Ensure both devices are on the same Wi-Fi or use Receive via link",
                         style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
                     TextButton(onClick = { showTroubleshootSheet = true }) {
                         Text(stringResource(R.string.send_troubleshoot))
                     }
