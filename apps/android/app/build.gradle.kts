@@ -14,8 +14,8 @@ android {
         applicationId = "com.nxfr.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.2.5-alpha"
+        versionCode = 13
+        versionName = "0.2.6-alpha"
     }
 
     buildTypes {
@@ -73,6 +73,9 @@ dependencies {
     // QR Code
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    // DocumentFile SAF Helper
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
