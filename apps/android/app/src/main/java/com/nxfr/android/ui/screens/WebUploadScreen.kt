@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -203,7 +204,9 @@ fun WebUploadScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.White, shape = MaterialTheme.shapes.medium),
                     contentAlignment = Alignment.Center
                 ) {
                     if (qrBitmap != null) {
