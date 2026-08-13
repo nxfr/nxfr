@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -207,6 +208,44 @@ fun ReceiveScreen(
             }
         }
 
+        // Info card
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = stringResource(R.string.receive_info_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row {
+                    Text("IP: ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(getDeviceIp(context), style = MaterialTheme.typography.bodySmall)
+                }
+                Row {
+                    Text("Port: ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("17394", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        if (isVisible) {
+            OutlinedButton(
+                onClick = { /* TODO: navigate to WebUploadScreen */ },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Outlined.Link, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.receive_via_link))
+            }
+        }
+
         // 4. Auto-accept segmented buttons
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
@@ -325,5 +364,26 @@ fun ReceiveScreen(
         
         // Add bottom padding for better scroll feel
         Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+private fun getDeviceIp(context: android.content.Context): String {
+    try {
+        val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+        val ips = mutableListOf<String>()
+        while (interfaces.hasMoreElements()) {
+            val iface = interfaces.nextElement()
+            if (iface.isLoopback || !iface.isUp) continue
+            val addrs = iface.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val addr = addrs.nextElement()
+                if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                    ips.add(addr.hostAddress ?: "")
+                }
+            }
+        }
+        return if (ips.isEmpty()) "Not connected" else ips.joinToString(", ")
+    } catch (_: Exception) {
+        return "Unknown"
     }
 }

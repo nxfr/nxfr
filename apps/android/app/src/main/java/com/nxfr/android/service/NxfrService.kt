@@ -128,6 +128,9 @@ class NxfrService : Service() {
         external fun nxfr_sanitize_path(path: String): String
         external fun nxfr_sha256(data: ByteArray): String
         external fun nxfr_advertised_id(deviceIdHex: String, dateStr: String): String
+
+        // ── Storage ─────────────────────────────────────────
+        external fun nxfr_set_receive_dir(path: String): String
         external fun nxfr_derive_sas(
             deviceIdAHex: String,
             deviceIdBHex: String,
@@ -150,6 +153,12 @@ class NxfrService : Service() {
         installCrashCatcher()
         loadOrGenerateIdentity()
         _discovery = HotspotAwareDiscovery(this)
+
+        // Set receive directory to app-scoped external storage.
+        val inbox = java.io.File(getExternalFilesDir(null), "inbox")
+        inbox.mkdirs()
+        val rdResult = NxfrBridge.nxfr_set_receive_dir(inbox.absolutePath)
+        Log.i(TAG, "nxfr_set_receive_dir: $rdResult")
     }
 
     /** Write crash stack to filesDir before rethrowing — survives logcat rotation. */
@@ -444,15 +453,36 @@ class NxfrService : Service() {
                     )
                 }
                 "complete" -> {
-                    _nxfrState.value = NxfrState.Complete(event.optString("file_path").ifEmpty { null })
-                    Log.i(TAG, "Transfer complete: ${event.optString("file_path")}")
+                    val inboxPath = event.optString("file_path").ifEmpty { null }
+                    var publishedPath: String? = inboxPath
+
+                    // Publish inbox file → Downloads/NXFR via MediaStore.
+                    if (!isSending && inboxPath != null) {
+                        publishedPath = publishToDownloads(java.io.File(inboxPath))
+                    }
+
+                    _nxfrState.value = NxfrState.Complete(publishedPath)
+                    Log.i(TAG, "Transfer complete: $publishedPath")
                     NxfrBridge.nxfr_close(handle)
                     activeSessionHandle = 0
                     return
                 }
                 "error" -> {
-                    _nxfrState.value = NxfrState.Error(event.optString("message"))
-                    Log.e(TAG, "Transfer error: ${event.optString("message")}")
+                    val raw = event.optString("message")
+                    // Map storage errors to human-readable messages.
+                    val human = when {
+                        raw.contains("EROFS") || raw.contains("os error 30") || raw.contains("StorageError") ->
+                            "Storage permission missing — check app permissions"
+                        raw.contains("ENOSPC") || raw.contains("os error 28") || raw.contains("DiskFull") ->
+                            "Receiver storage full"
+                        raw.contains("EACCES") || raw.contains("os error 13") ->
+                            "Storage access denied — check permissions"
+                        raw.contains("PathTraversalAttempt") ->
+                            "Rejected: unsafe filename"
+                        else -> raw
+                    }
+                    _nxfrState.value = NxfrState.Error(human)
+                    Log.e(TAG, "Transfer error: $raw (displayed: $human)")
                     NxfrBridge.nxfr_close(handle)
                     activeSessionHandle = 0
                     return
@@ -501,5 +531,43 @@ class NxfrService : Service() {
             .build()
     }
 
+    /**
+     * Publish an inbox file to the user-visible Downloads/NXFR directory via MediaStore.
+     * On success: deletes inbox copy, returns Downloads path.
+     * On failure (T3c): KEEPS the inbox copy, returns inbox path — never silently loses a file.
+     */
+    private fun publishToDownloads(inboxFile: java.io.File): String {
+        if (!inboxFile.exists()) return inboxFile.absolutePath
+
+        return try {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, inboxFile.name)
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/NXFR")
+                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+            ) ?: throw Exception("MediaStore insert returned null")
+
+            resolver.openOutputStream(uri)?.use { out ->
+                inboxFile.inputStream().use { inp -> inp.copyTo(out) }
+            } ?: throw Exception("Failed to open output stream")
+
+            values.clear()
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+
+            // Delete inbox copy on success.
+            inboxFile.delete()
+            val published = "Download/NXFR/${inboxFile.name}"
+            Log.i(TAG, "Published to MediaStore: $published")
+            published
+        } catch (e: Exception) {
+            // T3c: publish failure → KEEP inbox copy, never lose the file.
+            Log.w(TAG, "MediaStore publish failed, keeping inbox copy: ${e.message}")
+            inboxFile.absolutePath
+        }
+    }
 
 }

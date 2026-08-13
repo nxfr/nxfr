@@ -4,6 +4,7 @@ pub mod ipc;
 pub mod listener;
 pub mod receiver;
 pub mod sender;
+pub mod web_upload;
 
 // Re-export key types
 pub use identity::PersistentIdentity;

@@ -16,6 +16,7 @@ sealed class NxfrScreen(
     data object Send : NxfrScreen("send", R.string.nav_send, Icons.AutoMirrored.Outlined.Send)
     data object Settings : NxfrScreen("settings", R.string.nav_settings, Icons.Outlined.Settings)
     data object Transfer : NxfrScreen("transfer", 0, Icons.AutoMirrored.Outlined.Send)
+    data object WebUpload : NxfrScreen("web_upload", 0, Icons.AutoMirrored.Outlined.Send)
 
     companion object {
         val bottomNavItems = listOf(Receive, Send, Settings)

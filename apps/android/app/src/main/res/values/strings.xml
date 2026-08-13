@@ -197,4 +197,12 @@
     <string name="settings_unpaired">Device unpaired</string>
     <string name="settings_pair_auto_accept_on">Auto-accept: ON</string>
     <string name="settings_pair_auto_accept_off">Auto-accept: OFF</string>
+    <string name="receive_info_title">Device Info</string>
+    <string name="receive_via_link">Receive via link</string>
+    <string name="receive_web_title">Receive via Link</string>
+    <string name="receive_web_description">Share this link or QR code with any device on your network. They can upload files through their browser.</string>
+    <string name="receive_web_copy_link">Copy link</string>
+    <string name="receive_web_link_copied">Link copied</string>
+    <string name="receive_web_stop">Stop</string>
+    <string name="receive_web_security_note">Files are received over encrypted HTTPS. The token expires after 10 minutes of inactivity.</string>
 </resources>

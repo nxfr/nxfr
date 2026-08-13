@@ -37,6 +37,7 @@ import com.nxfr.android.ui.screens.ReceiveScreen
 import com.nxfr.android.ui.screens.SendScreen
 import com.nxfr.android.ui.screens.SettingsScreen
 import com.nxfr.android.ui.screens.TransferScreen
+import com.nxfr.android.ui.screens.WebUploadScreen
 import com.nxfr.android.service.NxfrState
 import com.nxfr.android.ui.dialogs.ConsentDialog
 import kotlinx.coroutines.Dispatchers
@@ -186,6 +187,11 @@ fun NxfrNavHost(
                     onComplete = {
                         navController.popBackStack()
                     }
+                )
+            }
+            composable(NxfrScreen.WebUpload.route) {
+                WebUploadScreen(
+                    onStop = { navController.popBackStack() }
                 )
             }
         }
