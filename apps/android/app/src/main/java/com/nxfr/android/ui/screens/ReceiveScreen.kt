@@ -249,6 +249,9 @@ fun ReceiveScreen(
                 Switch(
                     checked = isVisible,
                     onCheckedChange = { enabled ->
+                        try {
+                            (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        } catch (_: Exception) {}
                         val prefs = context.getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
                         prefs.edit().putBoolean("visible_enabled", enabled).apply()
                         val intent = Intent(context, NxfrService::class.java)

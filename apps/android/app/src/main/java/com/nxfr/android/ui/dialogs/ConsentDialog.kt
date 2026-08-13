@@ -110,12 +110,20 @@ fun ConsentDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onAccept) {
+            val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+            Button(onClick = {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                onAccept()
+            }) {
                 Text(stringResource(R.string.consent_accept))
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = onReject) {
+            val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+            OutlinedButton(onClick = {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                onReject()
+            }) {
                 Text(stringResource(R.string.consent_reject))
             }
         },
