@@ -91,6 +91,10 @@ class NxfrService : Service() {
             }
         }
 
+        fun getIdentityDir(context: android.content.Context): String {
+            return context.filesDir.resolve("nxfr-identity").absolutePath
+        }
+
         /** Stop the TCP listener and mDNS discovery without killing the service. */
         fun stopListening(context: android.content.Context? = null) {
             instance?.let { svc ->

@@ -73,6 +73,7 @@ xhr.send(fd);
 </script></body></html>"#;
 
 fn build_web_tls_config(key_der: &[u8], cert_der: &[u8]) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let cert = CertificateDer::from(cert_der.to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));

@@ -50,7 +50,7 @@ fun WebUploadScreen(
 
     DisposableEffect(Unit) {
         Log.i("WebUploadScreen", "Starting web upload server...")
-        val storeDir = File(context.filesDir, "nxfr_identity").absolutePath
+        val storeDir = NxfrService.getIdentityDir(context)
         try {
             val resultJson = NxfrService.NxfrBridge.nxfr_web_start(17396, storeDir, "")
             val json = JSONObject(resultJson)
