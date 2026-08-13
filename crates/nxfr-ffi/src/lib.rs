@@ -1112,9 +1112,27 @@ async fn do_receive_file(
     .await?;
 
     // Receive chunks.
-    let receive_dir = std::env::temp_dir().join("nxfr-received");
-    std::fs::create_dir_all(&receive_dir)?;
-    let final_path = receive_dir.join(&relative_path);
+    let receive_dir = {
+        let cfg = nxfr_storage::config::NxfrConfig::load().unwrap_or_default();
+        cfg.receive_dir
+    };
+    std::fs::create_dir_all(&receive_dir).map_err(|e| format!("create receive dir: {e}"))?;
+
+    let canonical_root = std::fs::canonicalize(&receive_dir)
+        .map_err(|e| format!("canonicalize receive_dir: {e}"))?;
+    let raw_final_path = canonical_root.join(&relative_path);
+    // Path-jail: ensure final_path stays inside receive_dir.
+    let final_path = {
+        if let Some(parent) = raw_final_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Use the parent dir's canonical + filename since file doesn't exist yet
+        let parent = std::fs::canonicalize(raw_final_path.parent().unwrap_or(&canonical_root))?;
+        parent.join(raw_final_path.file_name().unwrap_or_default())
+    };
+    if !final_path.starts_with(&canonical_root) {
+        return Err("PathTraversalAttempt: filename escapes receive directory".into());
+    }
 
     let mut file_data = Vec::with_capacity(expected_size as usize);
     let mut hasher = Sha256::new();

@@ -263,7 +263,19 @@ pub async fn handle_incoming(
                                     .await;
                                     (false, Some("user_declined".to_string()))
                                 }
-                                _ => {
+                                Ok(Err(_)) => {
+                                    broadcast_to_watchers(
+                                        &state,
+                                        &IpcEvent::TransferResolved {
+                                            transfer_id: tid_hex,
+                                            accepted: false,
+                                            reason: Some("connection_lost".to_string()),
+                                        },
+                                    )
+                                    .await;
+                                    (false, Some("connection_lost".to_string()))
+                                }
+                                Err(_) => {
                                     broadcast_to_watchers(
                                         &state,
                                         &IpcEvent::TransferResolved {
@@ -761,7 +773,14 @@ pub async fn connect_to_peer(
     let connector = TlsConnector::from(Arc::new(client_config));
 
     // Connect.
-    let tcp_stream = TcpStream::connect(target_addr).await?;
+    info!("Connecting to {target_addr} ...");
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        TcpStream::connect(target_addr)
+    ).await
+        .map_err(|_| "connect timed out after 5s — is the receiver online?")?
+        .map_err(|e| format!("connect failed: {e}"))?;
+    info!("TCP connected, starting TLS handshake ...");
     let server_name = ServerName::try_from("nxfr-node").unwrap();
     let tls_stream = connector.connect(server_name, tcp_stream).await?;
 
@@ -793,6 +812,7 @@ pub async fn connect_to_peer(
 
     let mut conn = NxfrConnection::new(tls_stream);
 
+    info!("TLS established, sending HELLO ...");
     // Send HELLO.
     let config = state.config.read().await;
     let hello = ControlMessage::Hello {
@@ -882,12 +902,19 @@ pub async fn handle_outbound_send(
     };
     conn.send_control(session_id, 0, &transfer_req).await?;
 
+    info!("TransferRequest sent, waiting for accept ...");
     // Receive TRANSFER_ACCEPT or TRANSFER_REJECT.
-    let (_, payload) = conn.recv_frame().await?;
+    let recv_result = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        conn.recv_frame(),
+    )
+    .await
+    .map_err(|_| "timeout waiting for TransferAccept")?;
+    let (_, payload) = recv_result?;
     let msg = codec::decode_control(&payload)?;
     match &msg {
         ControlMessage::TransferAccept { .. } => {
-            info!("Transfer accepted by peer");
+            info!("Transfer accepted, starting file send ...");
 
             // Fix A: persist outbound journal on TRANSFER_ACCEPT.
             let outbound_journal = ResumeState {
