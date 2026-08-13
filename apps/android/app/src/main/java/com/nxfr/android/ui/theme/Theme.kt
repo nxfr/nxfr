@@ -130,10 +130,15 @@ fun NxfrTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = NxfrTypography,
-        shapes = NxfrShapes,
-        content = content
-    )
+    val isAnimated = isAnimationEffective()
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalAnimationsEnabled provides isAnimated
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = NxfrTypography,
+            shapes = NxfrShapes,
+            content = content
+        )
+    }
 }

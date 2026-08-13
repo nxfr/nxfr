@@ -100,21 +100,22 @@ fun NxfrNavHost(
             }
         }
     ) { innerPadding ->
+        val isAnimationsEnabled = com.nxfr.android.ui.theme.LocalAnimationsEnabled.current
         NavHost(
             navController = navController,
             startDestination = NxfrScreen.Receive.route,
             modifier = Modifier.padding(innerPadding),
             enterTransition = {
-                slideInHorizontally(initialOffsetX = { 120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut))
+                if (isAnimationsEnabled) slideInHorizontally(initialOffsetX = { 120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut)) else androidx.compose.animation.EnterTransition.None
             },
             exitTransition = {
-                slideOutHorizontally(targetOffsetX = { -120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut))
+                if (isAnimationsEnabled) slideOutHorizontally(targetOffsetX = { -120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut)) else androidx.compose.animation.ExitTransition.None
             },
             popEnterTransition = {
-                slideInHorizontally(initialOffsetX = { -120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut))
+                if (isAnimationsEnabled) slideInHorizontally(initialOffsetX = { -120 }) + fadeIn(animationSpec = tween(300, easing = EaseInOut)) else androidx.compose.animation.EnterTransition.None
             },
             popExitTransition = {
-                slideOutHorizontally(targetOffsetX = { 120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut))
+                if (isAnimationsEnabled) slideOutHorizontally(targetOffsetX = { 120 }) + fadeOut(animationSpec = tween(300, easing = EaseInOut)) else androidx.compose.animation.ExitTransition.None
             },
         ) {
             composable(NxfrScreen.Receive.route) {

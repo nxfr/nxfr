@@ -152,14 +152,20 @@ fun SettingsScreen(
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))
+            val appAnimationsEnabled by com.nxfr.android.ui.theme.AnimationPreference.animationsEnabled.collectAsState()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(stringResource(R.string.settings_animations), modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_animations), style = MaterialTheme.typography.bodyMedium)
+                    if (com.nxfr.android.ui.theme.AnimationPreference.isSystemAnimationDisabled(context)) {
+                        Text("Overridden: System animator scale is set to OFF", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
                 Switch(
-                    checked = animationsEnabled,
-                    onCheckedChange = { animationsEnabled = it }
+                    checked = appAnimationsEnabled,
+                    onCheckedChange = { com.nxfr.android.ui.theme.AnimationPreference.setAnimationsEnabled(context, it) }
                 )
             }
         }
@@ -236,6 +242,12 @@ fun SettingsScreen(
 
         // Paired Devices Section
         SettingsCard(title = stringResource(R.string.settings_paired_devices)) {
+            Text(
+                text = "These devices skip consent under 'Paired'. Unpair any device you no longer trust.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             if (pairedDevices.isEmpty()) {
                 Row(
                     modifier = Modifier
@@ -370,31 +382,109 @@ fun SettingsScreen(
         // Network Section
         if (showAdvancedSettings) {
             SettingsCard(title = stringResource(R.string.settings_section_network)) {
-                var port by remember { mutableStateOf(NxfrService.DEFAULT_PORT.toString()) }
+                var portText by remember { mutableStateOf(NxfrService.activePort.toString()) }
+                var portError by remember { mutableStateOf<String?>(null) }
+
                 OutlinedTextField(
-                    value = port,
-                    onValueChange = { port = it },
+                    value = portText,
+                    onValueChange = { input ->
+                        portText = input
+                        val p = input.toIntOrNull()
+                        if (p != null && p in 1024..65535) {
+                            portError = null
+                            NxfrService.updateActivePortAndRebind(context, p)
+                        } else {
+                            portError = "Invalid port (1024–65535)"
+                        }
+                    },
                     label = { Text(stringResource(R.string.settings_port)) },
+                    supportingText = {
+                        if (portError != null) {
+                            Text(portError!!, color = MaterialTheme.colorScheme.error)
+                        } else {
+                            Text("TCP port for transfers. Change only on conflict.")
+                        }
+                    },
+                    isError = portError != null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 
-                Spacer(modifier = Modifier.height(8.dp))
-                var discoveryTimeout by remember { mutableStateOf(context.getString(R.string.settings_discovery_timeout_default)) }
+                Spacer(modifier = Modifier.height(12.dp))
+                var discoveryTimeoutText by remember { mutableStateOf(NxfrService.discoveryTimeoutMs.toString()) }
+                var timeoutError by remember { mutableStateOf<String?>(null) }
+
                 OutlinedTextField(
-                    value = discoveryTimeout,
-                    onValueChange = { discoveryTimeout = it },
+                    value = discoveryTimeoutText,
+                    onValueChange = { input ->
+                        discoveryTimeoutText = input
+                        val t = input.toIntOrNull()
+                        if (t != null && t in 500..15000) {
+                            timeoutError = null
+                            NxfrService.discoveryTimeoutMs = t
+                        } else {
+                            timeoutError = "Invalid timeout (500–15000 ms)"
+                        }
+                    },
                     label = { Text(stringResource(R.string.settings_discovery_timeout)) },
+                    supportingText = {
+                        if (timeoutError != null) {
+                            Text(timeoutError!!, color = MaterialTheme.colorScheme.error)
+                        } else {
+                            Text("Wait time for nearby devices to answer (ms).")
+                        }
+                    },
+                    isError = timeoutError != null,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-                var multicastAddress by remember { mutableStateOf(NxfrService.DEFAULT_MULTICAST) }
+                Spacer(modifier = Modifier.height(12.dp))
+                var multicastAddressText by remember { mutableStateOf(NxfrService.multicastAddress) }
+                var multicastError by remember { mutableStateOf<String?>(null) }
+
                 OutlinedTextField(
-                    value = multicastAddress,
-                    onValueChange = { multicastAddress = it },
+                    value = multicastAddressText,
+                    onValueChange = { input ->
+                        multicastAddressText = input
+                        if (isValidMulticastIp(input)) {
+                            multicastError = null
+                            NxfrService.updateMulticastAddressAndRebind(context, input)
+                        } else {
+                            multicastError = "Invalid multicast IP (224.0.0.0/4)"
+                        }
+                    },
                     label = { Text(stringResource(R.string.settings_multicast_address)) },
+                    supportingText = {
+                        if (multicastError != null) {
+                            Text(multicastError!!, color = MaterialTheme.colorScheme.error)
+                        } else {
+                            Text("LAN beacon group address. Change only if your network blocks it.")
+                        }
+                    },
+                    isError = multicastError != null,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        portText = NxfrService.DEFAULT_PORT.toString()
+                        portError = null
+                        discoveryTimeoutText = "5000"
+                        timeoutError = null
+                        multicastAddressText = NxfrService.DEFAULT_MULTICAST
+                        multicastError = null
+
+                        NxfrService.discoveryTimeoutMs = 5000
+                        NxfrService.updateMulticastAddressAndRebind(context, NxfrService.DEFAULT_MULTICAST)
+                        NxfrService.updateActivePortAndRebind(context, NxfrService.DEFAULT_PORT)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Reset to defaults (17394 / 5000 / 224.0.0.251)")
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -463,5 +553,16 @@ fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             content()
         }
+    }
+}
+
+private fun isValidMulticastIp(ip: String): Boolean {
+    val parts = ip.split(".")
+    if (parts.size != 4) return false
+    val first = parts[0].toIntOrNull() ?: return false
+    if (first !in 224..239) return false
+    return parts.drop(1).all {
+        val num = it.toIntOrNull()
+        num != null && num in 0..255
     }
 }

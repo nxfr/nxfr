@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, NxfrService::class.java))
 
         ThemePreference.init(this)
+        com.nxfr.android.ui.theme.AnimationPreference.init(this)
 
         setContent {
             val themeMode by ThemePreference.themeMode.collectAsState()

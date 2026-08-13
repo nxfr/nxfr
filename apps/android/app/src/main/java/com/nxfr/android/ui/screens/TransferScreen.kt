@@ -209,8 +209,9 @@ fun TransferScreen(
                 }
             }
             is NxfrState.Complete -> {
+                val isAnimationsEnabled = com.nxfr.android.ui.theme.LocalAnimationsEnabled.current
                 var targetScale by remember { mutableStateOf(0f) }
-                val scale by animateFloatAsState(
+                val animatedScale by animateFloatAsState(
                     targetValue = targetScale,
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -218,6 +219,7 @@ fun TransferScreen(
                     ),
                     label = "ScaleBurst"
                 )
+                val scale = if (isAnimationsEnabled) animatedScale else 1.0f
 
                 LaunchedEffect(Unit) {
                     targetScale = 1.0f

@@ -2,11 +2,13 @@ package com.nxfr.android.service
 
 import android.app.Notification
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.nxfr.android.NxfrApp
 import com.nxfr.android.R
@@ -52,6 +54,44 @@ class NxfrService : Service() {
         const val EXTRA_FILE_PATH = "file_path"
         const val DEFAULT_PORT = 17394
         const val DEFAULT_MULTICAST = "224.0.0.251"
+
+        var activePort: Int = DEFAULT_PORT
+        var discoveryTimeoutMs: Int = 5000
+        var multicastAddress: String = DEFAULT_MULTICAST
+
+        fun updateActivePortAndRebind(context: Context, newPort: Int) {
+            activePort = newPort
+            val inst = instance
+            if (inst != null && _isListening.value) {
+                inst.serviceScope.launch {
+                    if (inst.listenerHandle != 0L) {
+                        try { withContext(Dispatchers.IO) { NxfrBridge.nxfr_close(inst.listenerHandle) } } catch (_: Throwable) {}
+                        inst.listenerHandle = 0
+                        inst.listening = false
+                        _isListening.value = false
+                    }
+                    inst.startListening()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Listening on $newPort", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        fun updateMulticastAddressAndRebind(context: Context, newMulticast: String) {
+            multicastAddress = newMulticast
+            val inst = instance
+            if (inst != null && _isListening.value) {
+                inst.serviceScope.launch {
+                    val storeDir = inst.identityDir()
+                    val did = _deviceId.value
+                    val dname = _deviceName.value
+                    if (did.isNotEmpty()) {
+                        _discovery?.startDiscovery(storeDir, did, dname)
+                    }
+                }
+            }
+        }
 
         init {
             System.loadLibrary("nxfr_ffi")
@@ -400,7 +440,7 @@ class NxfrService : Service() {
         }
 
         var listenJson = withContext(Dispatchers.IO) {
-            NxfrBridge.nxfr_listen(DEFAULT_PORT, storeDir)
+            NxfrBridge.nxfr_listen(activePort, storeDir)
         }
         var listenResult = JSONObject(listenJson)
 
@@ -413,7 +453,7 @@ class NxfrService : Service() {
             }
             delay(500)
             listenJson = withContext(Dispatchers.IO) {
-                NxfrBridge.nxfr_listen(DEFAULT_PORT, storeDir)
+                NxfrBridge.nxfr_listen(activePort, storeDir)
             }
             listenResult = JSONObject(listenJson)
         }

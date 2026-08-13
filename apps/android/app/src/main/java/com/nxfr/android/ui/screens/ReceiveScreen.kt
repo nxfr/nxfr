@@ -87,7 +87,8 @@ fun ReceiveScreen(
         val maxScale = if (isListening) 1.5f else 1.1f
         val maxAlpha = if (isListening) 0.6f else 0.15f
 
-        val pulseProgress by infiniteTransition.animateFloat(
+        val isAnimationsEnabled = com.nxfr.android.ui.theme.LocalAnimationsEnabled.current
+        val animatedPulseProgress by infiniteTransition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -96,6 +97,7 @@ fun ReceiveScreen(
             ),
             label = "PulseProgress"
         )
+        val pulseProgress = if (isAnimationsEnabled) animatedPulseProgress else 0f
 
         Box(
             contentAlignment = Alignment.Center, 
