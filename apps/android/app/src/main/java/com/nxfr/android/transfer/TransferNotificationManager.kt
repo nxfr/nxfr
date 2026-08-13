@@ -41,14 +41,38 @@ class TransferNotificationManager(private val context: Context) {
         notificationManager.notify(transferId, notification)
     }
     
-    fun showTransferCompleteNotification(transferId: Int, fileName: String) {
+    fun showTransferCompleteNotification(transferId: Int, fileName: String, fileSize: Long = 0L, publishedPath: String = "") {
+        val openIntent = Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            transferId,
+            openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val sizeStr = formatBytes(fileSize)
+        val locStr = if (publishedPath.isEmpty()) "Downloads/NXFR" else if (publishedPath.startsWith("Download") || publishedPath.contains("Download")) "Downloads/NXFR/$fileName" else publishedPath
+
         val notification = NotificationCompat.Builder(context, NxfrApp.CHANNEL_TRANSFER)
-            .setSmallIcon(android.R.drawable.ic_menu_share)
-            .setContentTitle("Transfer Complete")
-            .setContentText("Successfully transferred $fileName")
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("File received: $fileName")
+            .setContentText("$sizeStr • Saved to $locStr")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
             .build()
-            
+
         notificationManager.notify(transferId, notification)
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1_073_741_824 -> String.format(java.util.Locale.getDefault(), "%.1f GB", bytes / 1_073_741_824.0)
+            bytes >= 1_048_576 -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / 1_048_576.0)
+            bytes >= 1024 -> String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
     }
 }

@@ -493,7 +493,16 @@ class NxfrService : Service() {
 
                     // Publish inbox file → Downloads/NXFR via MediaStore.
                     if (!isSending && inboxPath != null) {
-                        publishedPath = publishToDownloads(java.io.File(inboxPath))
+                        val file = java.io.File(inboxPath)
+                        val fileSize = if (file.exists()) file.length() else 0L
+                        publishedPath = publishToDownloads(file)
+                        val notificationManager = com.nxfr.android.transfer.TransferNotificationManager(this)
+                        notificationManager.showTransferCompleteNotification(
+                            transferId = (handle and 0x7FFFFFFF).toInt(),
+                            fileName = file.name,
+                            fileSize = fileSize,
+                            publishedPath = publishedPath ?: ""
+                        )
                     }
 
                     _nxfrState.value = NxfrState.Complete(publishedPath)
@@ -577,37 +586,7 @@ class NxfrService : Service() {
      * On failure (T3c): KEEPS the inbox copy, returns inbox path — never silently loses a file.
      */
     private fun publishToDownloads(inboxFile: java.io.File): String {
-        if (!inboxFile.exists()) return inboxFile.absolutePath
-
-        return try {
-            val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, inboxFile.name)
-                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/NXFR")
-                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            val resolver = contentResolver
-            val uri = resolver.insert(
-                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-            ) ?: throw Exception("MediaStore insert returned null")
-
-            resolver.openOutputStream(uri)?.use { out ->
-                inboxFile.inputStream().use { inp -> inp.copyTo(out) }
-            } ?: throw Exception("Failed to open output stream")
-
-            values.clear()
-            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-
-            // Delete inbox copy on success.
-            inboxFile.delete()
-            val published = "Download/NXFR/${inboxFile.name}"
-            Log.i(TAG, "Published to MediaStore: $published")
-            published
-        } catch (e: Exception) {
-            // T3c: publish failure → KEEP inbox copy, never lose the file.
-            Log.w(TAG, "MediaStore publish failed, keeping inbox copy: ${e.message}")
-            inboxFile.absolutePath
-        }
+        return com.nxfr.android.storage.FilePublisher.publishToDownloads(this, inboxFile)
     }
 
 }
