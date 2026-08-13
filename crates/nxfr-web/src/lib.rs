@@ -40,6 +40,10 @@ input[type=file]{display:none}
 <div class="card">
 <h1>NXFR Direct Upload</h1>
 <p class="sub">Select or drop a file to send to this device</p>
+<div class="fp-box" style="font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;">
+You're connected to the device showing this fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+</div>
 <div class="drop" id="drop">Click or drag a file here</div>
 <input type="file" id="file">
 <div class="progress" style="display:none" id="pg"><div class="bar" id="bar"></div></div>
@@ -131,6 +135,7 @@ pub struct WebServer {
     pub expiry: Instant,
     pub receive_dir: PathBuf,
     pub max_file_size: u64,
+    pub fingerprint: String,
     pub failed_attempts: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
 }
 
@@ -140,6 +145,7 @@ impl WebServer {
         port: u16,
         max_file_size: u64,
         pin: Option<String>,
+        fingerprint: String,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let token = generate_token();
@@ -153,6 +159,7 @@ impl WebServer {
                 expiry,
                 receive_dir,
                 max_file_size,
+                fingerprint,
                 failed_attempts: Arc::new(Mutex::new(HashMap::new())),
             },
             cancel,
@@ -194,7 +201,20 @@ impl WebServer {
             }
         };
 
-        let (server, cancel) = Self::new(receive_dir, actual_port, 1024 * 1024 * 1024, pin);
+        let fp_bytes = nxfr_crypto::identity::device_id_from_cert(cert_der).unwrap_or([0u8; 32]);
+        let fp_formatted = fp_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(":");
+
+        let (server, cancel) = Self::new(
+            receive_dir,
+            actual_port,
+            1024 * 1024 * 1024,
+            pin,
+            fp_formatted,
+        );
         let token = server.token.clone();
         let expiry = server.expiry;
 
@@ -318,6 +338,7 @@ impl WebServer {
         };
 
         if method == "GET" && path == "/" {
+            let page = HTML_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
             let response = format!(
                 "HTTP/1.1 200 OK\r\n\
                  Content-Type: text/html; charset=utf-8\r\n\
@@ -325,8 +346,8 @@ impl WebServer {
                  Connection: close\r\n\
                  \r\n\
                  {}",
-                HTML_PAGE.len(),
-                HTML_PAGE
+                page.len(),
+                page
             );
             stream.write_all(response.as_bytes()).await?;
             return Ok(());

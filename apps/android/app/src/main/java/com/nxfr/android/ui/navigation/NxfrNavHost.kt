@@ -201,6 +201,9 @@ fun NxfrNavHost(
                     },
                     onComplete = {
                         navController.popBackStack()
+                    },
+                    onSendAnother = {
+                        navController.popBackStack(NxfrScreen.Send.route, inclusive = false)
                     }
                 )
             }

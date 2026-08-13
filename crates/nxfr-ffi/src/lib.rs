@@ -1961,6 +1961,47 @@ pub extern "C" fn nxfr_history_clear(store_dir: *const c_char) -> *mut c_char {
     })
 }
 
+/// Returns the SHA-256 fingerprint (SPKI hash) of the device's TLS certificate.
+#[no_mangle]
+pub extern "C" fn nxfr_web_fingerprint(store_dir: *const c_char) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let dir_path = std::path::Path::new(dir);
+        let crt_file = if dir_path.join("identity.crt").exists() {
+            dir_path.join("identity.crt")
+        } else if dir_path.join("nxfr-identity").join("identity.crt").exists() {
+            dir_path.join("nxfr-identity").join("identity.crt")
+        } else {
+            return json_err("identity.crt not found");
+        };
+
+        let cert_der = match std::fs::read(&crt_file) {
+            Ok(b) => b,
+            Err(e) => return json_err(&format!("read cert file: {e}")),
+        };
+
+        let hash_bytes = match nxfr_crypto::identity::device_id_from_cert(&cert_der) {
+            Ok(h) => h,
+            Err(e) => return json_err(&format!("device_id_from_cert failed: {e}")),
+        };
+
+        let hex_str = hex::encode(hash_bytes);
+        let formatted = hash_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(":");
+
+        json_ok(serde_json::json!({
+            "fingerprint": hex_str,
+            "formatted": formatted,
+        }))
+    })
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2677,5 +2718,24 @@ mod tests {
 
         let empty_res = parse_ffi_json(nxfr_history_list(10, dir_str.as_ptr()));
         assert!(empty_res["records"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_web_fingerprint_matches_spki_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = CString::new(dir.path().to_str().unwrap()).unwrap();
+
+        let gen_res = parse_ffi_json(nxfr_identity_generate(dir_str.as_ptr()));
+        assert!(gen_res.get("error").is_none());
+        let device_id = gen_res["device_id"].as_str().unwrap();
+
+        let fp_res = parse_ffi_json(nxfr_web_fingerprint(dir_str.as_ptr()));
+        assert!(fp_res.get("error").is_none());
+        let fingerprint = fp_res["fingerprint"].as_str().unwrap();
+
+        assert_eq!(
+            fingerprint, device_id,
+            "Web fingerprint must match device_id SPKI sha256"
+        );
     }
 }

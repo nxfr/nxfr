@@ -170,6 +170,7 @@ class NxfrService : Service() {
         // ── Web Upload ─────────────────────────────────────
         external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String
         external fun nxfr_web_stop(): String
+        external fun nxfr_web_fingerprint(storeDir: String): String
 
         // ── Transfer ───────────────────────────────────────
         external fun nxfr_send_file(handle: Long, path: String): String

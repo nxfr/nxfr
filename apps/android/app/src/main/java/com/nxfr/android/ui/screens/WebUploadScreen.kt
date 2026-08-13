@@ -250,7 +250,66 @@ fun WebUploadScreen(
             )
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        var webFingerprintFormatted by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) {
+            try {
+                val storeDir = NxfrService.getIdentityDir(context)
+                val jsonStr = NxfrService.NxfrBridge.nxfr_web_fingerprint(storeDir)
+                val obj = JSONObject(jsonStr)
+                webFingerprintFormatted = obj.optString("formatted", obj.optString("fingerprint", ""))
+            } catch (_: Throwable) {}
+        }
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Browser shows a security warning? Normal for direct links. Tap Advanced → Proceed — files stay encrypted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (webFingerprintFormatted.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "SHA-256 Fingerprint (SPKI):",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                            )
+                            Text(
+                                text = webFingerprintFormatted,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Fingerprint", webFingerprintFormatted))
+                            Toast.makeText(context, "Fingerprint copied", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy fingerprint", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Text(
+                        text = "Power users: compare with the browser's certificate viewer.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
         
         Text(
             text = stringResource(R.string.receive_web_security_note),
