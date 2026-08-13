@@ -72,6 +72,24 @@ class NxfrService : Service() {
         /** Service-owned discovery — shared across all tabs. */
         private var _discovery: HotspotAwareDiscovery? = null
         val discovery: HotspotAwareDiscovery? get() = _discovery
+
+        @Volatile var instance: NxfrService? = null
+
+        private val _isListening = MutableStateFlow(false)
+        val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
+
+        /** Cancel the active transfer from any context. */
+        fun cancelActiveTransfer() {
+            instance?.let { svc ->
+                val handle = svc.activeSessionHandle
+                if (handle != 0L) {
+                    try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
+                    svc.activeSessionHandle = 0
+                }
+                _nxfrState.value = NxfrState.Idle
+                Log.i("NxfrService", "Active transfer cancelled")
+            }
+        }
     }
 
     /**
@@ -128,6 +146,7 @@ class NxfrService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         installCrashCatcher()
         loadOrGenerateIdentity()
         _discovery = HotspotAwareDiscovery(this)
@@ -196,13 +215,20 @@ class NxfrService : Service() {
                 serviceScope.launch { doSendFile(addr, filePath) }
             }
             else -> {
-                serviceScope.launch { startListening() }
+                // Reconcile: if visible was persisted ON, start listening.
+                val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
+                val visibleOn = prefs.getBoolean("visible_enabled", false)
+                if (visibleOn || intent?.action == null) {
+                    serviceScope.launch { startListening() }
+                }
             }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        instance = null
+        _isListening.value = false
         _discovery?.stopDiscovery()
         _discovery = null
         super.onDestroy()
@@ -253,11 +279,14 @@ class NxfrService : Service() {
             val msg = listenResult.getString("error")
             Log.e(TAG, "Listen failed: $msg")
             _nxfrState.value = NxfrState.Error(msg)
+            _isListening.value = false
+            listening = false
             return
         }
         listenerHandle = listenResult.getLong("listener")
         _nxfrState.value = NxfrState.Listening
         Log.i(TAG, "Listening on port ${listenResult.getInt("port")}")
+        _isListening.value = true
 
         // Accept loop.
         while (isActive) {
@@ -346,6 +375,7 @@ class NxfrService : Service() {
                 NxfrBridge.nxfr_pump(handle)
             }
             val event = JSONObject(eventJson)
+            Log.d(TAG, "pumpLoop raw: $eventJson")
             when (event.optString("event")) {
                 "offer" -> {
                     _nxfrState.value = NxfrState.Offering(
