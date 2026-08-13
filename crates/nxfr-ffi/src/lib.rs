@@ -43,6 +43,22 @@ use tokio::sync::mpsc;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use zeroize::Zeroize;
 
+/// Initialize android_logger so Rust log:: macros appear in logcat with tag "nxfr".
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn JNI_OnLoad(
+    _vm: *mut std::ffi::c_void,
+    _reserved: *mut std::ffi::c_void,
+) -> i32 {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("nxfr"),
+    );
+    log::info!("[nxfr-ffi] JNI_OnLoad: android_logger initialized");
+    0x00010006 // JNI_VERSION_1_6
+}
+
 // ─── TlsStream ──────────────────────────────────────────────────────────
 //
 // Unify client and server TLS streams behind one type so NxfrConnection
