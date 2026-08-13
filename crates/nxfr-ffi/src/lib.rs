@@ -2682,6 +2682,21 @@ mod tests {
             .unwrap();
         assert_eq!(post_no_token.status(), 403);
 
+        let post_bearer = client
+            .post(format!("https://127.0.0.1:{port}/upload"))
+            .header("Authorization", format!("Bearer {token}"))
+            .body("test payload")
+            .send()
+            .unwrap();
+        assert_eq!(post_bearer.status(), 200);
+
+        let post_query = client
+            .post(format!("https://127.0.0.1:{port}/upload?t={token}"))
+            .body("test payload")
+            .send()
+            .unwrap();
+        assert_eq!(post_query.status(), 200);
+
         let stop_res = parse_ffi_json(nxfr_web_stop());
         assert_eq!(stop_res["status"].as_str().unwrap(), "stopped");
     }

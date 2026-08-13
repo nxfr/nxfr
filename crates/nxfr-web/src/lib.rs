@@ -51,8 +51,9 @@ You're connected to the device showing this fingerprint:<br>
 <button class="btn" id="btn" disabled>Upload</button>
 </div>
 <script>
+const hashToken = location.hash.replace(/^#t=/, '').replace(/^#/, '');
 const params = new URLSearchParams(location.search);
-const t = params.get('t') || location.hash.replace(/^#t=/, '').replace(/^#/, '');
+const t = hashToken || params.get('t') || '';
 const drop=document.getElementById('drop'),fi=document.getElementById('file'),
 btn=document.getElementById('btn'),pg=document.getElementById('pg'),
 bar=document.getElementById('bar'),st=document.getElementById('st');
@@ -372,14 +373,20 @@ impl WebServer {
             }
 
             // Check query string if header missing
+            let mut is_query_token = false;
             if auth_token.is_none() && !query.is_empty() {
                 for pair in query.split('&') {
                     if let Some((k, v)) = pair.split_once('=') {
                         if k == "t" {
                             auth_token = Some(v.to_string());
+                            is_query_token = true;
                         }
                     }
                 }
+            }
+
+            if is_query_token && auth_token.as_deref() == Some(&self.token) {
+                log::debug!("[nxfr-web] token via query string (test path)");
             }
 
             let valid = match &auth_token {
@@ -410,7 +417,8 @@ impl WebServer {
                 return Ok(());
             }
 
-            if let (Some(mut length), Some(boundary_str)) = (content_length, boundary) {
+            if let Some(boundary_str) = boundary {
+                let mut length = content_length.unwrap_or(0);
                 if length as u64 > self.max_file_size {
                     let response = "HTTP/1.1 413 Payload Too Large\r\n\
                                     Content-Type: application/json\r\n\
@@ -461,7 +469,7 @@ impl WebServer {
                             .windows(boundary_bytes.len())
                             .position(|w| w == boundary_bytes.as_slice())
                         {
-                            let write_len = if pos >= 2 { pos - 2 } else { 0 };
+                            let write_len = pos.saturating_sub(2);
                             file.write_all(&buffer[..write_len]).await?;
                             break;
                         } else if buffer.len() > boundary_bytes.len() * 2 {
@@ -488,6 +496,14 @@ impl WebServer {
                     "[nxfr-web] Web upload successfully received: {}",
                     final_path.display()
                 );
+                let response = "HTTP/1.1 200 OK\r\n\
+                                Content-Type: text/plain\r\n\
+                                Connection: close\r\n\
+                                \r\n\
+                                Upload successful";
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            } else {
                 let response = "HTTP/1.1 200 OK\r\n\
                                 Content-Type: text/plain\r\n\
                                 Connection: close\r\n\

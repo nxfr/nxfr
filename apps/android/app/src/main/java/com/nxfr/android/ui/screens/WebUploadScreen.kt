@@ -90,7 +90,7 @@ fun WebUploadScreen(
     val primaryIp = remember { getPrimaryIp(context) }
     val webUrl = remember(primaryIp, uploadPort, uploadToken) {
         if (primaryIp.isNotEmpty() && uploadToken.isNotEmpty()) {
-            "https://$primaryIp:$uploadPort/?t=$uploadToken#t=$uploadToken"
+            "https://$primaryIp:$uploadPort/#t=$uploadToken"
         } else ""
     }
 

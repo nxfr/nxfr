@@ -42,5 +42,6 @@ The transition to a purely local, peer-to-peer approach introduces unique securi
 | **T8: Replay Attacks** | Replaying valid sessions | TLS nonces, unique `session_id`, monotonically increasing `message_id` | None |
 | **T9: Device Tracking** | Tracking via mDNS ID | Hidden-by-default policy; daily rotation of the advertised ID prefix | Tracking while receiving is actively enabled |
 
-!!! important "Path Sanitization"
+!!! important "Path Sanitization & Web Upload Security"
     Implementations MUST enforce rigorous path sanitization on the `relative_path` provided in the `TRANSFER_REQUEST` to prevent catastrophic directory traversal attacks.
+    For web uploads, rendered links are fragment-only (`/#t=<token>`) to prevent tokens from appearing in HTTP request lines or server access logs; `?t=` is accepted solely as a testing convenience and is flagged in the audit log.
