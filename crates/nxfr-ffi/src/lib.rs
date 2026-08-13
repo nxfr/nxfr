@@ -1853,6 +1853,90 @@ pub extern "C" fn nxfr_web_stop() -> *mut c_char {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn nxfr_history_add(
+    json_record: *const c_char,
+    store_dir: *const c_char,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let json_str = match cstr_to_str(json_record) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let record: nxfr_storage::history::TransferHistoryRecord = match serde_json::from_str(json_str) {
+            Ok(r) => r,
+            Err(e) => return json_err(&format!("json parse error: {e}")),
+        };
+
+        let db_path = std::path::Path::new(dir).join("history.db");
+        let db = match nxfr_storage::history::HistoryDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open history.db: {e}")),
+        };
+
+        match db.add(&record) {
+            Ok(id) => json_ok(serde_json::json!({
+                "status": "added",
+                "id": id,
+            })),
+            Err(e) => json_err(&format!("add history failed: {e}")),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nxfr_history_list(
+    limit: u32,
+    store_dir: *const c_char,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let db_path = std::path::Path::new(dir).join("history.db");
+        let db = match nxfr_storage::history::HistoryDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open history.db: {e}")),
+        };
+
+        match db.list(limit as usize) {
+            Ok(records) => json_ok(serde_json::json!({
+                "records": records,
+            })),
+            Err(e) => json_err(&format!("list history failed: {e}")),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nxfr_history_clear(
+    store_dir: *const c_char,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let db_path = std::path::Path::new(dir).join("history.db");
+        let db = match nxfr_storage::history::HistoryDb::open(&db_path) {
+            Ok(db) => db,
+            Err(e) => return json_err(&format!("open history.db: {e}")),
+        };
+
+        match db.clear() {
+            Ok(()) => json_ok(serde_json::json!({
+                "status": "cleared",
+            })),
+            Err(e) => json_err(&format!("clear history failed: {e}")),
+        }
+    })
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2527,5 +2611,38 @@ mod tests {
 
         let stop_res = parse_ffi_json(nxfr_web_stop());
         assert_eq!(stop_res["status"].as_str().unwrap(), "stopped");
+    }
+
+    #[test]
+    fn test_history_ffi_add_list_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = CString::new(dir.path().to_str().unwrap()).unwrap();
+
+        let rec_json = serde_json::json!({
+            "id": 0,
+            "ts_ms": 10000,
+            "direction": "recv",
+            "peer_name": "Galaxy S24",
+            "peer_id": "s24_id",
+            "file_count": 1,
+            "total_bytes": 4096,
+            "status": "complete",
+            "file_paths": ["/sdcard/Download/NXFR/photo.jpg"]
+        }).to_string();
+
+        let rec_cstr = CString::new(rec_json).unwrap();
+        let add_res = parse_ffi_json(nxfr_history_add(rec_cstr.as_ptr(), dir_str.as_ptr()));
+        assert_eq!(add_res["status"].as_str().unwrap(), "added");
+
+        let list_res = parse_ffi_json(nxfr_history_list(10, dir_str.as_ptr()));
+        let records = list_res["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["peer_name"].as_str().unwrap(), "Galaxy S24");
+
+        let clear_res = parse_ffi_json(nxfr_history_clear(dir_str.as_ptr()));
+        assert_eq!(clear_res["status"].as_str().unwrap(), "cleared");
+
+        let empty_res = parse_ffi_json(nxfr_history_list(10, dir_str.as_ptr()));
+        assert!(empty_res["records"].as_array().unwrap().is_empty());
     }
 }

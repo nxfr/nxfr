@@ -52,6 +52,7 @@ fun ReceiveScreen(
     var showWarningDialog by remember { mutableStateOf(false) }
     var saveFolderPath by remember { mutableStateOf<Uri?>(null) }
     var showInfoSheet by remember { mutableStateOf(false) }
+    var showHistorySheet by remember { mutableStateOf(false) }
     
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
@@ -71,7 +72,7 @@ fun ReceiveScreen(
             modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
             horizontalArrangement = Arrangement.End
         ) {
-            IconButton(onClick = { /* TODO: history */ }) {
+            IconButton(onClick = { showHistorySheet = true }) {
                 Icon(Icons.Default.History, contentDescription = "History")
             }
             IconButton(onClick = { showInfoSheet = true }) {
@@ -442,6 +443,10 @@ fun ReceiveScreen(
                 
                 Spacer(modifier = Modifier.height(32.dp))
             }
+        }
+
+        if (showHistorySheet) {
+            com.nxfr.android.ui.sheets.HistorySheet(onDismiss = { showHistorySheet = false })
         }
     }
 }

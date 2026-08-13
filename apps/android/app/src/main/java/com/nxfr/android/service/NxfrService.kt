@@ -95,6 +95,36 @@ class NxfrService : Service() {
             return context.filesDir.resolve("nxfr-identity").absolutePath
         }
 
+        fun recordHistory(
+            context: android.content.Context,
+            direction: String,
+            peerName: String,
+            peerId: String,
+            fileCount: Int,
+            totalBytes: Long,
+            status: String,
+            filePaths: List<String>
+        ) {
+            try {
+                val storeDir = getIdentityDir(context)
+                val json = org.json.JSONObject().apply {
+                    put("id", 0)
+                    put("ts_ms", System.currentTimeMillis())
+                    put("direction", direction)
+                    put("peer_name", peerName)
+                    put("peer_id", peerId)
+                    put("file_count", fileCount)
+                    put("total_bytes", totalBytes)
+                    put("status", status)
+                    put("file_paths", org.json.JSONArray(filePaths))
+                }.toString()
+                NxfrBridge.nxfr_history_add(json, storeDir)
+                Log.i("NxfrService", "History recorded: $direction $peerName status=$status")
+            } catch (e: Throwable) {
+                Log.w("NxfrService", "Failed to record history: ${e.message}")
+            }
+        }
+
         /** Stop the TCP listener and mDNS discovery without killing the service. */
         fun stopListening(context: android.content.Context? = null) {
             instance?.let { svc ->
@@ -166,6 +196,11 @@ class NxfrService : Service() {
             deviceIdBHex: String,
             exporterBytes: ByteArray
         ): String
+
+        // ── History ─────────────────────────────────────────
+        external fun nxfr_history_add(jsonRecord: String, storeDir: String): String
+        external fun nxfr_history_list(limit: Int, storeDir: String): String
+        external fun nxfr_history_clear(storeDir: String): String
 
         external fun nxfr_string_free(ptr: Long)
     }
@@ -505,6 +540,17 @@ class NxfrService : Service() {
                         )
                     }
 
+                    recordHistory(
+                        context = this,
+                        direction = if (isSending) "send" else "recv",
+                        peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
+                        peerId = event.optString("peer_id"),
+                        fileCount = 1,
+                        totalBytes = if (!isSending && inboxPath != null) java.io.File(inboxPath).length() else 0L,
+                        status = "complete",
+                        filePaths = listOfNotNull(publishedPath)
+                    )
+
                     _nxfrState.value = NxfrState.Complete(publishedPath)
                     Log.i(TAG, "Transfer complete: $publishedPath")
                     NxfrBridge.nxfr_close(handle)
@@ -517,6 +563,17 @@ class NxfrService : Service() {
                         return
                     }
                     val raw = event.optString("message")
+                    val status = if (raw.contains("reject", ignoreCase = true)) "rejected" else "failed"
+                    recordHistory(
+                        context = this,
+                        direction = if (isSending) "send" else "recv",
+                        peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
+                        peerId = event.optString("peer_id"),
+                        fileCount = 1,
+                        totalBytes = 0L,
+                        status = status,
+                        filePaths = emptyList()
+                    )
                     // Map storage errors to human-readable messages.
                     val human = when {
                         raw.contains("EROFS") || raw.contains("os error 30") || raw.contains("StorageError") ->
