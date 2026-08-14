@@ -87,12 +87,13 @@ fun NxfrNavHost(
                         label = { Text(stringResource(screen.labelResId)) },
                         selected = selected,
                         onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                            if (currentDestination?.route != screen.route) {
+                                navController.navigate(screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        inclusive = false
+                                    }
+                                    launchSingleTop = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
                         }
                     )
@@ -124,7 +125,22 @@ fun NxfrNavHost(
                     deviceId = deviceId,
                     onDeviceNameChanged = onDeviceNameChanged,
                     onReceiveViaLink = { navController.navigate(NxfrScreen.WebUpload.route) },
-                    onScanQr = { navController.navigate(NxfrScreen.Send.route) }
+                    onScanQr = {
+                        navController.navigate(NxfrScreen.Send.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                inclusive = false
+                            }
+                            launchSingleTop = true
+                        }
+                    },
+                    onConnectToDirectNode = { addr ->
+                        navController.navigate(NxfrScreen.Send.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                inclusive = false
+                            }
+                            launchSingleTop = true
+                        }
+                    }
                 )
             }
             composable(NxfrScreen.Send.route) {

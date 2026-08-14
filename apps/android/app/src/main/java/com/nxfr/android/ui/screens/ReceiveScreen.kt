@@ -36,6 +36,7 @@ fun ReceiveScreen(
     onDeviceNameChanged: (String) -> Unit = {},
     onReceiveViaLink: () -> Unit = {},
     onScanQr: () -> Unit = {},
+    onConnectToDirectNode: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -193,7 +194,13 @@ fun ReceiveScreen(
     }
 
     if (showDesertSheet) {
-        DesertSheet(onDismiss = { showDesertSheet = false })
+        DesertSheet(
+            onDismiss = { showDesertSheet = false },
+            onConnectToNode = { addr ->
+                showDesertSheet = false
+                onConnectToDirectNode(addr)
+            }
+        )
     }
 }
 
