@@ -131,10 +131,13 @@ class NxfrP2pManager {
         serviceRequest = WifiP2pDnsSdServiceRequest.newInstance()
         addServiceRequestAndDiscover()
 
+        // Also start peer discovery immediately to prime P2P table across all Android chipsets
+        discoverPeersFallback()
+
         discoveryJob = scope.launch {
-            delay(8000)
+            delay(5000)
             if (_state.value is P2pState.Discovering && discoveredPeers.isEmpty()) {
-                Log.i(TAG, "DNS-SD timeout, falling back to discoverPeers()")
+                Log.i(TAG, "Retrying peer discovery sweep...")
                 discoverPeersFallback()
             }
         }
@@ -163,13 +166,15 @@ class NxfrP2pManager {
                     }
 
                     override fun onFailure(reason: Int) {
-                        Log.e(TAG, "Failed to start service discovery, reason: $reason")
+                        Log.e(TAG, "Failed to start service discovery, reason: $reason — falling back to peer discovery")
+                        discoverPeersFallback()
                     }
                 })
             }
 
             override fun onFailure(reason: Int) {
-                Log.e(TAG, "Failed to add service request, reason: $reason")
+                Log.e(TAG, "Failed to add service request, reason: $reason — falling back to peer discovery")
+                discoverPeersFallback()
             }
         })
     }
@@ -178,16 +183,29 @@ class NxfrP2pManager {
     private fun discoverPeersFallback() {
         manager?.discoverPeers(channel, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "Fallback peer discovery started successfully")
+                Log.i(TAG, "Peer discovery active")
             }
 
             override fun onFailure(reason: Int) {
-                Log.e(TAG, "Failed to start fallback peer discovery, reason: $reason")
+                Log.e(TAG, "Failed to start peer discovery, reason: $reason")
+                if (_state.value is P2pState.Discovering && discoveredPeers.isEmpty()) {
+                    val msg = when (reason) {
+                        WifiP2pManager.BUSY -> "Wi-Fi Direct is busy. Toggle Wi-Fi and retry."
+                        WifiP2pManager.P2P_UNSUPPORTED -> "Wi-Fi Direct unsupported on this device."
+                        else -> "Discovery error ($reason). Ensure Wi-Fi & Location are enabled."
+                    }
+                    _state.value = P2pState.Failed(msg)
+                }
             }
         })
     }
 
     private fun setupReceiver() {
+        receiver?.let {
+            try { context?.unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        receiver = null
+
         val intentFilter = IntentFilter().apply {
             addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
@@ -202,18 +220,24 @@ class NxfrP2pManager {
                     WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                         val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                         if (state != WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                            _state.value = P2pState.Failed("Wi-Fi Direct not available")
+                            _state.value = P2pState.Failed("Wi-Fi Direct not available (Wi-Fi is turned off)")
                         }
                     }
                     WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
                         if (checkPermission() == null) {
                             manager?.requestPeers(channel) { peers ->
-                                val fallbackPeers = peers.deviceList
-                                    .filter { it.deviceName.contains("NXFR", ignoreCase = true) }
-                                    .map { P2pPeer(it.deviceAddress, it.deviceName, "fallback_aid") }
+                                val list = peers?.deviceList ?: return@requestPeers
+                                val validPeers = list.map { device ->
+                                    val name = if (device.deviceName.isNullOrBlank()) {
+                                        "Station ${device.deviceAddress.takeLast(5)}"
+                                    } else {
+                                        device.deviceName
+                                    }
+                                    P2pPeer(device.deviceAddress, name, "p2p_direct")
+                                }
                                 
-                                if (fallbackPeers.isNotEmpty()) {
-                                    fallbackPeers.forEach { discoveredPeers[it.deviceAddress] = it }
+                                if (validPeers.isNotEmpty()) {
+                                    validPeers.forEach { discoveredPeers[it.deviceAddress] = it }
                                     _state.value = P2pState.PeersFound(discoveredPeers.values.toList())
                                 }
                             }

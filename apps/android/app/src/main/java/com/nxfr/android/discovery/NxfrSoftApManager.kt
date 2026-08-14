@@ -61,54 +61,67 @@ class NxfrSoftApManager {
         _hostState.value = SoftApState.Starting
         val wifiManager = context!!.getSystemService(Context.WIFI_SERVICE) as WifiManager
         
-        wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
-            override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
-                this@NxfrSoftApManager.reservation = reservation
-                
-                // API 30+: read from SoftApConfiguration
-                // API 26-29: read from WifiConfiguration (deprecated but functional)
-                val (ssid, passphrase) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val config = reservation.softApConfiguration
-                    val ssid = config.ssid ?: "NXFR-AP"
-                    val passphrase = config.passphrase  // may be null for open networks
-                    ssid to passphrase
-                } else {
-                    @Suppress("DEPRECATION")
-                    val config = reservation.wifiConfiguration
-                    val ssid = config?.SSID ?: "NXFR-AP"
-                    val passphrase = config?.preSharedKey
-                    ssid to passphrase
+        try {
+            wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+                override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
+                    this@NxfrSoftApManager.reservation = reservation
+                    
+                    // API 30+: read from SoftApConfiguration
+                    // API 26-29: read from WifiConfiguration (deprecated but functional)
+                    val (ssid, passphrase) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val config = reservation.softApConfiguration
+                        val ssid = config.ssid ?: "NXFR-AP"
+                        val passphrase = config.passphrase  // may be null for open networks
+                        ssid to passphrase
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val config = reservation.wifiConfiguration
+                        val ssid = config?.SSID ?: "NXFR-AP"
+                        val passphrase = config?.preSharedKey
+                        ssid to passphrase
+                    }
+                    
+                    // Find host IP on AP interface
+                    val hostIp = findApInterfaceIp() ?: "192.168.43.1"  // common default
+                    
+                    _hostState.value = SoftApState.Active(
+                        ssid = ssid,
+                        passphrase = passphrase,
+                        hostIp = hostIp
+                    )
+                    Log.i(TAG, "Hotspot active: SSID=$ssid hostIp=$hostIp")
                 }
                 
-                // Find host IP on AP interface
-                val hostIp = findApInterfaceIp() ?: "192.168.43.1"  // common default
-                
-                _hostState.value = SoftApState.Active(
-                    ssid = ssid,
-                    passphrase = passphrase,
-                    hostIp = hostIp
-                )
-                Log.i(TAG, "Hotspot active: SSID=$ssid hostIp=$hostIp")
-            }
-            
-            override fun onStopped() {
-                this@NxfrSoftApManager.reservation = null
-                _hostState.value = SoftApState.Idle
-                Log.i(TAG, "Hotspot stopped")
-            }
-            
-            override fun onFailed(reason: Int) {
-                val msg = when (reason) {
-                    WifiManager.LocalOnlyHotspotCallback.ERROR_GENERIC -> "Hotspot failed (generic)"
-                    WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE -> "Hotspot already active or incompatible mode"
-                    WifiManager.LocalOnlyHotspotCallback.ERROR_TETHERING_DISALLOWED -> "Hotspot tethering disallowed by policy"
-                    WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL -> "No available Wi-Fi channel"
-                    else -> "Hotspot failed (reason=$reason)"
+                override fun onStopped() {
+                    this@NxfrSoftApManager.reservation = null
+                    _hostState.value = SoftApState.Idle
+                    Log.i(TAG, "Hotspot stopped")
                 }
-                _hostState.value = SoftApState.Failed(msg)
-                Log.e(TAG, msg)
-            }
-        }, handler)
+                
+                override fun onFailed(reason: Int) {
+                    val msg = when (reason) {
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_GENERIC -> "Hotspot failed. Ensure Wi-Fi & Location are enabled in Quick Settings."
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE -> "Hotspot already active or Wi-Fi Direct in use."
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_TETHERING_DISALLOWED -> "Hotspot tethering disallowed by system policy."
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL -> "No available Wi-Fi channel."
+                        else -> "Hotspot failed (code $reason)."
+                    }
+                    _hostState.value = SoftApState.Failed(msg)
+                    Log.e(TAG, msg)
+                }
+            }, handler)
+        } catch (e: SecurityException) {
+            _hostState.value = SoftApState.Failed("Permission denied: Turn ON Location & Wi-Fi in Quick Settings.")
+            Log.e(TAG, "SecurityException starting hotspot", e)
+        } catch (t: Throwable) {
+            _hostState.value = SoftApState.Failed(t.message ?: "Failed to start hotspot")
+            Log.e(TAG, "Throwable starting hotspot", t)
+        }
+    }
+
+    fun resetState() {
+        _hostState.value = SoftApState.Idle
+        _clientState.value = ClientJoinState.Idle
     }
 
     fun stopHotspot() {

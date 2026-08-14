@@ -229,8 +229,8 @@ fun DesertSheet(
                     Spacer(modifier = Modifier.height(16.dp))
                 }
 
-                // 5. Discover Button (only when Idle or Failed, AND permissionGranted)
-                if (p2pState is P2pState.Idle || p2pState is P2pState.Failed) {
+                // 5. Discover Button (only when Idle)
+                if (p2pState is P2pState.Idle) {
                     Button(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -266,19 +266,119 @@ fun DesertSheet(
 
                 // 6. Scanning Indicator (when Discovering)
                 if (p2pState is P2pState.Discovering) {
-                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        LinearProgressIndicator(
-                            color = deck.signalBeam,
-                            trackColor = deck.surfaceContainer,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Scanning for nearby stations...",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = deck.textPrimary
-                        )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = deck.surfaceVariant),
+                        border = BorderStroke(1.dp, deck.signalBeam),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            LinearProgressIndicator(
+                                color = deck.signalBeam,
+                                trackColor = deck.surfaceContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Scanning for nearby stations (Wi-Fi Direct)...",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    NxfrService.p2pManager?.cancelDiscoveryOnly()
+                                },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = deck.signalAlert),
+                                border = BorderStroke(1.dp, deck.signalAlert),
+                                shape = RoundedCornerShape(2.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                            ) {
+                                Text(
+                                    text = "[CANCEL SCAN]",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // 6b. Failure Banner (when Failed)
+                if (p2pState is P2pState.Failed) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = deck.surfaceVariant),
+                        border = BorderStroke(1.dp, deck.signalAlert),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "⚠️ STATION DISCOVERY FAILED\n${(p2pState as P2pState.Failed).reason}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.signalAlert,
+                                lineHeight = 16.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val aid = NxfrService.deviceId.value.let { did ->
+                                            if (did.isNotEmpty()) {
+                                                try {
+                                                    val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+                                                    NxfrService.NxfrBridge.nxfr_advertised_id(did, dateStr)
+                                                } catch (_: Throwable) { did.take(8) }
+                                            } else "unknown"
+                                        }
+                                        NxfrService.setDesertSessionActive(true)
+                                        NxfrService.p2pManager?.startDiscovery(aid, NxfrService.deviceName.value)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = deck.signalBeam,
+                                        contentColor = deck.rootBackground
+                                    ),
+                                    shape = RoundedCornerShape(2.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                ) {
+                                    Text(
+                                        text = "[RETRY SCAN]",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        NxfrService.p2pManager?.cancelDiscoveryOnly()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = deck.textSecondary),
+                                    border = BorderStroke(1.dp, deck.gridLine),
+                                    shape = RoundedCornerShape(2.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                ) {
+                                    Text(
+                                        text = "[DISMISS]",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                 }
@@ -286,6 +386,40 @@ fun DesertSheet(
                 // 7. Peer List (when PeersFound)
                 if (p2pState is P2pState.PeersFound) {
                     val peers = (p2pState as P2pState.PeersFound).peers
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "DISCOVERED STATIONS (${peers.size})",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = deck.signalBeam
+                        )
+                        TextButton(
+                            onClick = {
+                                val aid = NxfrService.deviceId.value.let { did ->
+                                    if (did.isNotEmpty()) {
+                                        try {
+                                            val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+                                            NxfrService.NxfrBridge.nxfr_advertised_id(did, dateStr)
+                                        } catch (_: Throwable) { did.take(8) }
+                                    } else "unknown"
+                                }
+                                NxfrService.p2pManager?.startDiscovery(aid, NxfrService.deviceName.value)
+                            }
+                        ) {
+                            Text(
+                                text = "RE-SCAN",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.signalBeam
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -313,7 +447,7 @@ fun DesertSheet(
                                             color = deck.textPrimary
                                         )
                                         Text(
-                                            text = "#" + peer.deviceName.take(4), // Approximation since AID might not be parsed
+                                            text = "#" + peer.deviceAddress.takeLast(4),
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 11.sp,
                                             color = deck.textSecondary
@@ -421,17 +555,60 @@ fun DesertSheet(
 
             when (softApState) {
                 is SoftApState.Idle -> {
-                    Text(
-                        text = "If Wi-Fi Direct fails, create an autonomous hotspot for the other device to join.",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = deck.textSecondary
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    var showJoinForm by remember { mutableStateOf(false) }
+                    var hotspotTab by remember { mutableStateOf(0) } // 0: Host, 1: Join
 
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { hotspotTab = 0 },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (hotspotTab == 0) deck.signalBeam else deck.surfaceVariant,
+                                contentColor = if (hotspotTab == 0) deck.rootBackground else deck.textPrimary
+                            ),
+                            shape = RoundedCornerShape(2.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                        ) {
+                            Text(
+                                text = "HOST HOTSPOT",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = { hotspotTab = 1 },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (hotspotTab == 1) deck.signalBeam else deck.surfaceVariant,
+                                contentColor = if (hotspotTab == 1) deck.rootBackground else deck.textPrimary
+                            ),
+                            shape = RoundedCornerShape(2.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                        ) {
+                            Text(
+                                text = "JOIN HOTSPOT",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (hotspotTab == 0) {
+                        Text(
+                            text = "Start a local Wi-Fi hotspot on this phone. Other devices can join to exchange files over direct TCP/TLS.",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = deck.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -444,50 +621,24 @@ fun DesertSheet(
                             ),
                             shape = RoundedCornerShape(2.dp),
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .height(48.dp)
                         ) {
                             Text(
-                                text = "[START HOTSPOT]",
+                                text = "[⚡ START LOCAL HOTSPOT]",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                showJoinForm = !showJoinForm
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = deck.signalBeam
-                            ),
-                            border = BorderStroke(1.dp, deck.signalBeam),
-                            shape = RoundedCornerShape(2.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                        ) {
-                            Text(
-                                text = "[JOIN HOTSPOT]",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // 12. Client Join Form
-                    if (showJoinForm) {
-                        Spacer(modifier = Modifier.height(16.dp))
+                    } else {
                         var joinSsid by remember { mutableStateOf("") }
                         var joinPassphrase by remember { mutableStateOf("") }
 
                         OutlinedTextField(
                             value = joinSsid,
                             onValueChange = { joinSsid = it },
-                            label = { Text("SSID", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                            label = { Text("Hotspot SSID", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
                             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
@@ -502,7 +653,7 @@ fun DesertSheet(
                         OutlinedTextField(
                             value = joinPassphrase,
                             onValueChange = { joinPassphrase = it },
-                            label = { Text("Passphrase", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                            label = { Text("Passphrase (optional for open)", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
                             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
@@ -513,13 +664,14 @@ fun DesertSheet(
                                 unfocusedTextColor = deck.textPrimary
                             )
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                NxfrService.softApManager?.joinNetwork(joinSsid, joinPassphrase)
+                                NxfrService.softApManager?.joinNetwork(joinSsid, joinPassphrase.ifEmpty { null })
                                 NxfrService.setDesertSessionActive(true)
                             },
+                            enabled = joinSsid.isNotBlank(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = deck.signalBeam,
                                 contentColor = deck.rootBackground
@@ -530,7 +682,7 @@ fun DesertSheet(
                                 .height(48.dp)
                         ) {
                             Text(
-                                text = "[CONNECT]",
+                                text = "[JOIN & CONNECT]",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -540,18 +692,28 @@ fun DesertSheet(
                 }
                 is SoftApState.Active -> {
                     val activeState = softApState as SoftApState.Active
+                    
+                    LaunchedEffect(softApState) {
+                        if (!NxfrService.isListening.value) {
+                            val intent = Intent(context, NxfrService::class.java)
+                            context.startService(intent)
+                            NxfrService.startListening(context)
+                        }
+                    }
+
                     Card(
                         colors = CardDefaults.cardColors(containerColor = deck.surfaceVariant),
-                        border = BorderStroke(1.dp, deck.gridLine),
+                        border = BorderStroke(1.dp, deck.signalBeam),
                         shape = RoundedCornerShape(4.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                text = "SSID        : ${activeState.ssid}\n" +
-                                       "PASSPHRASE  : ${activeState.passphrase ?: "Open system hotspot settings to view password"}\n" +
+                                text = "⚡ HOTSPOT RUNNING (HOST)\n" +
+                                       "SSID        : ${activeState.ssid}\n" +
+                                       "PASSPHRASE  : ${activeState.passphrase ?: "Check system hotspot settings"}\n" +
                                        "HOST IP     : ${activeState.hostIp}\n" +
-                                       "PORT        : 17394",
+                                       "PORT        : 17394 (LISTENING)",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
                                 color = deck.signalBeam,
@@ -594,7 +756,7 @@ fun DesertSheet(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Starting hotspot...",
+                            text = "Starting hotspot... (Ensure Location & Wi-Fi are ON)",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             color = deck.textPrimary
@@ -602,12 +764,43 @@ fun DesertSheet(
                     }
                 }
                 is SoftApState.Failed -> {
-                    Text(
-                        text = "Failed: ${(softApState as SoftApState.Failed).reason}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = deck.signalAlert
-                    )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = deck.surfaceVariant),
+                        border = BorderStroke(1.dp, deck.signalAlert),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "⚠️ HOTSPOT ERROR\n${(softApState as SoftApState.Failed).reason}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.signalAlert,
+                                lineHeight = 16.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {
+                                    NxfrService.softApManager?.resetState()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = deck.signalBeam,
+                                    contentColor = deck.rootBackground
+                                ),
+                                shape = RoundedCornerShape(2.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                            ) {
+                                Text(
+                                    text = "[TRY AGAIN]",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -615,12 +808,25 @@ fun DesertSheet(
             when (clientJoinState) {
                 is ClientJoinState.Connecting -> {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Connecting to network...",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = deck.textPrimary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(color = deck.signalBeam, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Connecting to network...",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.textPrimary
+                            )
+                        }
+                        TextButton(onClick = { NxfrService.softApManager?.leaveNetwork() }) {
+                            Text("CANCEL", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = deck.signalAlert)
+                        }
+                    }
                 }
                 is ClientJoinState.Connected -> {
                     val connectedState = clientJoinState as ClientJoinState.Connected
@@ -630,12 +836,25 @@ fun DesertSheet(
                 }
                 is ClientJoinState.Failed -> {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Failed to join: ${(clientJoinState as ClientJoinState.Failed).reason}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = deck.signalAlert
-                    )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = deck.surfaceVariant),
+                        border = BorderStroke(1.dp, deck.signalAlert),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "⚠️ FAILED TO JOIN: ${(clientJoinState as ClientJoinState.Failed).reason}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.signalAlert
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(onClick = { NxfrService.softApManager?.resetState() }) {
+                                Text("TRY AGAIN", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = deck.signalBeam)
+                            }
+                        }
+                    }
                 }
                 else -> {}
             }
