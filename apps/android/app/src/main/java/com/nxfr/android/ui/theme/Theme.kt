@@ -191,9 +191,16 @@ fun NxfrTheme(
         }
     }
 
+    val deckColors = when {
+        colorMode == ThemePreference.COLOR_MODE_OLED && darkTheme -> OledDeckColors
+        darkTheme -> DarkDeckColors
+        else -> LightDeckColors
+    }
+
     val isAnimated = isAnimationEffective()
     androidx.compose.runtime.CompositionLocalProvider(
-        LocalAnimationsEnabled provides isAnimated
+        LocalAnimationsEnabled provides isAnimated,
+        LocalDeckColors provides deckColors
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material3.*
@@ -50,9 +53,24 @@ fun SettingsScreen(
     val context = LocalContext.current
     val storeDir = context.filesDir.absolutePath
     val coroutineScope = rememberCoroutineScope()
+    val sharedPrefs = remember { context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE) }
 
     var isEditingName by remember { mutableStateOf(false) }
     var editNameValue by remember { mutableStateOf(deviceName) }
+
+    // Auto accept & folder picker states
+    var autoAcceptState by remember { mutableIntStateOf(sharedPrefs.getInt("auto_accept_global", 0)) }
+    var showAutoAcceptWarning by remember { mutableStateOf(false) }
+    var saveFolderPath by remember { mutableStateOf(sharedPrefs.getString("save_folder_uri", null)) }
+
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            saveFolderPath = uri.toString()
+            sharedPrefs.edit().putString("save_folder_uri", uri.toString()).apply()
+        }
+    }
 
     // Dialog state flags
     var showColorPicker by remember { mutableStateOf(false) }
@@ -380,6 +398,31 @@ fun SettingsScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Surface(
+                onClick = { folderPicker.launch(null) },
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Destination Folder", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = saveFolderPath ?: "Default (Downloads/NXFR)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
 
         // ── 4. SEND SECTION ──────────────────────────────────────────────────
@@ -583,11 +626,51 @@ fun SettingsScreen(
 
         // ── 6. SECURITY SECTION ──────────────────────────────────────────────
         SettingsCard(title = "Security") {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Auto-accept Policy", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                    Text("Managed via Receive tab visibility controls", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Auto-accept Policy", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Determine if incoming transfers from paired or unknown devices require manual confirmation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val autoOptions = listOf("Off", "Paired", "Everyone")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                autoOptions.forEachIndexed { index, label ->
+                    SegmentedButton(
+                        selected = autoAcceptState == index,
+                        onClick = {
+                            if (index == 2 && autoAcceptState != 2) {
+                                showAutoAcceptWarning = true
+                            } else {
+                                autoAcceptState = index
+                                sharedPrefs.edit().putInt("auto_accept_global", index).apply()
+                            }
+                        },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = autoOptions.size)
+                    ) {
+                        Text(label)
+                    }
                 }
+            }
+
+            if (showAutoAcceptWarning) {
+                AlertDialog(
+                    onDismissRequest = { showAutoAcceptWarning = false },
+                    title = { Text(stringResource(R.string.receive_warning)) },
+                    text = { Text(stringResource(R.string.receive_auto_accept_everyone_warning)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            autoAcceptState = 2
+                            sharedPrefs.edit().putInt("auto_accept_global", 2).apply()
+                            showAutoAcceptWarning = false
+                        }) {
+                            Text(stringResource(R.string.receive_confirm))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showAutoAcceptWarning = false }) {
+                            Text(stringResource(R.string.receive_cancel))
+                        }
+                    }
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
