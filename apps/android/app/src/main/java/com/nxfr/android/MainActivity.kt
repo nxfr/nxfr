@@ -35,10 +35,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val themeMode by ThemePreference.themeMode.collectAsState()
-            val useDynamicColor by ThemePreference.useDynamicColor.collectAsState()
             NxfrTheme(
-                darkTheme = when(themeMode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() },
-                dynamicColor = useDynamicColor
+                darkTheme = when(themeMode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

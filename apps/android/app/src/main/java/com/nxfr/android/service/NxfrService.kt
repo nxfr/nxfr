@@ -187,6 +187,14 @@ class NxfrService : Service() {
                 svc.evaluateLifecycleContract()
             }
         }
+
+        fun startListening(context: android.content.Context) {
+            instance?.let { svc ->
+                svc.serviceScope.launch {
+                    svc.startListening()
+                }
+            }
+        }
     }
 
     /**
