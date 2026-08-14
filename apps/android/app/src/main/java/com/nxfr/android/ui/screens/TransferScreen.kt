@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -400,7 +401,7 @@ fun TransferScreen(
                                     )
                                 },
                                 leadingIcon = {
-                                    Icon(androidx.compose.material.icons.Icons.Outlined.ContentCopy, contentDescription = "Copy Checksum", modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Checksum", modifier = Modifier.size(14.dp))
                                 }
                             )
                         }
