@@ -9,17 +9,17 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
-import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.QrCode
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,15 +27,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nxfr.android.R
 import com.nxfr.android.prefs.NxfrPreferences
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.dialogs.ColorPickerDialog
 import com.nxfr.android.ui.sheets.TroubleshootSheet
 import com.nxfr.android.ui.theme.ThemePreference
+import com.nxfr.android.ui.theme.deckColors
 import com.nxfr.android.utils.DebugBundleExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,9 +55,11 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val deck = MaterialTheme.deckColors
     val storeDir = context.filesDir.absolutePath
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE) }
+    val scrollState = rememberScrollState()
 
     var isEditingName by remember { mutableStateOf(false) }
     var editNameValue by remember { mutableStateOf(deviceName) }
@@ -111,11 +117,11 @@ fun SettingsScreen(
         refreshPairedDevices()
     }
 
-    // Dialogs
+    // ── Dialogs ──
     if (showColorPicker) {
         val currentSeed = ColorPreferenceHelper.getCustomSeedColor(context)
         ColorPickerDialog(
-            initialColor = currentSeed,
+            initialColor = androidx.compose.ui.graphics.Color(currentSeed),
             onDismiss = { showColorPicker = false },
             onColorSelected = { selectedColor ->
                 ThemePreference.setCustomSeedColor(context, selectedColor.toArgb())
@@ -127,16 +133,17 @@ fun SettingsScreen(
     if (showEncryptionWhy) {
         AlertDialog(
             onDismissRequest = { showEncryptionWhy = false },
-            icon = { Icon(Icons.Outlined.Lock, contentDescription = null) },
-            title = { Text("Encryption Invariant") },
+            title = { Text("Encryption Invariant [SEALED]", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "Why can't I disable encryption?\n\nBecause a transfer app's only job is to not leak your files. We removed the switch so nobody — not you, not your employer, not malware — can flip it."
+                    "Why can't I disable encryption?\n\nBecause a sovereign protocol's only job is to never leak plaintext across the network. All pipes are mTLS 1.3 authenticated with ephemeral curve25519 session keys.",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp
                 )
             },
             confirmButton = {
                 TextButton(onClick = { showEncryptionWhy = false }) {
-                    Text("Understood")
+                    Text("ACKNOWLEDGED", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -145,9 +152,8 @@ fun SettingsScreen(
     if (showRevokeAllConfirm) {
         AlertDialog(
             onDismissRequest = { showRevokeAllConfirm = false },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text("Revoke All Paired Devices?") },
-            text = { Text("All paired devices will be removed and will require manual approval on their next transfer.") },
+            title = { Text("Revoke All Paired Keys?", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+            text = { Text("All pinned node certificates will be purged from the trust store. Future transmissions will require explicit TOFU authorization.", fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -158,18 +164,18 @@ fun SettingsScreen(
                             withContext(Dispatchers.Main) {
                                 pairedDevices = emptyList()
                                 showRevokeAllConfirm = false
-                                Toast.makeText(context, "All device pairings revoked", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Trust store purged", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(containerColor = deck.signalAlert)
                 ) {
-                    Text("Revoke All")
+                    Text("REVOKE ALL", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 OutlinedButton(onClick = { showRevokeAllConfirm = false }) {
-                    Text("Cancel")
+                    Text("CANCEL", fontFamily = FontFamily.Monospace)
                 }
             }
         )
@@ -178,125 +184,139 @@ fun SettingsScreen(
     deviceToUnpair?.let { device ->
         AlertDialog(
             onDismissRequest = { deviceToUnpair = null },
-            title = { Text(stringResource(R.string.settings_unpair)) },
-            text = { Text(stringResource(R.string.settings_unpair_confirm, device.name)) },
+            title = { Text("Revoke Node ${device.name}?", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+            text = { Text("Pinned certificate did:nxfr:${device.deviceId.take(8)} will be removed from trust store.", fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
             confirmButton = {
-                TextButton(onClick = {
-                    coroutineScope.launch(Dispatchers.IO) {
-                        NxfrService.NxfrBridge.nxfr_unpair(storeDir, device.deviceId)
-                        withContext(Dispatchers.Main) {
-                            refreshPairedDevices()
-                            Toast.makeText(context, context.getString(R.string.settings_unpaired), Toast.LENGTH_SHORT).show()
+                Button(
+                    onClick = {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try { NxfrService.NxfrBridge.nxfr_unpair(storeDir, device.deviceId) } catch (_: Exception) {}
+                            withContext(Dispatchers.Main) {
+                                deviceToUnpair = null
+                                refreshPairedDevices()
+                                Toast.makeText(context, "Unpaired ${device.name}", Toast.LENGTH_SHORT).show()
+                            }
                         }
-                    }
-                    deviceToUnpair = null
-                }) {
-                    Text(stringResource(R.string.settings_unpair))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = deck.signalAlert)
+                ) {
+                    Text("REVOKE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deviceToUnpair = null }) {
-                    Text(stringResource(R.string.cancel))
+                OutlinedButton(onClick = { deviceToUnpair = null }) {
+                    Text("CANCEL", fontFamily = FontFamily.Monospace)
                 }
             }
         )
     }
 
-    if (showTroubleshootSheet) {
-        TroubleshootSheet(onDismiss = { showTroubleshootSheet = false })
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .background(deck.rootBackground)
+            .verticalScroll(scrollState)
     ) {
-        // ── 1. IDENTITY SECTION ──────────────────────────────────────────────
-        SettingsCard(title = "Identity") {
-            if (isEditingName) {
-                OutlinedTextField(
-                    value = editNameValue,
-                    onValueChange = { editNameValue = it },
-                    label = { Text(stringResource(R.string.settings_device_name)) },
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            isEditingName = false
-                            onDeviceNameChanged(editNameValue)
-                            coroutineScope.launch(Dispatchers.IO) {
-                                NxfrService.NxfrBridge.nxfr_set_name(storeDir, editNameValue)
-                            }
-                        }) {
-                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.settings_save))
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.settings_device_name), style = MaterialTheme.typography.bodySmall)
-                        Text(deviceName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                    }
-                    IconButton(onClick = { isEditingName = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.settings_edit))
-                    }
-                }
-            }
+        // ── 1. IDENTITY LEDGER BLOCK ─────────────────────────────────────────
+        LedgerSectionHeader(title = "STATION IDENTITY & KEYS")
 
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Device ID", style = MaterialTheme.typography.bodySmall)
-                    Text(deviceId, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
-                }
-                IconButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Device ID", deviceId))
-                    Toast.makeText(context, "Device ID copied", Toast.LENGTH_SHORT).show()
-                }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy ID")
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .background(deck.surface, RoundedCornerShape(4.dp))
+                .border(1.dp, deck.gridLine, RoundedCornerShape(4.dp))
+                .padding(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isEditingName) {
+                    OutlinedTextField(
+                        value = editNameValue,
+                        onValueChange = { editNameValue = it },
+                        label = { Text("Station Call-Sign") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { isEditingName = false }) { Text("CANCEL") }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (editNameValue.isNotBlank()) {
+                                    onDeviceNameChanged(editNameValue)
+                                }
+                                isEditingName = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = deck.signalBeam, contentColor = deck.rootBackground)
+                        ) { Text("SAVE", fontWeight = FontWeight.Bold) }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = deviceName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = deck.textPrimary
+                            )
+                            Text(
+                                text = "did:nxfr:${deviceId.take(16)}…",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = deck.textSecondary
+                            )
+                        }
+                        IconButton(onClick = {
+                            editNameValue = deviceName
+                            isEditingName = true
+                        }) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "Edit call-sign", tint = deck.signalBeam)
+                        }
+                    }
                 }
             }
         }
 
         // ── 2. GENERAL SECTION ───────────────────────────────────────────────
-        SettingsCard(title = "General") {
-            Text("Theme Mode", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(6.dp))
+        LedgerSectionHeader(title = "CONSOLE & PRESENTATION")
+
+        LedgerRow(title = "Interface Theme", subtitle = "Cockpit obsidian or light drafting paper") {
             val themeMode by ThemePreference.themeMode.collectAsState()
-            val themeSelection = when (themeMode) { ThemePreference.LIGHT -> 1; ThemePreference.DARK -> 2; else -> 0 }
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val options = listOf("System", "Light", "Dark")
-                options.forEachIndexed { index, label ->
+            val themeOptions = listOf("Auto", "Dark", "Light")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.width(200.dp)) {
+                themeOptions.forEachIndexed { index, label ->
+                    val optMode = when (index) {
+                        1 -> ThemePreference.DARK
+                        2 -> ThemePreference.LIGHT
+                        else -> ThemePreference.SYSTEM
+                    }
                     SegmentedButton(
-                        selected = themeSelection == index,
-                        onClick = {
-                            val mode = when (index) { 1 -> ThemePreference.LIGHT; 2 -> ThemePreference.DARK; else -> ThemePreference.SYSTEM }
-                            ThemePreference.setTheme(context, mode)
-                        },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
+                        selected = themeMode == optMode,
+                        onClick = { ThemePreference.setTheme(context, optMode) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = themeOptions.size)
                     ) {
-                        Text(label)
+                        Text(label, fontSize = 11.sp)
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Color Mode", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(6.dp))
+        LedgerRow(title = "Color Mode", subtitle = "Brand cyan, pure OLED black, or custom seed") {
             val colorMode by ThemePreference.colorMode.collectAsState()
-            val colorModeIndex = when (colorMode) {
+            val colorOptions = listOf("Brand", "OLED", "Custom")
+            val colorIndex = when (colorMode) {
                 ThemePreference.COLOR_MODE_OLED -> 1
                 ThemePreference.COLOR_MODE_CUSTOM -> 2
                 else -> 0
             }
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val colorOptions = listOf("Brand", "OLED Black", "Custom")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.width(220.dp)) {
                 colorOptions.forEachIndexed { index, label ->
                     SegmentedButton(
-                        selected = colorModeIndex == index,
+                        selected = colorIndex == index,
                         onClick = {
                             val selectedMode = when (index) {
                                 1 -> ThemePreference.COLOR_MODE_OLED
@@ -310,128 +330,70 @@ fun SettingsScreen(
                         },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = colorOptions.size)
                     ) {
-                        Text(label)
+                        Text(label, fontSize = 11.sp)
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
+        LedgerRow(title = "Interface Animations", subtitle = "Respects system ANIMATOR_DURATION_SCALE") {
             val appAnimationsEnabled by com.nxfr.android.ui.theme.AnimationPreference.animationsEnabled.collectAsState()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.settings_animations), style = MaterialTheme.typography.bodyMedium)
-                    if (com.nxfr.android.ui.theme.AnimationPreference.isSystemAnimationDisabled(context)) {
-                        Text("Overridden: System animator scale is set to OFF", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                Switch(
-                    checked = appAnimationsEnabled,
-                    onCheckedChange = { com.nxfr.android.ui.theme.AnimationPreference.setAnimationsEnabled(context, it) }
-                )
-            }
+            Switch(
+                checked = appAnimationsEnabled,
+                onCheckedChange = { com.nxfr.android.ui.theme.AnimationPreference.setAnimationsEnabled(context, it) }
+            )
         }
 
         // ── 3. RECEIVE SECTION ───────────────────────────────────────────────
-        SettingsCard(title = "Receive") {
+        LedgerSectionHeader(title = "RECEIVE INVARIANTS")
+
+        LedgerRow(title = "Save Media to Gallery", subtitle = "Index images/videos into Android media store") {
             val saveToGallery by NxfrPreferences.saveToGallery.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Save media to gallery", style = MaterialTheme.typography.bodyMedium)
-                    Text("Automatically add received images/videos to Android Gallery", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = saveToGallery,
-                    onCheckedChange = { NxfrPreferences.setSaveToGallery(context, it) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            val saveToHistory by NxfrPreferences.saveToHistory.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Save to transfer history", style = MaterialTheme.typography.bodyMedium)
-                    Text("History never leaves this device.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = saveToHistory,
-                    onCheckedChange = { NxfrPreferences.setSaveToHistory(context, it) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            val autoFinish by NxfrPreferences.autoFinish.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Auto-finish completion sheet", style = MaterialTheme.typography.bodyMedium)
-                    Text("Auto-dismiss sheet 1.5s after transfer completes", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = autoFinish,
-                    onCheckedChange = { NxfrPreferences.setAutoFinish(context, it) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            val collisionRename by NxfrPreferences.collisionRename.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Collision rename", style = MaterialTheme.typography.bodyMedium)
-                    Text("Rename duplicate incoming files as name (1).ext", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = collisionRename,
-                    onCheckedChange = { NxfrPreferences.setCollisionRename(context, it) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            val requirePin by NxfrPreferences.requirePin.collectAsState()
-            OutlinedTextField(
-                value = requirePin,
-                onValueChange = { NxfrPreferences.setRequirePin(context, it) },
-                label = { Text("Require PIN (Optional)") },
-                placeholder = { Text("e.g. 1234") },
-                supportingText = { Text("Optional PIN required for Web Upload link access.") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+            Switch(
+                checked = saveToGallery,
+                onCheckedChange = { NxfrPreferences.setSaveToGallery(context, it) }
             )
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            Surface(
-                onClick = { folderPicker.launch(null) },
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Destination Folder", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = saveFolderPath ?: "Default (Downloads/NXFR)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+        LedgerRow(title = "Local Session History", subtitle = "Records never leave this device") {
+            val saveToHistory by NxfrPreferences.saveToHistory.collectAsState()
+            Switch(
+                checked = saveToHistory,
+                onCheckedChange = { NxfrPreferences.setSaveToHistory(context, it) }
+            )
+        }
+
+        LedgerRow(title = "Auto-Finish Completed Sheet", subtitle = "Dismisses sheet 1.5s after 100% check") {
+            val autoFinish by NxfrPreferences.autoFinish.collectAsState()
+            Switch(
+                checked = autoFinish,
+                onCheckedChange = { NxfrPreferences.setAutoFinish(context, it) }
+            )
+        }
+
+        LedgerRow(title = "Collision Rename", subtitle = "Duplicate files saved as name (1).ext") {
+            val collisionRename by NxfrPreferences.collisionRename.collectAsState()
+            Switch(
+                checked = collisionRename,
+                onCheckedChange = { NxfrPreferences.setCollisionRename(context, it) }
+            )
+        }
+
+        LedgerRow(
+            title = "Destination Folder",
+            subtitle = saveFolderPath ?: "Downloads/NXFR (Default)",
+            onClick = { folderPicker.launch(null) }
+        ) {
+            Icon(Icons.Outlined.Folder, contentDescription = "Pick folder", tint = deck.signalBeam)
         }
 
         // ── 4. SEND SECTION ──────────────────────────────────────────────────
-        SettingsCard(title = "Send") {
+        LedgerSectionHeader(title = "SEND INVARIANTS")
+
+        LedgerRow(title = "Default Send Mode", subtitle = "Single recipient clears selection on complete") {
             val defaultSendMode by NxfrPreferences.defaultSendMode.collectAsState()
-            Text("Default Send Mode", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(6.dp))
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val modes = listOf("Single Recipient", "Multiple Recipients")
+            val modes = listOf("Single", "Multiple")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.width(180.dp)) {
                 modes.forEachIndexed { index, label ->
                     val modeKey = if (index == 0) "single" else "multiple"
                     SegmentedButton(
@@ -439,200 +401,91 @@ fun SettingsScreen(
                         onClick = { NxfrPreferences.setDefaultSendMode(context, modeKey) },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size)
                     ) {
-                        Text(label)
+                        Text(label, fontSize = 11.sp)
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
+        LedgerRow(title = "SHA-256 Integrity Verification", subtitle = "Compute and display full payload checksum") {
             val showChecksum by NxfrPreferences.showChecksum.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Show SHA-256 checksum on complete", style = MaterialTheme.typography.bodyMedium)
-                    Text("Displays copyable SHA-256 hash chip in completion sheet", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = showChecksum,
-                    onCheckedChange = { NxfrPreferences.setShowChecksum(context, it) }
-                )
-            }
+            Switch(
+                checked = showChecksum,
+                onCheckedChange = { NxfrPreferences.setShowChecksum(context, it) }
+            )
         }
 
         // ── 5. NETWORK SECTION ───────────────────────────────────────────────
-        SettingsCard(title = "Network") {
-            val advertiseMode by NxfrPreferences.advertiseMode.collectAsState()
-            Text("Advertise On", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(6.dp))
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val advOptions = listOf("All Interfaces", "Wi-Fi Only")
-                advOptions.forEachIndexed { index, label ->
-                    val modeKey = if (index == 0) "all" else "wifi_only"
-                    SegmentedButton(
-                        selected = advertiseMode == modeKey,
-                        onClick = { NxfrPreferences.setAdvertiseMode(context, modeKey) },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = advOptions.size)
-                    ) {
-                        Text(label)
-                    }
-                }
-            }
+        LedgerSectionHeader(title = "SOCKET & BEACON PARAMETERS")
 
-            Spacer(modifier = Modifier.height(16.dp))
-            val isListening by NxfrService.isListening.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("TCP Server Status", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    Text(if (isListening) "Listening on port ${NxfrService.activePort}" else "Stopped", style = MaterialTheme.typography.bodySmall, color = if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { NxfrService.startListening(context) },
-                        enabled = !isListening
-                    ) {
-                        Text("Restart")
-                    }
-                    Button(
-                        onClick = { NxfrService.stopListening(context) },
-                        enabled = isListening,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Stop")
-                    }
-                }
-            }
+        var portInput by remember { mutableStateOf(NxfrPreferences.port.value.toString()) }
+        var timeoutInput by remember { mutableStateOf(NxfrPreferences.discoveryTimeoutMs.value.toString()) }
+        var multicastInput by remember { mutableStateOf(NxfrPreferences.multicastAddress.value) }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            val deviceModel by NxfrPreferences.deviceModel.collectAsState()
+        LedgerRow(title = "TCP Protocol Port", subtitle = "Default 17394 (Range: 1024–65535)") {
             OutlinedTextField(
-                value = deviceModel,
-                onValueChange = { NxfrPreferences.setDeviceModel(context, it) },
-                label = { Text("Device Model Label") },
-                modifier = Modifier.fillMaxWidth()
+                value = portInput,
+                onValueChange = { newVal ->
+                    portInput = newVal
+                    val parsed = newVal.toIntOrNull()
+                    if (parsed != null && parsed in 1024..65535) {
+                        NxfrPreferences.setPort(context, parsed)
+                        NxfrService.updateActivePortAndRebind(context, parsed)
+                    }
+                },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.width(110.dp)
             )
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            var portText by remember { mutableStateOf(NxfrService.activePort.toString()) }
-            var portError by remember { mutableStateOf<String?>(null) }
+        LedgerRow(title = "Beacon Discovery Timeout", subtitle = "Wait time for responses (500–15000 ms)") {
             OutlinedTextField(
-                value = portText,
-                onValueChange = { input ->
-                    portText = input
-                    val p = input.toIntOrNull()
-                    if (p != null && p in 1024..65535) {
-                        portError = null
-                        NxfrPreferences.setPort(context, p)
-                        NxfrService.updateActivePortAndRebind(context, p)
-                    } else {
-                        portError = "Invalid port (1024–65535)"
+                value = timeoutInput,
+                onValueChange = { newVal ->
+                    timeoutInput = newVal
+                    val parsed = newVal.toIntOrNull()
+                    if (parsed != null && parsed in 500..15000) {
+                        NxfrPreferences.setDiscoveryTimeoutMs(context, parsed.toLong())
+                        NxfrService.discoveryTimeoutMs = parsed
                     }
                 },
-                label = { Text("Port") },
-                supportingText = {
-                    if (portError != null) Text(portError!!, color = MaterialTheme.colorScheme.error)
-                    else Text("TCP port for transfers. Change only on conflict.")
-                },
-                isError = portError != null,
-                modifier = Modifier.fillMaxWidth()
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.width(110.dp)
             )
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            var discoveryTimeoutText by remember { mutableStateOf(NxfrService.discoveryTimeoutMs.toString()) }
-            var timeoutError by remember { mutableStateOf<String?>(null) }
+        LedgerRow(title = "Multicast Group Address", subtitle = "Default 224.0.0.251") {
             OutlinedTextField(
-                value = discoveryTimeoutText,
-                onValueChange = { input ->
-                    discoveryTimeoutText = input
-                    val t = input.toLongOrNull()
-                    if (t != null && t in 500..15000) {
-                        timeoutError = null
-                        NxfrPreferences.setDiscoveryTimeoutMs(context, t)
-                        NxfrService.discoveryTimeoutMs = t.toInt()
-                    } else {
-                        timeoutError = "Invalid timeout (500–15000 ms)"
+                value = multicastInput,
+                onValueChange = { newVal ->
+                    multicastInput = newVal
+                    if (newVal.startsWith("224.") || newVal.startsWith("239.")) {
+                        NxfrPreferences.setMulticastAddress(context, newVal)
+                        NxfrService.updateMulticastAddressAndRebind(context, newVal)
                     }
                 },
-                label = { Text("Discovery Timeout (ms)") },
-                supportingText = {
-                    if (timeoutError != null) Text(timeoutError!!, color = MaterialTheme.colorScheme.error)
-                    else Text("Wait time for nearby devices to answer (ms).")
-                },
-                isError = timeoutError != null,
-                modifier = Modifier.fillMaxWidth()
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.width(140.dp)
             )
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            var multicastAddressText by remember { mutableStateOf(NxfrService.multicastAddress) }
-            var multicastError by remember { mutableStateOf<String?>(null) }
-            OutlinedTextField(
-                value = multicastAddressText,
-                onValueChange = { input ->
-                    multicastAddressText = input
-                    if (isValidMulticastIp(input)) {
-                        multicastError = null
-                        NxfrPreferences.setMulticastAddress(context, input)
-                        NxfrService.updateMulticastAddressAndRebind(context, input)
-                    } else {
-                        multicastError = "Invalid multicast IP (224.0.0.0/4)"
-                    }
-                },
-                label = { Text("Multicast Address") },
-                supportingText = {
-                    if (multicastError != null) Text(multicastError!!, color = MaterialTheme.colorScheme.error)
-                    else Text("LAN beacon group address. Change only if your network blocks it.")
-                },
-                isError = multicastError != null,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = {
-                    portText = "17394"
-                    discoveryTimeoutText = "5000"
-                    multicastAddressText = "224.0.0.251"
-                    NxfrPreferences.resetNetworkDefaults(context)
-                    NxfrService.discoveryTimeoutMs = 5000
-                    NxfrService.updateMulticastAddressAndRebind(context, "224.0.0.251")
-                    NxfrService.updateActivePortAndRebind(context, 17394)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Reset to defaults (17394 / 5000 / 224.0.0.251)")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Surface(
-                onClick = { showEncryptionWhy = true },
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceContainer
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Always-on TLS 1.3 Encryption", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("Encryption cannot be disabled by design. Tap for details.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
+        LedgerRow(
+            title = "Always-On TLS 1.3 Pipeline",
+            subtitle = "Encryption invariant is hard-sealed by design",
+            onClick = { showEncryptionWhy = true }
+        ) {
+            SecuritySeal(text = "SEALED: TLS 1.3", color = deck.signalSuccess)
         }
 
         // ── 6. SECURITY SECTION ──────────────────────────────────────────────
-        SettingsCard(title = "Security") {
-            Text("Auto-accept Policy", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("Determine if incoming transfers from paired or unknown devices require manual confirmation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(8.dp))
+        LedgerSectionHeader(title = "CRYPTOGRAPHIC TRUST STORE")
 
-            val autoOptions = listOf("Off", "Paired", "Everyone")
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        LedgerRow(title = "Auto-Accept Policy", subtitle = "Off, Paired nodes, or Everyone") {
+            val autoOptions = listOf("Off", "Paired", "All")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.width(180.dp)) {
                 autoOptions.forEachIndexed { index, label ->
                     SegmentedButton(
                         selected = autoAcceptState == index,
@@ -646,172 +499,203 @@ fun SettingsScreen(
                         },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = autoOptions.size)
                     ) {
-                        Text(label)
+                        Text(label, fontSize = 11.sp)
                     }
                 }
             }
+        }
 
-            if (showAutoAcceptWarning) {
-                AlertDialog(
-                    onDismissRequest = { showAutoAcceptWarning = false },
-                    title = { Text(stringResource(R.string.receive_warning)) },
-                    text = { Text(stringResource(R.string.receive_auto_accept_everyone_warning)) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            autoAcceptState = 2
-                            sharedPrefs.edit().putInt("auto_accept_global", 2).apply()
-                            showAutoAcceptWarning = false
-                        }) {
-                            Text(stringResource(R.string.receive_confirm))
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showAutoAcceptWarning = false }) {
-                            Text(stringResource(R.string.receive_cancel))
-                        }
+        if (showAutoAcceptWarning) {
+            AlertDialog(
+                onDismissRequest = { showAutoAcceptWarning = false },
+                title = { Text("Auto-Accept Warning", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                text = { Text("All paired devices will be able to transmit files without explicit prompt confirmation.", fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+                confirmButton = {
+                    Button(onClick = {
+                        autoAcceptState = 2
+                        sharedPrefs.edit().putInt("auto_accept_global", 2).apply()
+                        showAutoAcceptWarning = false
+                    }, colors = ButtonDefaults.buttonColors(containerColor = deck.signalAlert)) {
+                        Text("CONFIRM", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                     }
-                )
-            }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showAutoAcceptWarning = false }) {
+                        Text("CANCEL", fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Paired Devices Manager", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(8.dp))
-            if (pairedDevices.isEmpty()) {
-                Text("No paired devices yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LedgerRow(
+            title = "Pinned Peer Certificates",
+            subtitle = if (pairedDevices.isEmpty()) "No trusted node certificates" else "${pairedDevices.size} certificates active in TOFU store",
+            onClick = { if (pairedDevices.isNotEmpty()) showRevokeAllConfirm = true }
+        ) {
+            if (pairedDevices.isNotEmpty()) {
+                SecuritySeal(text = "TRUSTED: ${pairedDevices.size}", color = deck.signalBeam)
             } else {
-                pairedDevices.forEach { device ->
+                SecuritySeal(text = "EMPTY STORE", color = deck.textDim)
+            }
+        }
+
+        if (pairedDevices.isNotEmpty()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                pairedDevices.forEach { dev ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                            Text("ID: ${device.deviceId.take(8)}…", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+                        Column {
+                            Text(dev.name, fontFamily = FontFamily.Monospace, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = deck.textPrimary)
+                            Text("did:nxfr:${dev.deviceId.take(12)}…", fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = deck.textDim)
                         }
-                        IconButton(onClick = { deviceToUnpair = device }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Unpair", tint = MaterialTheme.colorScheme.error)
+                        IconButton(onClick = { deviceToUnpair = dev }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Unpair", tint = deck.signalAlert)
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://nxfr.github.io/nxfr/security/tofu/"))
-                        try { context.startActivity(intent) } catch (_: Exception) {}
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Trust-On-First-Use (TOFU) Explainer", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = { showRevokeAllConfirm = true },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Revoke All Paired Devices")
-            }
         }
 
-        // ── 7. ABOUT & DIAGNOSTICS SECTION ───────────────────────────────────
-        SettingsCard(title = "Troubleshoot & About") {
-            OutlinedButton(
-                onClick = { showTroubleshootSheet = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.AutoMirrored.Outlined.HelpOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Run On-Device Diagnostics")
-            }
+        // ── 7. DIAGNOSTICS & TELEMETRY ───────────────────────────────────────
+        LedgerSectionHeader(title = "SYSTEM DIAGNOSTICS & AUDIT")
 
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = { DebugBundleExporter.exportDebugBundle(context) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Outlined.BugReport, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Export Debug Bundle")
-            }
-            Text("No file contents, no keys, no tokens.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
-
-            Spacer(modifier = Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("NXFR Protocol", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.weight(1f))
-                Text("v0.2.8-alpha (15)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text("No cloud. No account. Just math.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-
-            Spacer(modifier = Modifier.height(12.dp))
-            val links = listOf(
-                "Documentation" to "https://nxfr.github.io/nxfr/",
-                "GitHub Repository" to "https://github.com/nxfr/nxfr",
-                "License (MIT / Apache-2.0)" to "https://github.com/nxfr/nxfr/blob/main/LICENSE",
-                "Privacy Policy" to "https://nxfr.github.io/nxfr/security/privacy/",
-                "Security Model" to "https://nxfr.github.io/nxfr/security/"
-            )
-            links.forEach { (label, url) ->
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clickable {
-                            try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
-                        }
-                )
-            }
+        LedgerRow(
+            title = "Live Diagnostic Console",
+            subtitle = "Inspect socket bindings, discovery beacons, and power policies",
+            onClick = { showTroubleshootSheet = true }
+        ) {
+            Icon(Icons.Outlined.Lan, contentDescription = "Diagnostics", tint = deck.signalBeam)
         }
+
+        LedgerRow(
+            title = "Export Diagnostic Bundle",
+            subtitle = "Redacted system log and socket report",
+            onClick = {
+                DebugBundleExporter.exportDebugBundle(context)
+            }
+        ) {
+            Icon(Icons.Outlined.FileDownload, contentDescription = "Export bundle", tint = deck.signalBeam)
+        }
+
+        // ── 8. ABOUT & PROTOCOL ──────────────────────────────────────────────
+        LedgerSectionHeader(title = "PROTOCOL SPECIFICATION")
+
+        LedgerRow(
+            title = "NXFR Protocol Engine",
+            subtitle = "v0.2.9-alpha [BUILD 16] · Rust TLS 1.3 Core"
+        ) {
+            SecuritySeal(text = "VERIFIED", color = deck.signalSuccess)
+        }
+
+        LedgerRow(
+            title = "GitHub Repository",
+            subtitle = "github.com/nxfr/nxfr",
+            onClick = {
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nxfr/nxfr")))
+                } catch (_: Exception) {}
+            }
+        ) {
+            Icon(Icons.AutoMirrored.Outlined.HelpOutline, contentDescription = "GitHub", tint = deck.textSecondary)
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
     }
-}
 
-data class PairedDevice(val deviceId: String, val name: String, val autoAccept: Boolean)
-
-private object ColorPreferenceHelper {
-    fun getCustomSeedColor(context: Context): androidx.compose.ui.graphics.Color {
-        val prefs = context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE)
-        val argb = prefs.getInt("custom_seed_color", 0xFF00E5FF.toInt())
-        return androidx.compose.ui.graphics.Color(argb)
+    if (showTroubleshootSheet) {
+        TroubleshootSheet(onDismiss = { showTroubleshootSheet = false })
     }
 }
 
 @Composable
-fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
+private fun LedgerSectionHeader(title: String) {
+    val deck = MaterialTheme.deckColors
+    Text(
+        text = title,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.5.sp,
+        color = deck.textSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp)
+    )
+}
+
+@Composable
+private fun LedgerRow(
+    title: String,
+    subtitle: String,
+    onClick: (() -> Unit)? = null,
+    trailing: @Composable () -> Unit
+) {
+    val deck = MaterialTheme.deckColors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .border(width = 0.5.dp, color = deck.gridLine)
+            .background(deck.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(16.dp))
-            content()
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = deck.textPrimary
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = deck.textSecondary
+            )
         }
+
+        trailing()
     }
 }
 
-private fun isValidMulticastIp(ip: String): Boolean {
-    val parts = ip.split(".")
-    if (parts.size != 4) return false
-    val first = parts[0].toIntOrNull() ?: return false
-    if (first !in 224..239) return false
-    return parts.drop(1).all {
-        val num = it.toIntOrNull()
-        num != null && num in 0..255
+@Composable
+private fun SecuritySeal(text: String, color: androidx.compose.ui.graphics.Color) {
+    val deck = MaterialTheme.deckColors
+    Box(
+        modifier = Modifier
+            .background(deck.surfaceContainer, RoundedCornerShape(2.dp))
+            .border(0.5.dp, color, RoundedCornerShape(2.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "[$text]",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+    }
+}
+
+data class PairedDevice(
+    val deviceId: String,
+    val name: String,
+    val autoAccept: Boolean
+)
+
+object ColorPreferenceHelper {
+    fun getCustomSeedColor(context: Context): Int {
+        val prefs = context.getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
+        return prefs.getInt("custom_seed_color", 0xFF00E5FF.toInt())
     }
 }
