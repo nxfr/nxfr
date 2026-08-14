@@ -44,8 +44,26 @@ object FilePublisher {
         } else {
             // --- PATH 1: MediaStore.Downloads ---
             try {
+                var displayName = name
+                if (com.nxfr.android.prefs.NxfrPreferences.collisionRename.value) {
+                    // Check if file already exists in public Downloads/NXFR
+                    val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).resolve("NXFR")
+                    if (publicDir.exists()) {
+                        var target = File(publicDir, displayName)
+                        var counter = 1
+                        val dotIdx = name.lastIndexOf('.')
+                        val base = if (dotIdx > 0) name.substring(0, dotIdx) else name
+                        val ext = if (dotIdx > 0) name.substring(dotIdx) else ""
+                        while (target.exists()) {
+                            displayName = "$base ($counter)$ext"
+                            target = File(publicDir, displayName)
+                            counter++
+                        }
+                    }
+                }
+
                 val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/NXFR")
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
@@ -76,6 +94,35 @@ object FilePublisher {
                 val rows = resolver.update(uri, values, null, null)
                 logI("[publishToDownloads] IS_PENDING cleared ($rows rows updated): uri=$uri")
 
+                // Optionally copy to Gallery (Images / Video) if enabled
+                if (com.nxfr.android.prefs.NxfrPreferences.saveToGallery.value) {
+                    val lower = displayName.lowercase()
+                    val isImage = lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".heic") || lower.endsWith(".gif")
+                    val isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.endsWith(".mov") || lower.endsWith(".3gp")
+
+                    if (isImage || isVideo) {
+                        try {
+                            val galleryUri = if (isImage) MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                            val gValues = ContentValues().apply {
+                                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                                put(MediaStore.MediaColumns.IS_PENDING, 1)
+                            }
+                            val gUri = resolver.insert(galleryUri, gValues)
+                            if (gUri != null) {
+                                resolver.openOutputStream(gUri)?.use { out ->
+                                    inboxFile.inputStream().use { inp -> inp.copyTo(out) }
+                                }
+                                gValues.clear()
+                                gValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                                resolver.update(gUri, gValues, null, null)
+                                logI("[publishToDownloads] Saved media to Gallery: gUri=$gUri")
+                            }
+                        } catch (e: Exception) {
+                            logW("[publishToDownloads] Save to Gallery failed: ${e.message}")
+                        }
+                    }
+                }
+
                 // Successfully published via MediaStore -> delete inbox copy
                 if (inboxFile.delete()) {
                     logI("[publishToDownloads] Inbox file deleted: ${inboxFile.absolutePath}")
@@ -83,7 +130,7 @@ object FilePublisher {
                     logW("[publishToDownloads] Could not delete inbox copy: ${inboxFile.absolutePath}")
                 }
 
-                val published = "Download/NXFR/$name"
+                val published = "Download/NXFR/$displayName"
                 logI("[publishToDownloads] Published to: $published")
                 return published
             } catch (e: Exception) {

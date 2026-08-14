@@ -48,6 +48,8 @@ fun TransferScreen(
     var lastPublishedPath by remember { mutableStateOf<String?>(null) }
     var lastDurationSec by remember { mutableDoubleStateOf(0.0) }
 
+    var sha256Checksum by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(nxfrState) {
         when (val state = nxfrState) {
             is NxfrState.Offering -> {
@@ -64,7 +66,26 @@ fun TransferScreen(
                 lastPublishedPath = state.filePath
                 val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
                 lastDurationSec = if (elapsed > 0) elapsed else 1.0
+
+                if (com.nxfr.android.prefs.NxfrPreferences.showChecksum.value && !state.filePath.isNullOrEmpty()) {
+                    try {
+                        val f = java.io.File(state.filePath)
+                        if (f.exists() && f.length() < 50 * 1024 * 1024) {
+                            val bytes = f.readBytes()
+                            val jsonStr = NxfrService.NxfrBridge.nxfr_sha256(bytes)
+                            val obj = org.json.JSONObject(jsonStr)
+                            sha256Checksum = obj.optString("sha256")
+                        }
+                    } catch (_: Exception) {}
+                }
+
                 showCompleteSheet = true
+
+                if (com.nxfr.android.prefs.NxfrPreferences.autoFinish.value) {
+                    delay(1500)
+                    showCompleteSheet = false
+                    onComplete()
+                }
             }
             else -> {}
         }
@@ -361,6 +382,26 @@ fun TransferScreen(
                             Text(
                                 text = String.format(Locale.getDefault(), "%.1f MB/s", speed),
                                 style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+
+                        if (!sha256Checksum.isNullOrEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            AssistChip(
+                                onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SHA-256", sha256Checksum))
+                                    android.widget.Toast.makeText(context, "SHA-256 copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                label = {
+                                    Text(
+                                        text = "SHA-256: ${sha256Checksum!!.take(12)}…",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(androidx.compose.material.icons.Icons.Outlined.ContentCopy, contentDescription = "Copy Checksum", modifier = Modifier.size(14.dp))
+                                }
                             )
                         }
                     }
