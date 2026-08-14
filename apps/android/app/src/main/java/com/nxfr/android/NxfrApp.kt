@@ -7,7 +7,8 @@ import android.os.Build
 
 class NxfrApp : Application() {
     companion object {
-        const val CHANNEL_TRANSFER = "nxfr_transfer"
+        const val CHANNEL_SERVICE = "nxfr_service"
+        const val CHANNEL_TRANSFERS = "nxfr_transfers"
         const val CHANNEL_OFFER = "nxfr_offer"
     }
 
@@ -17,12 +18,24 @@ class NxfrApp : Application() {
     }
 
     private fun createNotificationChannels() {
-        val transferChannel = NotificationChannel(
-            CHANNEL_TRANSFER,
-            "Transfer Progress",
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+
+        val serviceChannel = NotificationChannel(
+            CHANNEL_SERVICE,
+            "Background Service",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Shows file transfer progress"
+            description = "Maintains connection and discovery in the background"
+            setShowBadge(false)
+        }
+
+        val transferChannel = NotificationChannel(
+            CHANNEL_TRANSFERS,
+            "File Transfers",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Live progress and status of file transfers"
+            setShowBadge(true)
         }
 
         val offerChannel = NotificationChannel(
@@ -30,10 +43,11 @@ class NxfrApp : Application() {
             "Incoming Transfers",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Notifications for incoming transfer offers"
+            description = "Alerts for incoming file transfer requests"
+            setShowBadge(true)
         }
 
-        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(serviceChannel)
         nm.createNotificationChannel(transferChannel)
         nm.createNotificationChannel(offerChannel)
     }

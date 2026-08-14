@@ -50,6 +50,7 @@ class NxfrService : Service() {
         private const val TAG = "NxfrService"
         const val ACTION_SEND = "com.nxfr.android.SEND"
         const val ACTION_CONNECT = "com.nxfr.android.CONNECT"
+        const val ACTION_CANCEL_TRANSFER = "com.nxfr.android.CANCEL_TRANSFER"
         const val EXTRA_ADDR = "addr"
         const val EXTRA_FILE_PATH = "file_path"
         const val DEFAULT_PORT = 17394
@@ -260,6 +261,8 @@ class NxfrService : Service() {
     private var listenerHandle: Long = 0
     private var activeSessionHandle: Long = 0
     @Volatile private var listening = false
+    private var activePeerName: String = "Peer"
+    private val transferNotificationManager by lazy { com.nxfr.android.transfer.TransferNotificationManager(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -339,6 +342,11 @@ class NxfrService : Service() {
                 val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return START_STICKY
                 serviceScope.launch { doSendFile(addr, filePath) }
             }
+            ACTION_CANCEL_TRANSFER -> {
+                Log.i(TAG, "onStartCommand: ACTION_CANCEL_TRANSFER received from notification")
+                cancelActiveTransfer()
+                return START_STICKY
+            }
             else -> {
                 // Reconcile: start on boot/intent ONLY if persisted flag is true.
                 val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
@@ -407,7 +415,7 @@ class NxfrService : Service() {
         val pendingIntent = android.app.PendingIntent.getActivity(
             this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = androidx.core.app.NotificationCompat.Builder(this, NxfrApp.CHANNEL_TRANSFER)
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NxfrApp.CHANNEL_SERVICE)
             .setContentTitle("NXFR Direct Transfer")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
@@ -546,7 +554,10 @@ class NxfrService : Service() {
         }
         val handle = connResult.getLong("handle")
         activeSessionHandle = handle
-        Log.i(TAG, "Connected to $addr, peer=${connResult.optString("peer_name")}")
+        val peer = connResult.optString("peer_name", addr)
+        activePeerName = peer
+        startForegroundForTransfer()
+        Log.i(TAG, "Connected to $addr, peer=$peer")
 
         // Send file.
         val sendJson = withContext(Dispatchers.IO) {
@@ -565,6 +576,7 @@ class NxfrService : Service() {
 
     /** Pump events from a session handle, updating state. */
     private suspend fun pumpLoop(handle: Long, isSending: Boolean) {
+        val transferId = (handle and 0x7FFFFFFF).toInt()
         while (isActive) {
             val eventJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_pump(handle)
@@ -573,12 +585,16 @@ class NxfrService : Service() {
             Log.d(TAG, "pumpLoop raw: $eventJson")
             when (event.optString("event")) {
                 "offer" -> {
+                    val peer = event.optString("peer_name")
+                    if (peer.isNotEmpty()) activePeerName = peer
+                    startForegroundForTransfer()
+
                     _nxfrState.value = NxfrState.Offering(
                         handle = handle,
                         displayName = event.optString("display_name"),
                         totalSize = event.optLong("total_size"),
                         totalFiles = event.optInt("total_files"),
-                        peerName = event.optString("peer_name")
+                        peerName = activePeerName
                     )
 
                     val prefs = getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
@@ -625,45 +641,69 @@ class NxfrService : Service() {
                         Log.i(TAG, "Auto-accepted transfer: $confirmJson")
                     } else {
                         Log.i(TAG, "Transfer offer pending manual approval.")
+                        transferNotificationManager.showIncomingOfferNotification(
+                            offerId = transferId,
+                            fileName = event.optString("display_name"),
+                            fileSize = event.optLong("total_size"),
+                            peerName = activePeerName
+                        )
                     }
                 }
                 "progress" -> {
                     val sent = event.optLong("bytes_sent")
                     val total = event.optLong("total_bytes")
                     val progress = if (total > 0) sent.toFloat() / total else 0f
+                    val fileName = event.optString("file_name").ifEmpty { "file" }
                     _nxfrState.value = NxfrState.Transferring(
                         progress = progress,
                         total = total,
-                        fileName = event.optString("file_name"),
+                        fileName = fileName,
                         isSending = isSending
+                    )
+                    transferNotificationManager.showTransferProgressNotification(
+                        transferId = transferId,
+                        isSending = isSending,
+                        fileName = fileName,
+                        peerName = activePeerName,
+                        bytesTransferred = sent,
+                        totalBytes = total
                     )
                 }
                 "complete" -> {
                     val inboxPath = event.optString("file_path").ifEmpty { null }
                     var publishedPath: String? = inboxPath
+                    var completedFileName = if (isSending) _nxfrState.value.let { if (it is NxfrState.Transferring) it.fileName else "file" } else "file"
+                    var completedFileSize = 0L
 
                     // Publish inbox file → Downloads/NXFR via MediaStore.
                     if (!isSending && inboxPath != null) {
                         val file = java.io.File(inboxPath)
-                        val fileSize = if (file.exists()) file.length() else 0L
+                        completedFileSize = if (file.exists()) file.length() else 0L
+                        completedFileName = file.name
                         publishedPath = publishToDownloads(file)
-                        val notificationManager = com.nxfr.android.transfer.TransferNotificationManager(this)
-                        notificationManager.showTransferCompleteNotification(
-                            transferId = (handle and 0x7FFFFFFF).toInt(),
-                            fileName = file.name,
-                            fileSize = fileSize,
-                            publishedPath = publishedPath ?: ""
-                        )
+                    } else if (isSending) {
+                        if (_nxfrState.value is NxfrState.Transferring) {
+                            completedFileSize = (_nxfrState.value as NxfrState.Transferring).total
+                        }
                     }
+
+                    transferNotificationManager.showTransferCompleteNotification(
+                        transferId = transferId,
+                        fileName = completedFileName,
+                        fileSize = completedFileSize,
+                        publishedPath = publishedPath ?: "",
+                        isSending = isSending,
+                        peerName = activePeerName
+                    )
 
                     if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
                         recordHistory(
                             context = this,
                             direction = if (isSending) "send" else "recv",
-                            peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
+                            peerName = activePeerName,
                             peerId = event.optString("peer_id"),
                             fileCount = 1,
-                            totalBytes = if (!isSending && inboxPath != null) java.io.File(inboxPath).length() else 0L,
+                            totalBytes = completedFileSize,
                             status = "complete",
                             filePaths = listOfNotNull(publishedPath)
                         )
@@ -673,11 +713,14 @@ class NxfrService : Service() {
                     Log.i(TAG, "Transfer complete: $publishedPath")
                     NxfrBridge.nxfr_close(handle)
                     activeSessionHandle = 0
+                    evaluateLifecycleContract()
                     return
                 }
                 "error" -> {
                     if (handle != activeSessionHandle) {
                         Log.i(TAG, "Transfer cancelled locally, ignoring error.")
+                        transferNotificationManager.cancelNotification(transferId)
+                        evaluateLifecycleContract()
                         return
                     }
                     val raw = event.optString("message")
@@ -685,7 +728,7 @@ class NxfrService : Service() {
                     recordHistory(
                         context = this,
                         direction = if (isSending) "send" else "recv",
-                        peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
+                        peerName = activePeerName,
                         peerId = event.optString("peer_id"),
                         fileCount = 1,
                         totalBytes = 0L,
@@ -704,16 +747,28 @@ class NxfrService : Service() {
                             "Rejected: unsafe filename"
                         else -> raw
                     }
+                    transferNotificationManager.showTransferFailedNotification(
+                        transferId = transferId,
+                        title = if (status == "rejected") "Transfer rejected" else "Transfer failed",
+                        message = human
+                    )
                     _nxfrState.value = NxfrState.Error(human)
                     Log.e(TAG, "Transfer error: $raw (displayed: $human)")
                     NxfrBridge.nxfr_close(handle)
                     activeSessionHandle = 0
+                    evaluateLifecycleContract()
                     return
                 }
                 "disconnected" -> {
                     if (handle != activeSessionHandle) return
+                    transferNotificationManager.showTransferFailedNotification(
+                        transferId = transferId,
+                        title = "Transfer disconnected",
+                        message = "Session disconnected unexpectedly"
+                    )
                     _nxfrState.value = NxfrState.Error("Session disconnected")
                     activeSessionHandle = 0
+                    evaluateLifecycleContract()
                     return
                 }
                 "none" -> {
@@ -731,6 +786,18 @@ class NxfrService : Service() {
     private val isActive: Boolean
         get() = serviceScope.isActive
 
+    private fun startForegroundForTransfer() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(1, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(1, buildNotification())
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "startForegroundForTransfer error: ${e.message}")
+        }
+    }
+
     private fun startForegroundWithType() {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -746,7 +813,7 @@ class NxfrService : Service() {
         }
         val pendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
 
-        return NotificationCompat.Builder(this, NxfrApp.CHANNEL_TRANSFER)
+        return NotificationCompat.Builder(this, NxfrApp.CHANNEL_SERVICE)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(getString(R.string.notification_running))
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)

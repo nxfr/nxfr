@@ -33,6 +33,24 @@ class MainActivity : ComponentActivity() {
         com.nxfr.android.ui.theme.AnimationPreference.init(this)
         com.nxfr.android.prefs.NxfrPreferences.init(this)
 
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val permission = android.Manifest.permission.POST_NOTIFICATIONS
+            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val launcher = registerForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (!isGranted) {
+                        android.widget.Toast.makeText(
+                            this,
+                            "Notifications off — transfers continue in background",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+                launcher.launch(permission)
+            }
+        }
+
         setContent {
             val themeMode by ThemePreference.themeMode.collectAsState()
             NxfrTheme(
