@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
         ThemePreference.init(this)
         com.nxfr.android.ui.theme.AnimationPreference.init(this)
+        com.nxfr.android.prefs.NxfrPreferences.init(this)
 
         setContent {
             val themeMode by ThemePreference.themeMode.collectAsState()

@@ -648,16 +648,18 @@ class NxfrService : Service() {
                         )
                     }
 
-                    recordHistory(
-                        context = this,
-                        direction = if (isSending) "send" else "recv",
-                        peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
-                        peerId = event.optString("peer_id"),
-                        fileCount = 1,
-                        totalBytes = if (!isSending && inboxPath != null) java.io.File(inboxPath).length() else 0L,
-                        status = "complete",
-                        filePaths = listOfNotNull(publishedPath)
-                    )
+                    if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                        recordHistory(
+                            context = this,
+                            direction = if (isSending) "send" else "recv",
+                            peerName = event.optString("peer_name").ifEmpty { "Peer Device" },
+                            peerId = event.optString("peer_id"),
+                            fileCount = 1,
+                            totalBytes = if (!isSending && inboxPath != null) java.io.File(inboxPath).length() else 0L,
+                            status = "complete",
+                            filePaths = listOfNotNull(publishedPath)
+                        )
+                    }
 
                     _nxfrState.value = NxfrState.Complete(publishedPath)
                     Log.i(TAG, "Transfer complete: $publishedPath")

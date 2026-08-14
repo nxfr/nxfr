@@ -455,16 +455,23 @@ fun ReceiveScreen(
 
 private fun getDeviceIps(context: android.content.Context): List<String> {
     try {
+        val wifiOnly = com.nxfr.android.prefs.NxfrPreferences.advertiseMode.value == "wifi_only"
         val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
         val ips = mutableListOf<Pair<String, String>>()
         while (interfaces.hasMoreElements()) {
             val iface = interfaces.nextElement()
             if (iface.isLoopback || !iface.isUp) continue
+            val ifName = iface.name.lowercase()
+            if (wifiOnly && (ifName.startsWith("rmnet") || ifName.startsWith("pdp") || ifName.startsWith("ccmni") || ifName.contains("cell"))) {
+                continue
+            }
             val addrs = iface.inetAddresses
             while (addrs.hasMoreElements()) {
                 val addr = addrs.nextElement()
                 if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                    ips.add(iface.name to (addr.hostAddress ?: ""))
+                    val host = addr.hostAddress ?: ""
+                    if (wifiOnly && host.startsWith("100.")) continue
+                    ips.add(iface.name to host)
                 }
             }
         }
