@@ -8,12 +8,14 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.GpsFixed
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,8 +23,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.nxfr.android.ui.theme.deckColors
 import com.nxfr.android.prefs.NxfrPreferences
 import com.nxfr.android.service.NxfrService
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +49,7 @@ data class DiagnosticRow(
 @Composable
 fun TroubleshootSheet(
     onDismiss: () -> Unit,
+    onOpenManualConnect: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -204,6 +210,35 @@ fun TroubleshootSheet(
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            if (onOpenManualConnect != null) {
+                OutlinedButton(
+                    onClick = {
+                        onDismiss()
+                        onOpenManualConnect()
+                    },
+                    shape = RoundedCornerShape(2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.GpsFixed,
+                        contentDescription = null,
+                        tint = MaterialTheme.deckColors.signalBeam,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "ENTER ADDRESS MANUALLY",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.deckColors.signalBeam
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             Button(
                 onClick = { runDiagnostics() },

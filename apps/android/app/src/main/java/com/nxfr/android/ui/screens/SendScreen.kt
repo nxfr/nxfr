@@ -48,6 +48,7 @@ import com.nxfr.android.ui.components.StagedFilmstrip
 import com.nxfr.android.ui.dialogs.SendModeExplanationDialog
 import com.nxfr.android.ui.dialogs.TextComposeDialog
 import com.nxfr.android.ui.sheets.InstalledAppsSheet
+import com.nxfr.android.ui.sheets.ManualConnectSheet
 import com.nxfr.android.ui.sheets.StagingEditSheet
 import com.nxfr.android.ui.sheets.TroubleshootSheet
 import com.nxfr.android.ui.theme.deckColors
@@ -82,6 +83,7 @@ fun SendScreen(
     val coroutineScope = rememberCoroutineScope()
 
     var showTroubleshootSheet by remember { mutableStateOf(false) }
+    var showManualConnectSheet by remember { mutableStateOf(false) }
     var showStagingEditSheet by remember { mutableStateOf(false) }
     var showInstalledAppsSheet by remember { mutableStateOf(false) }
     var showTextComposeDialog by remember { mutableStateOf(false) }
@@ -111,7 +113,13 @@ fun SendScreen(
             }
             is NxfrState.Error -> {
                 isConnecting = false
-                snackbarHostState.showSnackbar(state.msg)
+                val displayMsg = if (state.msg.contains("connect", ignoreCase = true) || state.msg.contains("timeout", ignoreCase = true) || state.msg.contains("refused", ignoreCase = true)) {
+                    "NODE UNREACHABLE — check IP, port, firewall"
+                } else {
+                    state.msg
+                }
+                Toast.makeText(context, displayMsg, Toast.LENGTH_LONG).show()
+                snackbarHostState.showSnackbar(displayMsg)
             }
             else -> {}
         }
@@ -453,8 +461,15 @@ fun SendScreen(
                     }
                 }
 
-                // Action Icons (QR Scanner, Refresh, Diagnostics)
+                // Action Icons (Manual Connect, QR Scanner, Refresh, Diagnostics)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(
+                        onClick = { showManualConnectSheet = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Outlined.GpsFixed, contentDescription = "Manual Connect", tint = deck.signalBeam, modifier = Modifier.size(18.dp))
+                    }
+
                     IconButton(
                         onClick = {
                             val permissionState = androidx.core.content.ContextCompat.checkSelfPermission(
@@ -540,17 +555,37 @@ fun SendScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedButton(
-                        onClick = { showTroubleshootSheet = true },
-                        shape = RoundedCornerShape(2.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "DIAGNOSTICS & MANUAL CONNECT",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = deck.signalBeam
-                        )
+                        OutlinedButton(
+                            onClick = { showTroubleshootSheet = true },
+                            shape = RoundedCornerShape(2.dp)
+                        ) {
+                            Text(
+                                text = "DIAGNOSTICS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = deck.textSecondary
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = { showManualConnectSheet = true },
+                            shape = RoundedCornerShape(2.dp)
+                        ) {
+                            Icon(Icons.Outlined.GpsFixed, contentDescription = null, tint = deck.signalBeam, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "MANUAL CONNECT",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = deck.signalBeam
+                            )
+                        }
                     }
                 }
             } else {
@@ -622,7 +657,17 @@ fun SendScreen(
 
     if (showTroubleshootSheet) {
         TroubleshootSheet(
-            onDismiss = { showTroubleshootSheet = false }
+            onDismiss = { showTroubleshootSheet = false },
+            onOpenManualConnect = { showManualConnectSheet = true }
+        )
+    }
+
+    if (showManualConnectSheet) {
+        ManualConnectSheet(
+            onDismiss = { showManualConnectSheet = false },
+            onConnect = { addr ->
+                startSendFlow(context, coroutineScope, addr)
+            }
         )
     }
 }
