@@ -124,6 +124,7 @@ fun NxfrNavHost(
                     deviceId = deviceId,
                     onDeviceNameChanged = onDeviceNameChanged,
                     onReceiveViaLink = { navController.navigate(NxfrScreen.WebUpload.route) },
+                    onScanQr = { navController.navigate(NxfrScreen.Send.route) }
                 )
             }
             composable(NxfrScreen.Send.route) {

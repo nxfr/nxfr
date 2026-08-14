@@ -6,7 +6,7 @@
     <string name="app_version">0.1.0-alpha</string>
 
     <!-- Navigation -->
-    <string name="nav_receive">Receive</string>
+    <string name="nav_receive">Deck</string>
     <string name="nav_send">Send</string>
     <string name="nav_settings">Settings</string>
 
