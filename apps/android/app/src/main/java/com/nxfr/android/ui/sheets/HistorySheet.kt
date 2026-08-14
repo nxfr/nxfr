@@ -1,15 +1,16 @@
 package com.nxfr.android.ui.sheets
 
 import android.content.Intent
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.CallMade
-import androidx.compose.material.icons.automirrored.outlined.CallReceived
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
@@ -17,15 +18,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nxfr.android.service.NxfrService
+import com.nxfr.android.ui.theme.deckColors
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+
+private const val TAG = "HistorySheet"
 
 data class HistoryItem(
     val id: Long,
@@ -46,7 +55,12 @@ fun HistorySheet(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val deck = MaterialTheme.deckColors
+    val haptics = LocalHapticFeedback.current
+    val sheetState = rememberModalBottomSheetState()
+
     var historyItems by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     fun loadHistory() {
         try {
@@ -55,31 +69,48 @@ fun HistorySheet(
             val obj = JSONObject(jsonStr)
             val recordsArray = obj.optJSONArray("records") ?: return
             val list = mutableListOf<HistoryItem>()
+
             for (i in 0 until recordsArray.length()) {
-                val item = recordsArray.getJSONObject(i)
-                val pathsArr = item.optJSONArray("file_paths")
-                val pathsList = mutableListOf<String>()
-                if (pathsArr != null) {
-                    for (j in 0 until pathsArr.length()) {
-                        pathsList.add(pathsArr.getString(j))
+                try {
+                    val item = recordsArray.getJSONObject(i)
+                    val pathsArr = item.optJSONArray("file_paths")
+                    val pathsList = mutableListOf<String>()
+                    if (pathsArr != null) {
+                        for (j in 0 until pathsArr.length()) {
+                            val p = pathsArr.optString(j)
+                            if (!p.isNullOrBlank()) {
+                                pathsList.add(p)
+                            }
+                        }
                     }
-                }
-                list.add(
-                    HistoryItem(
-                        id = item.optLong("id"),
-                        tsMs = item.optLong("ts_ms"),
-                        direction = item.optString("direction"),
-                        peerName = item.optString("peer_name"),
-                        peerId = item.optString("peer_id"),
-                        fileCount = item.optInt("file_count"),
-                        totalBytes = item.optLong("total_bytes"),
-                        status = item.optString("status"),
-                        filePaths = pathsList
+
+                    val ts = if (item.has("ts_ms")) item.optLong("ts_ms") else item.optLong("timestamp_ms", System.currentTimeMillis())
+
+                    list.add(
+                        HistoryItem(
+                            id = item.optLong("id", i.toLong()),
+                            tsMs = ts,
+                            direction = item.optString("direction", "recv"),
+                            peerName = item.optString("peer_name", "Unknown Peer"),
+                            peerId = item.optString("peer_id", ""),
+                            fileCount = item.optInt("file_count", 1),
+                            totalBytes = item.optLong("total_bytes", 0L),
+                            status = item.optString("status", "complete"),
+                            filePaths = pathsList
+                        )
                     )
-                )
+                } catch (rowErr: Throwable) {
+                    // Skip malformed row gracefully
+                    Log.w(TAG, "Skipping malformed history record at index $i: ${rowErr.message}")
+                }
             }
             historyItems = list
-        } catch (_: Exception) {}
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "UnsatisfiedLinkError loading history: ${e.message}", e)
+            Toast.makeText(context, "NATIVE LIB OUTDATED — run rebuildNative + reinstall", Toast.LENGTH_LONG).show()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error loading history: ${t.message}", t)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -88,6 +119,18 @@ fun HistorySheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = deck.surface,
+        shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 8.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .background(deck.gridLineBright, RoundedCornerShape(2.dp))
+            )
+        },
         modifier = modifier
     ) {
         Column(
@@ -95,11 +138,11 @@ fun HistorySheet(
                 .fillMaxWidth()
                 .padding(bottom = 24.dp)
         ) {
-            // Header
+            // 1. Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -107,58 +150,96 @@ fun HistorySheet(
                     Icon(
                         imageVector = Icons.Outlined.History,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
+                        tint = deck.signalBeam,
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Transfer History",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        text = "SESSION LEDGER [HISTORY]",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = deck.textPrimary
                     )
                 }
 
-                Row {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     if (historyItems.isNotEmpty()) {
-                        IconButton(onClick = {
-                            try {
-                                val storeDir = NxfrService.getIdentityDir(context)
-                                NxfrService.NxfrBridge.nxfr_history_clear(storeDir)
-                                historyItems = emptyList()
-                                Toast.makeText(context, "History cleared", Toast.LENGTH_SHORT).show()
-                            } catch (_: Exception) {}
-                        }) {
-                            Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear history")
+                        IconButton(
+                            onClick = { showClearConfirmDialog = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.DeleteSweep,
+                                contentDescription = "Clear ledger",
+                                tint = deck.signalAlert,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Close")
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Close",
+                            tint = deck.textSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(deck.gridLine)
+            )
 
+            // 2. Content
             if (historyItems.isEmpty()) {
-                // Empty state illustration + text
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(48.dp),
+                        .padding(vertical = 48.dp, horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.History,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(deck.surfaceContainer, RoundedCornerShape(4.dp))
+                            .border(1.dp, deck.gridLine, RoundedCornerShape(4.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(28.dp),
+                            tint = deck.textDim
+                        )
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "No transfers yet",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "NO SESSIONS LOGGED [STANDBY]",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = deck.textPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Transfers will automatically record here.",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        color = deck.textDim
                     )
                 }
             } else {
@@ -168,29 +249,84 @@ fun HistorySheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(historyItems, key = { it.id }) { item ->
-                        HistoryRow(item = item)
+                        HistoryDeckRow(item = item)
                     }
                 }
             }
         }
     }
+
+    if (showClearConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirmDialog = false },
+            title = {
+                Text(
+                    text = "PURGE SESSION LEDGER?",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "This will permanently delete all transfer history records from this device's local database.",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = deck.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            val storeDir = NxfrService.getIdentityDir(context)
+                            NxfrService.NxfrBridge.nxfr_history_clear(storeDir)
+                            historyItems = emptyList()
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            Toast.makeText(context, "Ledger purged", Toast.LENGTH_SHORT).show()
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "Failed to clear history: ${t.message}", t)
+                        }
+                        showClearConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = deck.signalAlert)
+                ) {
+                    Text("PURGE ALL", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showClearConfirmDialog = false }) {
+                    Text("CANCEL", fontFamily = FontFamily.Monospace)
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun HistoryRow(item: HistoryItem) {
+private fun HistoryDeckRow(item: HistoryItem) {
     val context = LocalContext.current
-    val isSend = item.direction == "send"
+    val deck = MaterialTheme.deckColors
+    val haptics = LocalHapticFeedback.current
+    val isSend = item.direction.equals("send", ignoreCase = true)
 
-    val statusColor = when (item.status) {
-        "complete" -> Color(0xFF00E5FF)
-        "failed" -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    val (statusLabel, statusColor) = when (item.status.lowercase()) {
+        "complete" -> "COMPLETE" to deck.signalSuccess
+        "rejected" -> "REJECTED" to deck.signalAlert
+        "cancelled" -> "CANCELLED" to deck.textDim
+        else -> "FAILED" to deck.signalAlert
     }
 
-    ElevatedCard(
+    val shortId = if (item.peerId.length >= 8) item.peerId.take(8) else item.peerName.hashCode().let {
+        String.format(Locale.US, "%04x", Math.abs(it) % 0xFFFF)
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
+            .background(deck.surfaceContainer, RoundedCornerShape(2.dp))
+            .border(0.5.dp, deck.gridLine, RoundedCornerShape(2.dp))
+            .clickable(role = Role.Button) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 val path = item.filePaths.firstOrNull()
                 if (path != null && File(path).exists()) {
                     try {
@@ -205,60 +341,76 @@ private fun HistoryRow(item: HistoryItem) {
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         context.startActivity(intent)
-                    } catch (_: Exception) {
-                        Toast.makeText(context, "Cannot open file", Toast.LENGTH_SHORT).show()
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Cannot open file: ${e.message}", e)
+                        Toast.makeText(context, "Cannot open file: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    Toast.makeText(context, "File no longer on device", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "PAYLOAD NO LONGER ON DEVICE", Toast.LENGTH_SHORT).show()
                 }
-            },
-        shape = MaterialTheme.shapes.medium
+            }
+            .padding(12.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // Left: TX/RX Badge + Info
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Direction Badge
+                Box(
+                    modifier = Modifier
+                        .background(deck.surface, RoundedCornerShape(2.dp))
+                        .border(0.5.dp, if (isSend) deck.signalBeam else deck.textSecondary, RoundedCornerShape(2.dp))
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (isSend) "TX ↗" else "RX ↙",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSend) deck.signalBeam else deck.textPrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column {
+                    Text(
+                        text = item.peerName.ifEmpty { "Unknown Station" },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = deck.textPrimary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "did:nxfr:$shortId · ${formatBytes(item.totalBytes)} · ${formatTimeAgo(item.tsMs)}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        color = deck.textDim
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Right: Status Pill
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(statusColor.copy(alpha = 0.15f), shape = MaterialTheme.shapes.small),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isSend) Icons.AutoMirrored.Outlined.CallMade else Icons.AutoMirrored.Outlined.CallReceived,
-                    contentDescription = null,
-                    tint = statusColor,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.peerName.ifEmpty { "Unknown Peer" },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "${formatBytes(item.totalBytes)} • ${formatTimeAgo(item.tsMs)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Surface(
-                color = statusColor.copy(alpha = 0.12f),
-                shape = MaterialTheme.shapes.extraSmall
+                    .background(statusColor.copy(alpha = 0.12f), RoundedCornerShape(2.dp))
+                    .border(0.5.dp, statusColor, RoundedCornerShape(2.dp))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
             ) {
                 Text(
-                    text = item.status.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    text = statusLabel,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = statusColor
                 )
             }
         }
@@ -266,7 +418,7 @@ private fun HistoryRow(item: HistoryItem) {
 }
 
 private fun formatTimeAgo(tsMs: Long): String {
-    if (tsMs <= 0) return "Just now"
+    if (tsMs <= 0) return "just now"
     val diff = System.currentTimeMillis() - tsMs
     val seconds = diff / 1000
     val minutes = seconds / 60
@@ -274,10 +426,10 @@ private fun formatTimeAgo(tsMs: Long): String {
     val days = hours / 24
 
     return when {
-        seconds < 60 -> "Just now"
+        seconds < 60 -> "just now"
         minutes < 60 -> "${minutes}m ago"
         hours < 24 -> "${hours}h ago"
-        days == 1L -> "Yesterday"
+        days == 1L -> "yesterday"
         days < 30 -> "${days}d ago"
         else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(tsMs))
     }
