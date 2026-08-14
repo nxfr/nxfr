@@ -237,19 +237,27 @@ fun NxfrNavHost(
                 totalSizeFormatted = formatBytes(offering.totalSize),
                 onAccept = {
                     scope.launch {
-                        val confirmJson = withContext(Dispatchers.IO) {
-                            NxfrService.NxfrBridge.nxfr_confirm(offering.handle, true)
+                        try {
+                            val confirmJson = withContext(Dispatchers.IO) {
+                                NxfrService.NxfrBridge.nxfr_confirm(offering.handle, true)
+                            }
+                            android.util.Log.i("NxfrNavHost", "Consent accepted: $confirmJson")
+                            navController.navigate(NxfrScreen.Transfer.route)
+                        } catch (t: Throwable) {
+                            android.util.Log.e("NxfrNavHost", "Error confirming transfer: ${t.message}", t)
                         }
-                        android.util.Log.i("NxfrNavHost", "Consent accepted: $confirmJson")
-                        navController.navigate(NxfrScreen.Transfer.route)
                     }
                 },
                 onReject = {
                     scope.launch {
-                        withContext(Dispatchers.IO) {
-                            NxfrService.NxfrBridge.nxfr_confirm(offering.handle, false)
+                        try {
+                            withContext(Dispatchers.IO) {
+                                NxfrService.NxfrBridge.nxfr_confirm(offering.handle, false)
+                            }
+                            android.util.Log.i("NxfrNavHost", "Consent rejected")
+                        } catch (t: Throwable) {
+                            android.util.Log.e("NxfrNavHost", "Error rejecting transfer: ${t.message}", t)
                         }
-                        android.util.Log.i("NxfrNavHost", "Consent rejected")
                     }
                 }
             )

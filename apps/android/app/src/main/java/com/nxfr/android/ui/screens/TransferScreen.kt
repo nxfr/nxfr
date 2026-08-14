@@ -94,7 +94,7 @@ fun TransferScreen(
                             val obj = JSONObject(jsonStr)
                             sha256Checksum = obj.optString("sha256")
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Throwable) {}
                 }
 
                 showCompleteSheet = true

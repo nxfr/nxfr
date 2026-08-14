@@ -107,8 +107,8 @@ fun SettingsScreen(
                     }
                     withContext(Dispatchers.Main) { pairedDevices = list }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (e: Throwable) {
+                Log.e("SettingsScreen", "Failed to load paired devices: ${e.message}", e)
             }
         }
     }
@@ -159,7 +159,7 @@ fun SettingsScreen(
                     onClick = {
                         coroutineScope.launch(Dispatchers.IO) {
                             pairedDevices.forEach { dev ->
-                                try { NxfrService.NxfrBridge.nxfr_unpair(storeDir, dev.deviceId) } catch (_: Exception) {}
+                                try { NxfrService.NxfrBridge.nxfr_unpair(storeDir, dev.deviceId) } catch (_: Throwable) {}
                             }
                             withContext(Dispatchers.Main) {
                                 pairedDevices = emptyList()
@@ -190,7 +190,7 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         coroutineScope.launch(Dispatchers.IO) {
-                            try { NxfrService.NxfrBridge.nxfr_unpair(storeDir, device.deviceId) } catch (_: Exception) {}
+                            try { NxfrService.NxfrBridge.nxfr_unpair(storeDir, device.deviceId) } catch (_: Throwable) {}
                             withContext(Dispatchers.Main) {
                                 deviceToUnpair = null
                                 refreshPairedDevices()

@@ -207,7 +207,7 @@ class HotspotAwareDiscovery(private val context: Context) {
             val peerDeviceId = result.optString("peer_device_id", "")
 
             // Close immediately after identification.
-            try { NxfrService.NxfrBridge.nxfr_close(handle) } catch (_: Exception) {}
+            try { NxfrService.NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
 
             Log.i(TAG, "Probe $ip:$port found: $peerName")
             DeviceUiModel(

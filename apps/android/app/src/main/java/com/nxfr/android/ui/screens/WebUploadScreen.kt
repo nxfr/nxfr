@@ -68,22 +68,20 @@ fun WebUploadScreen(
                 Log.i("WebUploadScreen", "Started on port $uploadPort, token $uploadToken")
             }
         } catch (e: UnsatisfiedLinkError) {
-            val msg = "Native library outdated — rebuild APK"
+            val msg = "NATIVE LIB OUTDATED — run rebuildNative + reinstall"
             errorMessage = msg
             Log.e("WebUploadScreen", "JNI link error: ${e.message}", e)
             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            errorMessage = e.message
-            Log.e("WebUploadScreen", "Start parse exception: ${e.message}", e)
+        } catch (t: Throwable) {
+            errorMessage = t.message ?: "Failed to start web upload server"
+            Log.e("WebUploadScreen", "Start error: ${t.message}", t)
         }
 
         onDispose {
             Log.i("WebUploadScreen", "Stopping web upload server...")
             try {
                 NxfrService.NxfrBridge.nxfr_web_stop()
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e("WebUploadScreen", "JNI stop error: ${e.message}")
-            }
+            } catch (_: Throwable) {}
         }
     }
 

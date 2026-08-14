@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
@@ -45,28 +46,35 @@ fun WebShareScreen(
     var fingerprint by remember { mutableStateOf("") }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var secondsRemaining by remember { mutableStateOf(600) } // 10 minutes
+    val items = stagedItems
 
     val totalSize = remember(stagedItems) { StagingRepository.calculateTotalSize() }
     val totalFiles = remember(stagedItems) { StagingRepository.calculateTotalFiles() }
 
-    DisposableEffect(Unit) {
-        val storeDir = context.filesDir.resolve("nxfr-identity").absolutePath
-        val stagingDir = File(context.cacheDir, "web_share_${System.currentTimeMillis()}")
-        stagingDir.mkdirs()
+    var nativeError by remember { mutableStateOf<String?>(null) }
 
-        // Prepare manifest JSON
+    // Start web share server on compose, stop on dispose
+    DisposableEffect(Unit) {
+        val stagingDir = File(context.cacheDir, "web-share-staging").apply { mkdirs() }
+        val storeDir = NxfrService.getIdentityDir(context)
+
+        // Build manifest array from staged items
         val manifestArray = JSONArray()
-        stagedItems.forEachIndexed { index, item ->
+        for ((index, item) in items.withIndex()) {
             val localPath = if (item.localFile != null && item.localFile.exists()) {
                 item.localFile.absolutePath
-            } else if (item.uri != null) {
-                val dest = File(stagingDir, item.displayName)
-                context.contentResolver.openInputStream(item.uri)?.use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
-                }
-                dest.absolutePath
             } else {
-                ""
+                val dest = File(stagingDir, item.displayName)
+                try {
+                    item.uri?.let { uri ->
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            dest.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                    dest.absolutePath
+                } catch (e: Exception) {
+                    item.uri?.path ?: ""
+                }
             }
             val obj = JSONObject().apply {
                 put("id", index)
@@ -78,29 +86,50 @@ fun WebShareScreen(
             manifestArray.put(obj)
         }
 
-        val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, "", manifestArray.toString())
-        val res = JSONObject(jsonStr)
+        try {
+            val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, "", manifestArray.toString())
+            val res = JSONObject(jsonStr)
 
-        if (res.optString("status") == "started") {
-            val port = res.optInt("port", 17396)
-            val token = res.optString("token", "")
-            val ip = getDeviceIp(context)
-            val url = "https://$ip:$port/#t=$token"
-            shareUrl = url
+            if (res.optString("status") == "started") {
+                val port = res.optInt("port", 17396)
+                val token = res.optString("token", "")
+                val ip = getDeviceIp(context)
+                val url = "https://$ip:$port/#t=$token"
+                shareUrl = url
 
-            val fpJson = NxfrService.NxfrBridge.nxfr_web_fingerprint(storeDir)
-            val fpObj = JSONObject(fpJson)
-            fingerprint = fpObj.optString("spki_sha256", "Unknown")
+                try {
+                    val fpJson = NxfrService.NxfrBridge.nxfr_web_fingerprint(storeDir)
+                    val fpObj = JSONObject(fpJson)
+                    fingerprint = fpObj.optString("spki_sha256", "Unknown")
+                } catch (_: Throwable) {}
 
-            qrBitmap = generateQrBitmap(url)
-        } else {
-            Toast.makeText(context, "Failed to start web share: ${res.optString("error")}", Toast.LENGTH_LONG).show()
+                qrBitmap = generateQrBitmap(url)
+            } else {
+                Toast.makeText(context, "Failed to start web share: ${res.optString("error")}", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e("WebShareScreen", "UnsatisfiedLinkError: ${e.message}", e)
+            nativeError = "NATIVE LIB OUTDATED — run rebuildNative + reinstall"
+        } catch (t: Throwable) {
+            Log.e("WebShareScreen", "Error starting web share: ${t.message}", t)
+            nativeError = t.message ?: "Failed to start web share"
         }
 
         onDispose {
-            NxfrService.NxfrBridge.nxfr_web_stop()
+            try {
+                NxfrService.NxfrBridge.nxfr_web_stop()
+            } catch (_: Throwable) {}
             stagingDir.deleteRecursively()
         }
+    }
+
+    if (nativeError != null) {
+        ErrorScreen(
+            title = "NATIVE LIB OUTDATED",
+            message = nativeError ?: "NATIVE LIB OUTDATED — run rebuildNative + reinstall",
+            onBack = onStop
+        )
+        return
     }
 
     // 10-minute timer
