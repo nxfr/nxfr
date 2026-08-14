@@ -169,8 +169,11 @@ fun NxfrTheme(
     val colorMode by ThemePreference.colorMode.collectAsState()
     val customSeedArgb by ThemePreference.customSeedColor.collectAsState()
 
+    val isOled = colorMode == ThemePreference.COLOR_MODE_OLED
+    val effectiveDarkTheme = isOled || darkTheme
+
     val colorScheme = when {
-        colorMode == ThemePreference.COLOR_MODE_OLED && darkTheme -> OledDarkColorScheme
+        isOled -> OledDarkColorScheme
         colorMode == ThemePreference.COLOR_MODE_CUSTOM -> generateCustomColorScheme(Color(customSeedArgb), darkTheme)
         darkTheme -> NxfrDarkColorScheme
         else -> NxfrLightColorScheme
@@ -181,8 +184,8 @@ fun NxfrTheme(
         SideEffect {
             val window = (view.context as Activity).window
             WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !darkTheme
-                isAppearanceLightNavigationBars = !darkTheme
+                isAppearanceLightStatusBars = !effectiveDarkTheme
+                isAppearanceLightNavigationBars = !effectiveDarkTheme
             }
             @Suppress("DEPRECATION")
             window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -192,7 +195,7 @@ fun NxfrTheme(
     }
 
     val deckColors = when {
-        colorMode == ThemePreference.COLOR_MODE_OLED && darkTheme -> OledDeckColors
+        isOled -> OledDeckColors
         darkTheme -> DarkDeckColors
         else -> LightDeckColors
     }

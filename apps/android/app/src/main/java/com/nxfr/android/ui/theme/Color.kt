@@ -136,11 +136,17 @@ val LightDeckColors = DeckColors(
 
 val OledDeckColors = DarkDeckColors.copy(
     rootBackground = Color(0xFF000000),
-    surface = Color(0xFF0A0A0A),
-    surfaceVariant = Color(0xFF141414),
+    surface = Color(0xFF000000),
+    surfaceVariant = Color(0xFF0D0D0D),
     surfaceContainer = Color(0xFF000000),
-    gridLine = Color(0xFF222222),
+    gridLine = Color(0xFF1E1E1E),
     gridLineBright = Color(0xFF383838),
+    textPrimary = Color(0xFFFFFFFF),
+    textSecondary = Color(0xFFA0AEC0),
+    textDim = Color(0xFF718096),
+    signalBeam = Color(0xFF00E5FF),
+    signalBeamGlow = Color(0x3300E5FF),
+    isDark = true
 )
 
 val LocalDeckColors = staticCompositionLocalOf { DarkDeckColors }

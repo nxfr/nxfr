@@ -320,7 +320,10 @@ fun SettingsScreen(
                         selected = colorIndex == index,
                         onClick = {
                             val selectedMode = when (index) {
-                                1 -> ThemePreference.COLOR_MODE_OLED
+                                1 -> {
+                                    ThemePreference.setTheme(context, ThemePreference.DARK)
+                                    ThemePreference.COLOR_MODE_OLED
+                                }
                                 2 -> {
                                     showColorPicker = true
                                     ThemePreference.COLOR_MODE_CUSTOM
