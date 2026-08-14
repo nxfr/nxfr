@@ -563,7 +563,7 @@ fun SendScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = if (stagedItems.isEmpty()) "Attach payload above or broadcast to receive." else "Ensure target receiver has Visibility Breaker engaged.",
+                        text = if (stagedItems.isEmpty()) "Attach payload above or broadcast to receive.\nNo LAN peers? Try 📡 DESERT mode from Home tab." else "Ensure target receiver has Visibility Breaker engaged.",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,

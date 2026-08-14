@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.WifiTethering
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,6 +31,7 @@ fun ActionRail(
     onReceiveViaLink: () -> Unit,
     onScanQr: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenDesert: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val deck = MaterialTheme.deckColors
@@ -71,7 +73,18 @@ fun ActionRail(
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onOpenDiagnostics()
             },
-            modifier = Modifier.weight(1.1f)
+            modifier = Modifier.weight(1f)
+        )
+
+        ActionDeckChip(
+            icon = Icons.Outlined.WifiTethering,
+            label = "DESERT",
+            enabled = true,
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onOpenDesert()
+            },
+            modifier = Modifier.weight(1f)
         )
     }
 }

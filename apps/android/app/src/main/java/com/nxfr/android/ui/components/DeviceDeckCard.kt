@@ -96,6 +96,10 @@ fun DeviceDeckCard(
                     BadgePill(text = "TOFU", isHighlight = false)
                 }
 
+                if (device.isDirect) {
+                    BadgePill(text = "📡 DIRECT", isHighlight = true)
+                }
+
                 if (isMultipleMode && isQueued) {
                     BadgePill(text = "QUEUED", isHighlight = true)
                 }

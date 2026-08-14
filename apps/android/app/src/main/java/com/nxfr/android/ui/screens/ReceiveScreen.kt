@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import com.nxfr.android.prefs.NxfrPreferences
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.components.*
+import com.nxfr.android.ui.sheets.DesertSheet
 import com.nxfr.android.ui.sheets.HistorySheet
 import com.nxfr.android.ui.sheets.TroubleshootSheet
 import com.nxfr.android.ui.theme.deckColors
@@ -45,6 +46,7 @@ fun ReceiveScreen(
     var showInfoSheet by remember { mutableStateOf(false) }
     var showHistorySheet by remember { mutableStateOf(false) }
     var showTroubleshootSheet by remember { mutableStateOf(false) }
+    var showDesertSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -95,7 +97,8 @@ fun ReceiveScreen(
             isPowered = isListening,
             onReceiveViaLink = onReceiveViaLink,
             onScanQr = onScanQr,
-            onOpenDiagnostics = { showTroubleshootSheet = true }
+            onOpenDiagnostics = { showTroubleshootSheet = true },
+            onOpenDesert = { showDesertSheet = true }
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -186,6 +189,10 @@ fun ReceiveScreen(
 
     if (showTroubleshootSheet) {
         TroubleshootSheet(onDismiss = { showTroubleshootSheet = false })
+    }
+
+    if (showDesertSheet) {
+        DesertSheet(onDismiss = { showDesertSheet = false })
     }
 }
 

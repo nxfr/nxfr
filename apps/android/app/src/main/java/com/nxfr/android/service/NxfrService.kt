@@ -13,6 +13,8 @@ import androidx.core.app.NotificationCompat
 import com.nxfr.android.NxfrApp
 import com.nxfr.android.R
 import com.nxfr.android.discovery.HotspotAwareDiscovery
+import com.nxfr.android.discovery.NxfrP2pManager
+import com.nxfr.android.discovery.NxfrSoftApManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -113,6 +115,21 @@ class NxfrService : Service() {
         /** Service-owned discovery — shared across all tabs. */
         private var _discovery: HotspotAwareDiscovery? = null
         val discovery: HotspotAwareDiscovery? get() = _discovery
+
+        /** Service-owned Desert Mode engines — P2P + SoftAP. */
+        private var _p2pManager: NxfrP2pManager? = null
+        val p2pManager: NxfrP2pManager? get() = _p2pManager
+
+        private var _softApManager: NxfrSoftApManager? = null
+        val softApManager: NxfrSoftApManager? get() = _softApManager
+
+        private val _desertSessionActive = MutableStateFlow(false)
+        val desertSessionActive: StateFlow<Boolean> = _desertSessionActive.asStateFlow()
+
+        fun setDesertSessionActive(active: Boolean) {
+            _desertSessionActive.value = active
+            instance?.evaluateLifecycleContract()
+        }
 
         @Volatile var instance: NxfrService? = null
 
@@ -273,6 +290,10 @@ class NxfrService : Service() {
         loadOrGenerateIdentity()
         _discovery = HotspotAwareDiscovery(this)
 
+        // Initialize Desert Mode engines (P2P + SoftAP).
+        _p2pManager = NxfrP2pManager().also { it.initialize(this) }
+        _softApManager = NxfrSoftApManager().also { it.initialize(this) }
+
         // Set receive directory to app-scoped external storage.
         val inbox = java.io.File(getExternalFilesDir(null), "inbox")
         inbox.mkdirs()
@@ -381,11 +402,12 @@ class NxfrService : Service() {
         val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
         val isVisible = prefs.getBoolean("visible_enabled", false)
         val hasActiveTransfer = activeSessionHandle != 0L
+        val desertActive = _desertSessionActive.value
 
-        Log.i(TAG, "[evaluateLifecycleContract] visible=$isVisible listening=$listening activeSession=$hasActiveTransfer")
+        Log.i(TAG, "[evaluateLifecycleContract] visible=$isVisible listening=$listening activeSession=$hasActiveTransfer desert=$desertActive")
 
-        if (!isVisible && !listening && !hasActiveTransfer) {
-            Log.i(TAG, "[evaluateLifecycleContract] Visibility OFF, idle, zero active transfers. Stopping foreground & service.")
+        if (!isVisible && !listening && !hasActiveTransfer && !desertActive) {
+            Log.i(TAG, "[evaluateLifecycleContract] Visibility OFF, idle, zero active transfers, no desert session. Stopping foreground & service.")
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -398,14 +420,15 @@ class NxfrService : Service() {
             }
             stopSelf()
         } else {
-            updateNotificationContent(isVisible, hasActiveTransfer)
+            updateNotificationContent(isVisible, hasActiveTransfer, desertActive)
         }
     }
 
-    private fun updateNotificationContent(isVisible: Boolean, hasActiveTransfer: Boolean) {
+    private fun updateNotificationContent(isVisible: Boolean, hasActiveTransfer: Boolean, desertActive: Boolean = false) {
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         val text = when {
             hasActiveTransfer -> "Transfer in progress…"
+            desertActive -> "📡 Direct link active — off-grid mode"
             isVisible -> "NXFR visible on LAN — tap to manage"
             else -> "NXFR direct transfer"
         }
@@ -431,6 +454,11 @@ class NxfrService : Service() {
         _isListening.value = false
         _discovery?.stopDiscovery()
         _discovery = null
+        _p2pManager?.teardown()
+        _p2pManager = null
+        _softApManager?.teardown()
+        _softApManager = null
+        _desertSessionActive.value = false
         super.onDestroy()
         serviceScope.cancel()
         if (activeSessionHandle != 0L) {
