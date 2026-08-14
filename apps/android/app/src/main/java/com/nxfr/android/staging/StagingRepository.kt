@@ -64,11 +64,30 @@ object StagingRepository {
     }
 
     suspend fun prepareStagingDirectory(context: Context): File = withContext(Dispatchers.IO) {
+        val items = _stagedItems.value
         val ts = System.currentTimeMillis()
         val stagingDir = File(context.cacheDir, "staging_$ts")
         stagingDir.mkdirs()
 
-        for (item in _stagedItems.value) {
+        if (items.size == 1 && !items[0].isFolder) {
+            val item = items[0]
+            val dest = File(stagingDir, item.displayName)
+            when {
+                item.localFile != null && item.localFile.exists() -> {
+                    item.localFile.copyTo(dest, overwrite = true)
+                }
+                item.uri != null -> {
+                    context.contentResolver.openInputStream(item.uri)?.use { input ->
+                        dest.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+            return@withContext dest
+        }
+
+        for (item in items) {
             when {
                 item.localFile != null && item.localFile.exists() -> {
                     val dest = File(stagingDir, item.displayName)

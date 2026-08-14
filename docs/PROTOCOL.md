@@ -1665,7 +1665,35 @@ a C# sender to a Rust receiver, etc.
 
 ---
 
-## 20. References
+## 20. Web Portal Protocol Extension (Share & Upload via Browser)
+
+To support interoperability with devices without native NXFR software installed (e.g. iOS, Windows, macOS, smart TVs), implementations MAY provide an ad-hoc HTTPS Web Portal.
+
+### 20.1 Transport & Binding
+- **Port:** Default `17396` TCP (TLS 1.3).
+- **Certificate:** Uses the device's self-signed X.509 certificate without requiring client certificate validation.
+- **Session Lifetime:** Automatically terminates after 10 minutes of inactivity or upon explicit session stop.
+
+### 20.2 Authorization Model
+1. **Fragment-Only Tokens (`/#t=<token>`):**
+   - 128-bit cryptographically secure random hex string generated upon server start.
+   - Kept in URL fragment identifiers so it is processed strictly by browser JavaScript and never transmitted in raw HTTP request lines.
+2. **Security PIN Protection (`pin: Option<String>`):**
+   - Optional 4 to 8 digit numeric PIN configured by the host node.
+   - When active, the share link omits the token (`https://<ip>:17396/`).
+   - The browser UI presents an interactive PIN entry dialog before granting access.
+   - Authorized requests MUST include `Authorization: Bearer <pin>` header or `?t=<pin>` query parameter.
+3. **Endpoint Routing:**
+   - `GET /` — Serves self-contained single-page application (`HTML_DOWNLOAD_PAGE` or `HTML_PAGE`) with embedded certificate SPKI fingerprint and file manifest.
+   - `GET /auth` — Verifies provided token or PIN, returning `200 {"status": "authenticated"}` or `403 {"error": "Invalid PIN"}`.
+   - `GET /dl/:id` — Streams requested file payload from manifest with chunked transfer encoding and SHA-256 validation.
+   - `POST /upload` — Receives `multipart/form-data` file upload into sandboxed `web-inbox/` with strict filename sanitization.
+4. **Brute-Force Mitigation:**
+   - Client IPs exceeding 5 consecutive failed authorization attempts are immediately throttled and blocked for 5 minutes (`403 Forbidden`).
+
+---
+
+## 21. References
 
 | Reference | Title |
 |-----------|-------|
@@ -1682,4 +1710,4 @@ a C# sender to a Rust receiver, etc.
 
 ---
 
-*End of NXFR Protocol Specification v0.1*
+*End of NXFR Protocol Specification v0.4*

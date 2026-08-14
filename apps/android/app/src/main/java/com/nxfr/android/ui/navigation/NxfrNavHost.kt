@@ -68,35 +68,48 @@ fun NxfrNavHost(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
+    val mainTabs = remember {
+        listOf(
+            NxfrScreen.Receive.route,
+            NxfrScreen.Send.route,
+            NxfrScreen.Settings.route
+        )
+    }
+    val showBottomBar = currentDestination?.route in mainTabs
+
     Scaffold(
         modifier = modifier,
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ) {
-                NxfrScreen.bottomNavItems.forEach { screen ->
-                    val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
-                    NavigationBarItem(
-                        icon = {
-                            Icon(
-                                imageVector = screen.icon,
-                                contentDescription = stringResource(screen.labelResId)
-                            )
-                        },
-                        label = { Text(stringResource(screen.labelResId)) },
-                        selected = selected,
-                        onClick = {
-                            if (currentDestination?.route != screen.route) {
-                                navController.navigate(screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        inclusive = false
+            if (showBottomBar) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) {
+                    NxfrScreen.bottomNavItems.forEach { screen ->
+                        val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
+                        NavigationBarItem(
+                            icon = {
+                                Icon(
+                                    imageVector = screen.icon,
+                                    contentDescription = stringResource(screen.labelResId)
+                                )
+                            },
+                            label = { Text(stringResource(screen.labelResId)) },
+                            selected = selected,
+                            onClick = {
+                                if (currentDestination?.route != screen.route) {
+                                    navController.navigate(screen.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                            inclusive = false
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }

@@ -32,14 +32,33 @@ h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 input[type=file]{display:none}
 .drop{border:2px dashed #334155;border-radius:12px;padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s}
 .drop:hover,.drop.over{border-color:#00E5FF}
-.btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:12px 24px;font-weight:700;cursor:pointer;width:100%;margin-top:16px;font-size:16px}
+.btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:12px 24px;font-weight:700;cursor:pointer;width:100%;margin-top:16px;font-size:16px;transition:background 0.2s}
+.btn:hover{background:#38BDF8}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .progress{width:100%;height:8px;background:#334155;border-radius:4px;margin-top:12px;overflow:hidden}
 .bar{height:100%;background:#00E5FF;width:0%;transition:width .3s}
 .status{text-align:center;margin-top:8px;font-size:14px;color:#94A3B8}
 .fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;border:1px solid #1E293B}
+.pin-input{width:100%;box-sizing:border-box;background:#0F172A;border:2px solid #334155;border-radius:8px;color:#F8FAFC;font-size:24px;font-family:monospace;text-align:center;letter-spacing:6px;padding:12px;outline:none;transition:border-color 0.2s}
+.pin-input:focus{border-color:#00E5FF}
+.pin-err{color:#EF4444;font-size:13px;margin-top:10px;display:none;text-align:center;font-weight:600}
 </style></head><body>
-<div class="card">
+
+<div class="card" id="pin-card" style="display:none">
+<h1>NXFR Protected Upload</h1>
+<p class="sub">Enter the security PIN set by the recipient to upload files.</p>
+<div class="fp-box">
+Connected Device Fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+</div>
+<div style="margin:24px 0 16px">
+<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off">
+<div id="pin-err" class="pin-err"></div>
+</div>
+<button class="btn" id="btn-unlock" onclick="unlockUploadWithPin()" style="margin-top:8px">Unlock Upload</button>
+</div>
+
+<div class="card" id="main-card">
 <h1>NXFR Direct Upload</h1>
 <p class="sub">Select or drop a file to send to this device</p>
 <div class="fp-box">
@@ -53,9 +72,62 @@ Connected Device Fingerprint:<br>
 <button class="btn" id="btn" disabled>Upload</button>
 </div>
 <script>
+const hasPin = {{HAS_PIN}};
 const hashToken = location.hash.replace(/^#t=/, '').replace(/^#/, '');
 const params = new URLSearchParams(location.search);
-const t = hashToken || params.get('t') || '';
+let t = hashToken || params.get('t') || '';
+
+if (hasPin && !t) {
+  document.getElementById('pin-card').style.display = 'block';
+  document.getElementById('main-card').style.display = 'none';
+  const pi = document.getElementById('pin-input');
+  setTimeout(() => pi.focus(), 100);
+  pi.addEventListener('keydown', e => { if (e.key === 'Enter') unlockUploadWithPin(); });
+} else {
+  document.getElementById('pin-card').style.display = 'none';
+  document.getElementById('main-card').style.display = 'block';
+}
+
+async function unlockUploadWithPin() {
+  const pinInput = document.getElementById('pin-input');
+  const pinVal = pinInput.value.trim();
+  const pinErr = document.getElementById('pin-err');
+  const btnUnlock = document.getElementById('btn-unlock');
+
+  if (!pinVal) {
+    pinErr.style.display = 'block';
+    pinErr.textContent = 'Please enter the PIN';
+    return;
+  }
+
+  btnUnlock.disabled = true;
+  btnUnlock.textContent = 'Verifying...';
+  pinErr.style.display = 'none';
+
+  try {
+    const res = await fetch('/auth', {
+      headers: { 'Authorization': 'Bearer ' + pinVal }
+    });
+    if (res.ok) {
+      t = pinVal;
+      document.getElementById('pin-card').style.display = 'none';
+      document.getElementById('main-card').style.display = 'block';
+    } else {
+      pinErr.style.display = 'block';
+      pinErr.textContent = '❌ Incorrect PIN — Access Denied';
+      pinInput.value = '';
+      pinInput.focus();
+    }
+  } catch (err) {
+    t = pinVal;
+    document.getElementById('pin-card').style.display = 'none';
+    document.getElementById('main-card').style.display = 'block';
+  } finally {
+    btnUnlock.disabled = false;
+    btnUnlock.textContent = 'Unlock Upload';
+  }
+}
+
 const drop=document.getElementById('drop'),fi=document.getElementById('file'),
 btn=document.getElementById('btn'),pg=document.getElementById('pg'),
 bar=document.getElementById('bar'),st=document.getElementById('st');
@@ -110,8 +182,11 @@ fn sanitize_filename(name: &str) -> String {
             }
         })
         .collect();
-    if sanitized.is_empty() {
-        "uploaded_file.bin".to_string()
+    let trimmed = sanitized.trim_matches('.');
+    if sanitized.is_empty() || sanitized == "." || sanitized == ".." || trimmed.is_empty() {
+        let mut rand_bytes = [0u8; 4];
+        let _ = getrandom::getrandom(&mut rand_bytes);
+        format!("uploaded_file_{}.bin", hex::encode(rand_bytes))
     } else {
         sanitized
     }
@@ -153,8 +228,26 @@ h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .pg-track{width:100%;height:6px;background:#334155;border-radius:3px;margin-top:10px;overflow:hidden;display:none}
 .pg-bar{height:100%;background:#00E5FF;width:0%;transition:width 0.15s ease}
 .pg-status{font-size:11px;color:#94A3B8;margin-top:4px;display:none;font-family:monospace}
+.pin-input{width:100%;box-sizing:border-box;background:#0F172A;border:2px solid #334155;border-radius:8px;color:#F8FAFC;font-size:24px;font-family:monospace;text-align:center;letter-spacing:6px;padding:12px;outline:none;transition:border-color 0.2s}
+.pin-input:focus{border-color:#00E5FF}
+.pin-err{color:#EF4444;font-size:13px;margin-top:10px;display:none;text-align:center;font-weight:600}
 </style></head><body>
-<div class="card">
+
+<div class="card" id="pin-card" style="display:none">
+<h1>NXFR Protected Share</h1>
+<p class="sub">The sender set a security PIN for this share. Enter the PIN to unlock and download files.</p>
+<div class="fp-box">
+Connected Device Fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+</div>
+<div style="margin:24px 0 16px">
+<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off">
+<div id="pin-err" class="pin-err"></div>
+</div>
+<button class="btn btn-all" id="btn-unlock" onclick="unlockWithPin()" style="margin-bottom:0">Unlock Downloads</button>
+</div>
+
+<div class="card" id="main-card">
 <h1>NXFR Direct Download</h1>
 <p class="sub">Download files shared directly from this device over TLS</p>
 <div class="fp-box">
@@ -166,9 +259,61 @@ Connected Device Fingerprint:<br>
 </div>
 <script>
 const manifest = {{MANIFEST_JSON}};
+const hasPin = {{HAS_PIN}};
 const hashToken = location.hash.replace(/^#t=/, '').replace(/^#/, '');
 const params = new URLSearchParams(location.search);
-const t = hashToken || params.get('t') || '';
+let t = hashToken || params.get('t') || '';
+
+if (hasPin && !t) {
+  document.getElementById('pin-card').style.display = 'block';
+  document.getElementById('main-card').style.display = 'none';
+  const pi = document.getElementById('pin-input');
+  setTimeout(() => pi.focus(), 100);
+  pi.addEventListener('keydown', e => { if (e.key === 'Enter') unlockWithPin(); });
+} else {
+  document.getElementById('pin-card').style.display = 'none';
+  document.getElementById('main-card').style.display = 'block';
+}
+
+async function unlockWithPin() {
+  const pinInput = document.getElementById('pin-input');
+  const pinVal = pinInput.value.trim();
+  const pinErr = document.getElementById('pin-err');
+  const btnUnlock = document.getElementById('btn-unlock');
+
+  if (!pinVal) {
+    pinErr.style.display = 'block';
+    pinErr.textContent = 'Please enter the PIN';
+    return;
+  }
+
+  btnUnlock.disabled = true;
+  btnUnlock.textContent = 'Verifying...';
+  pinErr.style.display = 'none';
+
+  try {
+    const res = await fetch('/auth', {
+      headers: { 'Authorization': 'Bearer ' + pinVal }
+    });
+    if (res.ok) {
+      t = pinVal;
+      document.getElementById('pin-card').style.display = 'none';
+      document.getElementById('main-card').style.display = 'block';
+    } else {
+      pinErr.style.display = 'block';
+      pinErr.textContent = '❌ Incorrect PIN — Access Denied';
+      pinInput.value = '';
+      pinInput.focus();
+    }
+  } catch (err) {
+    t = pinVal;
+    document.getElementById('pin-card').style.display = 'none';
+    document.getElementById('main-card').style.display = 'block';
+  } finally {
+    btnUnlock.disabled = false;
+    btnUnlock.textContent = 'Unlock Downloads';
+  }
+}
 
 function fmtBytes(b){
   if(b<=0) return '0 B';
@@ -696,12 +841,14 @@ impl WebServer {
         log::info!("[nxfr-web] [{}] HTTP Request: {} {}", ip, method, path);
 
         if method == "GET" && path == "/" {
+            let has_pin = self.pin.is_some();
             if let Some(manifest) = &self.share_manifest {
                 let manifest_json =
                     serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
                 let page = HTML_DOWNLOAD_PAGE
                     .replace("{{FINGERPRINT}}", &self.fingerprint)
-                    .replace("{{MANIFEST_JSON}}", &manifest_json);
+                    .replace("{{MANIFEST_JSON}}", &manifest_json)
+                    .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" });
                 log::info!(
                     "[nxfr-web] [{}] 200 OK: Served download portal ({} items, {} bytes)",
                     ip,
@@ -716,7 +863,9 @@ impl WebServer {
                 )
                 .await;
             } else {
-                let page = HTML_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
+                let page = HTML_PAGE
+                    .replace("{{FINGERPRINT}}", &self.fingerprint)
+                    .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" });
                 log::info!(
                     "[nxfr-web] [{}] 200 OK: Served upload portal ({} bytes)",
                     ip,
@@ -729,6 +878,38 @@ impl WebServer {
                     page.as_bytes(),
                 )
                 .await;
+            }
+        }
+
+        if method == "GET" && path == "/auth" {
+            let mut auth_token: Option<String> = None;
+            for line in lines.by_ref() {
+                let lower = line.to_lowercase();
+                if lower.starts_with("authorization: bearer ") {
+                    auth_token = Some(line[22..].trim().to_string());
+                }
+            }
+            if auth_token.is_none() && !query.is_empty() {
+                for pair in query.split('&') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k == "t" {
+                            auth_token = Some(v.to_string());
+                        }
+                    }
+                }
+            }
+
+            let valid = match &auth_token {
+                Some(tok) => tok == &self.token || self.pin.as_ref() == Some(tok),
+                None => false,
+            };
+
+            if valid {
+                let body = b"{\"status\": \"authenticated\"}";
+                return Self::send_response(stream, "200 OK", "application/json", body).await;
+            } else {
+                let body = b"{\"error\": \"Invalid PIN\"}";
+                return Self::send_response(stream, "403 Forbidden", "application/json", body).await;
             }
         }
 
@@ -970,17 +1151,40 @@ impl WebServer {
 
                 let mut rand_bytes = [0u8; 8];
                 getrandom::getrandom(&mut rand_bytes).expect("getrandom failed");
-                let filename = format!("web_upload_{}.tmp", hex::encode(rand_bytes));
-                let final_path = inbox_dir.join(sanitize_filename(&filename));
+                let tmp_filename = format!("web_upload_{}.tmp", hex::encode(rand_bytes));
+                let tmp_path = inbox_dir.join(&tmp_filename);
 
-                let mut file = tokio::fs::File::create(&final_path).await?;
+                let mut file = tokio::fs::File::create(&tmp_path).await?;
 
                 let mut buffer = headers_buf.split_off(body_start);
                 let mut file_started = false;
+                let mut original_filename: Option<String> = None;
 
                 loop {
                     if !file_started {
                         if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let part_header_bytes = &buffer[..pos];
+                            if let Ok(header_str) = std::str::from_utf8(part_header_bytes) {
+                                for h_line in header_str.lines() {
+                                    let lower = h_line.to_lowercase();
+                                    if lower.contains("content-disposition:") {
+                                        if let Some(fn_idx) = lower.find("filename=\"") {
+                                            let rest = &h_line[fn_idx + 10..];
+                                            if let Some(end_quote) = rest.find('"') {
+                                                let fn_val = rest[..end_quote].trim();
+                                                if !fn_val.is_empty() {
+                                                    original_filename = Some(fn_val.to_string());
+                                                }
+                                            }
+                                        } else if let Some(fn_idx) = lower.find("filename=") {
+                                            let rest = h_line[fn_idx + 9..].trim().trim_matches('"');
+                                            if !rest.is_empty() {
+                                                original_filename = Some(rest.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             buffer.drain(..pos + 4);
                             file_started = true;
                         } else {
@@ -1025,6 +1229,34 @@ impl WebServer {
                         buffer.extend_from_slice(&read_buf[..n]);
                     }
                 }
+
+                file.flush().await?;
+                drop(file);
+
+                let raw_name = original_filename.unwrap_or_else(|| format!("upload_{}.bin", hex::encode(&rand_bytes[..4])));
+                let clean_name = sanitize_filename(&raw_name);
+
+                let mut final_path = inbox_dir.join(&clean_name);
+                if final_path.exists() {
+                    let stem = std::path::Path::new(&clean_name)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("file");
+                    let ext = std::path::Path::new(&clean_name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| format!(".{}", e))
+                        .unwrap_or_default();
+                    let mut counter = 1;
+                    let mut candidate = inbox_dir.join(format!("{} ({}){}", stem, counter, ext));
+                    while candidate.exists() {
+                        counter += 1;
+                        candidate = inbox_dir.join(format!("{} ({}){}", stem, counter, ext));
+                    }
+                    final_path = candidate;
+                }
+
+                tokio::fs::rename(&tmp_path, &final_path).await?;
 
                 log::info!(
                     "[nxfr-web] [{}] 200 OK: Web upload successfully saved to {}",
@@ -1074,8 +1306,21 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("../etc/passwd"), ".._etc_passwd");
         assert_eq!(sanitize_filename("photo 1.jpg"), "photo_1.jpg");
+        assert_eq!(sanitize_filename("data/file.txt"), "data_file.txt");
+
+        // Path traversal dot tests
+        let empty_res = sanitize_filename("");
+        assert!(empty_res.starts_with("uploaded_file_") && empty_res.ends_with(".bin"));
+
+        let dot_res = sanitize_filename(".");
+        assert!(dot_res.starts_with("uploaded_file_") && dot_res.ends_with(".bin"));
+
+        let dotdot_res = sanitize_filename("..");
+        assert!(dotdot_res.starts_with("uploaded_file_") && dotdot_res.ends_with(".bin"));
+
+        let dots_res = sanitize_filename("...");
+        assert!(dots_res.starts_with("uploaded_file_") && dots_res.ends_with(".bin"));
     }
 
     #[tokio::test]
@@ -1248,6 +1493,229 @@ mod tests {
         let hash2_actual = hex::encode(Sha256::digest(body2));
         assert_eq!(hash2_actual, hash2_expected);
         assert_eq!(body2, content2);
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_web_upload_saves_original_filename() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_web_upload_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let handle = WebServer::start(
+            &identity.private_key_der,
+            &identity.cert_der,
+            temp_dir.clone(),
+            17460,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let server_port = handle.port;
+        let token = handle.token.clone();
+
+        #[derive(Debug)]
+        struct NoCertVerifier;
+        impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls_pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+                _server_name: &rustls_pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls_pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![
+                    rustls::SignatureScheme::ED25519,
+                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                    rustls::SignatureScheme::RSA_PSS_SHA256,
+                ]
+            }
+        }
+
+        let mut client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth();
+        client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let connector = TlsConnector::from(Arc::new(client_config));
+
+        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+        let mut tls_stream = connector.connect(domain, stream).await.unwrap();
+
+        let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+        let file_content = b"Hello, NXFR Web Upload test payload!";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"vacation_photo.jpg\"\r\n");
+        body.extend_from_slice(b"Content-Type: image/jpeg\r\n\r\n");
+        body.extend_from_slice(file_content);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+        let request = format!(
+            "POST /upload HTTP/1.1\r\n\
+             Host: localhost:{}\r\n\
+             Authorization: Bearer {}\r\n\
+             Content-Type: multipart/form-data; boundary={}\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            server_port, token, boundary, body.len()
+        );
+
+        tls_stream.write_all(request.as_bytes()).await.unwrap();
+        tls_stream.write_all(&body).await.unwrap();
+        tls_stream.flush().await.unwrap();
+
+        let mut resp = Vec::new();
+        tls_stream.read_to_end(&mut resp).await.unwrap();
+        let resp_str = String::from_utf8_lossy(&resp);
+        assert!(resp_str.starts_with("HTTP/1.1 200 OK"));
+
+        let saved_file = temp_dir.join("web-inbox").join("vacation_photo.jpg");
+        assert!(saved_file.exists(), "Uploaded file vacation_photo.jpg should exist in web-inbox");
+        let saved_content = std::fs::read(&saved_file).unwrap();
+        assert_eq!(saved_content, file_content);
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_web_share_pin_authentication_flow() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_pin_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let test_file = temp_dir.join("secret_doc.pdf");
+        std::fs::write(&test_file, b"%PDF-1.4 SECRET PAYLOAD").unwrap();
+
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "secret_doc.pdf".to_string(),
+            size: 23,
+            mime: "application/pdf".to_string(),
+            path: test_file.to_str().unwrap().to_string(),
+        }];
+
+        let pin = "8492".to_string();
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17470,
+            Some(pin.clone()),
+            manifest,
+        )
+        .await
+        .unwrap();
+
+        let server_port = handle.port;
+
+        #[derive(Debug)]
+        struct NoCertVerifier;
+        impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls_pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+                _server_name: &rustls_pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls_pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![
+                    rustls::SignatureScheme::ED25519,
+                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                    rustls::SignatureScheme::RSA_PSS_SHA256,
+                ]
+            }
+        }
+
+        let mut client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth();
+        client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let connector = TlsConnector::from(Arc::new(client_config));
+
+        // 1. Test wrong PIN -> 403
+        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+        let mut tls = connector.connect(domain.clone(), stream).await.unwrap();
+        let req_wrong = format!(
+            "GET /auth HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer 0000\r\nConnection: close\r\n\r\n",
+            server_port
+        );
+        tls.write_all(req_wrong.as_bytes()).await.unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 403"));
+
+        // 2. Test correct PIN -> 200
+        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let mut tls = connector.connect(domain.clone(), stream).await.unwrap();
+        let req_correct = format!(
+            "GET /auth HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+            server_port, pin
+        );
+        tls.write_all(req_correct.as_bytes()).await.unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 200"));
+
+        // 3. Test download with correct PIN -> 200
+        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let mut tls = connector.connect(domain, stream).await.unwrap();
+        let req_dl = format!(
+            "GET /dl/0 HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+            server_port, pin
+        );
+        tls.write_all(req_dl.as_bytes()).await.unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 200 OK"));
+        assert!(String::from_utf8_lossy(&resp).contains("%PDF-1.4 SECRET PAYLOAD"));
 
         handle.stop();
         let _ = std::fs::remove_dir_all(&temp_dir);

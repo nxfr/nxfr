@@ -20,6 +20,6 @@ sealed class NxfrScreen(
     data object WebShare : NxfrScreen("web_share", 0, Icons.AutoMirrored.Outlined.Send)
 
     companion object {
-        val bottomNavItems = listOf(Receive, Send, Settings)
+        val bottomNavItems: List<NxfrScreen> get() = listOf(Receive, Send, Settings)
     }
 }

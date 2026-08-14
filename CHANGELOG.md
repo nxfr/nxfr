@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2-alpha] - 2026-08-14
+
+### Added
+- **Share via Link PIN Protection**: Optional 4–8 digit security PIN for browser downloads with interactive web PIN gate dialog (`HTML_DOWNLOAD_PAGE` & `HTML_PAGE`), random PIN generator (🎲), and custom PIN editor (✏️).
+- **Web Verification Endpoint (`GET /auth`)**: Real-time token and PIN validation before starting streaming file transfers.
+- **Instrument Deck UI (Phase 10-ID)**: Complete avionics/flight-deck aesthetic overhaul featuring:
+  - **The Beam** transmission visualizer (linear directional wire with scanning pulses, replacing circular radar motifs).
+  - **Breaker Switch**: Industrial tactile toggles for listener socket control.
+  - **Packet-Stream Console**: Dynamic packet dot animation scaling with transfer speed and live 16-block chunk matrix (`[■■■■■■■■□□□□□□□□]`).
+  - **Telemetry Ribbon**: Top status bar displaying live TLS, listener, and pairing states.
+  - **Cryptographic Consent Stamps**: Security seals (`[TLS 1.3 MUTUAL AUTH]`, `[TOFU: PAIRED]`), SAS verification digits (`● 123 456 ●`), and tabular payload manifests.
+- **Receive via Link (Web Upload)**: Token/PIN-gated browser file upload portal on port `17396` with automatic multi-directory inbox polling (`NxfrService.getWebInboxDirs`) and transfer history tracking.
+- **Automated Native Freshness & Symbol Verification**: Gradle task verifying JNI symbol fresh exports before APK assembly.
+
+### Fixed
+- **MediaStore Orphan Rows (Phase 10.7 Audit T1)**: `FilePublisher.kt` tracks `insertedUri` and deletes orphaned `IS_PENDING=1` entries on I/O failure, preventing corrupt ghost files in Downloads.
+- **Web Upload Path Traversal (Phase 10.7 Audit T2)**: `nxfr-web/src/lib.rs` sanitizes filenames and safely replaces empty/dot traversal sequences (`"."`, `".."` , `"..."`) with `uploaded_file_<rand_hex>.bin`.
+- **FFI Error Key Mismatch (Phase 10.7 Audit T3)**: `NxfrService.kt` parses `"error"` key with fallback to `"message"` so failure reasons are properly displayed.
+- **Bottom Navigation Bar Modal Leaking (Phase 10.7 Audit T4)**: Bottom navigation bar hides automatically on modal routes (`transfer`, `web_upload`, `web_share`) and tab state is preserved with `saveState`/`restoreState`.
+- **Mutex Lock Poisoning Recovery (Phase 10.7 Audit T5)**: Replaced unwrap calls in `nxfr-ffi` with `.lock().unwrap_or_else(|e| e.into_inner())`.
+- **Startup Crash in `NxfrScreen`**: Fixed NPE in `bottomNavItems` by using lazy getter property evaluation.
+- **Foreground Service Crash**: Guarded `startForegroundWithType` against `ForegroundServiceStartNotAllowedException` on Android 12+.
+
+### Security
+- **Strict Fragment-Only Token Isolation**: Access tokens are kept strictly in URL hash fragments (`/#t=<token>`), preventing token leakage in HTTP server logs.
+- **Exponential Rate Limiting & IP Lockout**: 5 failed token/PIN attempts trigger an automatic 5-minute block per client IP.
+
+## [0.3.0] - 2026-08-13
+
+### Added
+- **Desert Mode (Phase 9)**: Off-grid connectivity engine supporting:
+  - **Wi-Fi Direct (P2P)**: Service-owned `NxfrP2pManager` with DNS-SD service discovery, TXT record pairing, and autonomous Group Owner negotiation.
+  - **Autonomous SoftAP Hotspot**: Local AP creation with dynamic QR code generation containing SSID, WPA2 passphrase, and listening IP.
+  - **Desert Mode Sheet**: Interactive modal sheet for joining or starting off-grid networks with live interface telemetry.
+
 ## [0.2.0-alpha] - 2026-08-11
 
 ### Added

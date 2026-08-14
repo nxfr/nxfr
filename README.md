@@ -9,7 +9,7 @@
     <a href="https://github.com/nxfr/nxfr/actions"><img src="https://img.shields.io/github/actions/workflow/status/nxfr/nxfr/ci.yml?branch=main" alt="Build Status"></a>
     <a href="https://github.com/nxfr/nxfr/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
     <a href="https://github.com/nxfr/nxfr/stargazers"><img src="https://img.shields.io/github/stars/nxfr/nxfr?style=social" alt="GitHub stars"></a>
-    <a href="https://nxfr.github.io/nxfr/"><img src="https://img.shields.io/badge/spec-v0.3.0-00E5FF" alt="Protocol Spec"></a>
+    <a href="https://nxfr.github.io/nxfr/"><img src="https://img.shields.io/badge/spec-v0.4.2--alpha-00E5FF" alt="Protocol Spec"></a>
   </p>
 </div>
 
@@ -23,6 +23,8 @@ Unlike proprietary walled gardens (AirDrop, Quick Share) or bloated web wrappers
 - **Instrument Deck UI**: High-contrast, mathematical visual identity featuring **The Beam** transmission motif, industrial **Breaker Switches**, and tabular monospace telemetry.
 - **Zero-Permission Staging Matrix**: Send files, media, folders, apps, and contacts via system contracts without granting invasive runtime storage permissions.
 - **3-Tier Storage Engine**: Automatic MediaStore indexing for instant gallery visibility, SAF directory tree writing, and sandbox fallback.
+- **Share via Link & PIN Protection**: Token-gated browser file transfers with optional 4–8 digit PIN protection for any device with a web browser.
+- **Desert Mode**: Off-grid transfers via autonomous Wi-Fi Direct (P2P) and SoftAP Hotspot.
 - **First-Class Rust Core**: Memory-safe, high-throughput protocol engine running natively on Linux daemons and Android JNI bindings.
 
 ---
@@ -34,10 +36,11 @@ Unlike proprietary walled gardens (AirDrop, Quick Share) or bloated web wrappers
 | **Transport** | TCP + mTLS 1.3 | Authenticated, encrypted socket pipeline on port `17394`. |
 | **Identity Keys** | Ed25519 / Curve25519 | Persistent sovereign node identities (`did:nxfr:<short_id>`). |
 | **Trust Model** | TOFU + SAS | Trust-On-First-Use key pinning + Short Authentication String verification. |
-| **Discovery** | mDNS / DNS-SD (`_nxfr._tcp`) | Local beacon broadcasting with daily-rotating ephemeral IDs. |
+| **Discovery** | mDNS / DNS-SD (`_nxfr._tcp`) + UDP Beacon | Local discovery on `17394`/`17395` with daily-rotating ephemeral IDs. |
 | **Encoding** | CBOR (RFC 8949) | Compact binary object representation for transfer handshakes. |
 | **Integrity** | Streaming SHA-256 | Real-time payload checksum verification with live chunk matrix. |
-| **Web Endpoint** | Token-Gated HTTPS | Port `17396` with client-side fragment-only tokens (`/#t=<token>`). |
+| **Web Portal** | Token & PIN-Gated HTTPS | Port `17396` with fragment-only tokens (`/#t=<token>`) and 4–8 digit PIN gates. |
+| **Off-Grid** | Wi-Fi Direct & SoftAP | Desert Mode for zero-infrastructure device-to-device transfers. |
 
 ---
 
@@ -45,8 +48,9 @@ Unlike proprietary walled gardens (AirDrop, Quick Share) or bloated web wrappers
 
 1. **Mandatory TLS 1.3 (Cannot Be Disabled)**: Every pipe between NXFR nodes is authenticated with mutual TLS 1.3 using ephemeral session keys. There is no toggle to disable encryption.
 2. **Path-Jail Enforcement**: All incoming paths are verified against strict canonical sandbox roots (`canonical.starts_with(canonical_inbox)`), rendering path-traversal attacks (`../`) impossible.
-3. **Fragment-Only Web Tokens**: Web share links store authorization secrets in URL fragments (`https://<ip>:17396/#t=<token>`). Fragment identifiers are processed only by local browser JavaScript and never hit HTTP request logs.
+3. **Fragment-Only Web Tokens & PIN Protection**: Web share links store authorization secrets in URL fragments (`https://<ip>:17396/#t=<token>`) or enforce 4–8 digit security PINs with 5-attempt rate-limiting and temporary IP blocks.
 4. **Interactive Cryptographic Consent**: No file data is accepted without user authorization matching SAS codes and audited file manifests.
+5. **Privacy-Preserving Ephemeral IDs**: UDP beacons and Wi-Fi Direct TXT records broadcast daily-rotating HKDF hashes, preventing passive Wi-Fi tracking.
 
 ---
 

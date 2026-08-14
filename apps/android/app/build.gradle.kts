@@ -14,8 +14,8 @@ android {
         applicationId = "com.nxfr.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.4.1-alpha"
+        versionCode = 21
+        versionName = "0.4.2-alpha"
     }
 
     buildTypes {
@@ -89,7 +89,7 @@ tasks.register<Exec>("rebuildNative") {
         "cargo", "ndk",
         "-t", "arm64-v8a",
         "-t", "x86_64",
-        "-o", "apps/android/app/src/main/jniLibs",
+        "-o", file("src/main/jniLibs").absolutePath,
         "build", "--release", "-p", "nxfr-ffi"
     )
 }

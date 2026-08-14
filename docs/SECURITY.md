@@ -212,6 +212,18 @@ This section exhaustively details the anticipated threats to the NXFR protocol, 
   - Beacons are only sent while the send/receive UI is active — not 24/7.
 - **Residual Risk:** Within a single calendar day, an attacker who monitors multiple networks can correlate the same `advertised_id`. This window is bounded to ≤24 hours. Implementations MAY reduce this window by rotating more frequently (e.g., hourly) at the cost of paired-peer lookup complexity.
 
+### T11: Unauthorized Access and Brute-Forcing of Web Portal Endpoints
+- **Description:** An unauthorized host on the local Wi-Fi or hotspot attempts to access shared files or inject malicious uploads via the ad-hoc Web Portal (port 17396).
+- **Preconditions:** Attacker is connected to the same LAN / Wi-Fi subnet while a user has "Share via link" or "Receive via link" active.
+- **Execution:** The attacker attempts to guess 4-digit PINs via automated HTTP dictionary queries (`GET /auth`, `GET /dl/:id?t=...`) or upload files with directory traversal paths (`../../etc/shadow`).
+- **Impact:** Unauthorized data exposure, unauthorized file creation, or storage exhaustion.
+- **Mitigations:**
+  - **Fragment Isolation:** When PIN protection is disabled, tokens are passed via URL fragments (`#t=<token>`), which are processed entirely within client browser JavaScript and never transmitted across HTTP request headers or logged in server access logs.
+  - **PIN Security & Exponential Lockout:** When PIN protection is enabled, access requires a 4 to 8 digit numeric PIN. An IP-based rate limiter restricts failed attempts: 5 consecutive failed attempts trigger an immediate 5-minute IP block (`403 Forbidden`). This renders automated online dictionary attacks computationally infeasible ($10^4 / 5 \times 5\text{ min} \approx 7\text{ days}$).
+  - **Strict Path Sandboxing:** Uploaded filenames are sanitized; dot-traversal sequences (`"."`, `".."` , `"..."`) and empty filenames are rejected and replaced with cryptographically random identifiers (`uploaded_file_<hex>.bin`). All writes are strictly path-jailed within `web-inbox/`.
+  - **Automatic Expiry:** Web servers automatically terminate and unbind sockets after 10 minutes of inactivity.
+- **Residual Risk:** Users sharing links and PINs in untrusted physical environments must ensure PINs are transmitted out-of-band to intended recipients only.
+
 ---
 
 ## 4. Pairing Protocol Security Analysis

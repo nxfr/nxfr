@@ -34,6 +34,21 @@ object FilePublisher {
             return inboxFile.absolutePath
         }
 
+        if (inboxFile.isDirectory) {
+            try {
+                val publicDir = targetFallbackDir ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).resolve("NXFR")
+                val destDir = File(publicDir, name)
+                inboxFile.copyRecursively(destDir, overwrite = true)
+                inboxFile.deleteRecursively()
+                val published = "Download/NXFR/$name"
+                logI("[publishToDownloads] Directory published to: $published")
+                return published
+            } catch (e: Exception) {
+                logE("[publishToDownloads] Directory publish failed for $name: ${e.message}", e)
+                return inboxFile.absolutePath
+            }
+        }
+
         // Allow custom publisher for testing or primary MediaStore path
         if (mediaStorePublisher != null) {
             try {
@@ -43,6 +58,8 @@ object FilePublisher {
             }
         } else {
             // --- PATH 1: MediaStore.Downloads ---
+            var insertedUri: android.net.Uri? = null
+            var insertedGalleryUri: android.net.Uri? = null
             try {
                 var displayName = name
                 if (com.nxfr.android.prefs.NxfrPreferences.collisionRename.value) {
@@ -71,6 +88,7 @@ object FilePublisher {
                 val uri = resolver.insert(
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
                 ) ?: throw Exception("MediaStore insert returned null URI")
+                insertedUri = uri
 
                 logI("[publishToDownloads] MediaStore insert succeeded: uri=$uri")
 
@@ -109,6 +127,7 @@ object FilePublisher {
                             }
                             val gUri = resolver.insert(galleryUri, gValues)
                             if (gUri != null) {
+                                insertedGalleryUri = gUri
                                 resolver.openOutputStream(gUri)?.use { out ->
                                     inboxFile.inputStream().use { inp -> inp.copyTo(out) }
                                 }
@@ -118,6 +137,9 @@ object FilePublisher {
                                 logI("[publishToDownloads] Saved media to Gallery: gUri=$gUri")
                             }
                         } catch (e: Exception) {
+                            insertedGalleryUri?.let { gUriToClean ->
+                                try { resolver.delete(gUriToClean, null, null) } catch (_: Throwable) {}
+                            }
                             logW("[publishToDownloads] Save to Gallery failed: ${e.message}")
                         }
                     }
@@ -134,6 +156,13 @@ object FilePublisher {
                 logI("[publishToDownloads] Published to: $published")
                 return published
             } catch (e: Exception) {
+                val resolver = context?.contentResolver
+                insertedUri?.let { uriToClean ->
+                    try {
+                        resolver?.delete(uriToClean, null, null)
+                        logI("[publishToDownloads] Cleaned up orphaned pending URI: $uriToClean")
+                    } catch (_: Throwable) {}
+                }
                 logE("[publishToDownloads] MediaStore publish failed for $name: ${e.message}", e)
             }
         }

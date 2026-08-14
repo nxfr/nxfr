@@ -153,6 +153,26 @@ class NxfrService : Service() {
             return context.filesDir.resolve("nxfr-identity").absolutePath
         }
 
+        fun getInboxDir(context: android.content.Context): java.io.File {
+            val base = context.getExternalFilesDir(null) ?: context.filesDir
+            return java.io.File(base, "inbox").apply { mkdirs() }
+        }
+
+        fun getWebInboxDirs(context: android.content.Context): List<java.io.File> {
+            val list = mutableListOf<java.io.File>()
+            val ext = context.getExternalFilesDir(null)
+            if (ext != null) {
+                list.add(java.io.File(ext, "inbox/web-inbox"))
+                list.add(java.io.File(ext, "web-inbox"))
+            }
+            list.add(java.io.File(context.filesDir, "inbox/web-inbox"))
+            list.add(java.io.File(context.filesDir, "web-inbox"))
+            list.add(java.io.File(getIdentityDir(context), "web-inbox"))
+            list.add(java.io.File(getIdentityDir(context), "inbox/web-inbox"))
+            list.forEach { it.mkdirs() }
+            return list
+        }
+
         fun recordHistory(
             context: android.content.Context,
             direction: String,
@@ -294,9 +314,8 @@ class NxfrService : Service() {
         _p2pManager = NxfrP2pManager().also { it.initialize(this) }
         _softApManager = NxfrSoftApManager().also { it.initialize(this) }
 
-        // Set receive directory to app-scoped external storage.
-        val inbox = java.io.File(getExternalFilesDir(null), "inbox")
-        inbox.mkdirs()
+        // Set receive directory to app-scoped storage.
+        val inbox = getInboxDir(this)
         val rdResult = NxfrBridge.nxfr_set_receive_dir(inbox.absolutePath)
         Log.i(TAG, "nxfr_set_receive_dir: $rdResult")
     }
@@ -751,13 +770,13 @@ class NxfrService : Service() {
                         evaluateLifecycleContract()
                         return
                     }
-                    val raw = event.optString("message")
+                    val raw = if (event.has("error")) event.optString("error") else event.optString("message", "Unknown error")
                     val status = if (raw.contains("reject", ignoreCase = true)) "rejected" else "failed"
                     recordHistory(
                         context = this,
                         direction = if (isSending) "send" else "recv",
                         peerName = activePeerName,
-                        peerId = event.optString("peer_id"),
+                        peerId = if (event.has("peer_id")) event.optString("peer_id") else event.optString("device_id", ""),
                         fileCount = 1,
                         totalBytes = 0L,
                         status = status,
@@ -827,11 +846,15 @@ class NxfrService : Service() {
     }
 
     private fun startForegroundWithType() {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(1, notification)
+        try {
+            val notification = buildNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(1, notification)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "startForegroundWithType error: ${e.message}")
         }
     }
 

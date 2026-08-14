@@ -3,17 +3,27 @@ package com.nxfr.android.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
+import android.os.Environment
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.FileOpen
+import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material3.*
@@ -23,19 +33,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.nxfr.android.R
 import com.nxfr.android.discovery.NetworkInterfaceHelper
 import com.nxfr.android.service.NxfrService
+import com.nxfr.android.staging.StagingRepository
+import com.nxfr.android.storage.FilePublisher
+import com.nxfr.android.transfer.TransferNotificationManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+
+data class ReceivedWebFile(
+    val name: String,
+    val sizeBytes: Long,
+    val publishedPath: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 @Composable
 fun WebUploadScreen(
@@ -43,13 +69,16 @@ fun WebUploadScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var uploadPort by remember { mutableIntStateOf(17396) }
     var uploadToken by remember { mutableStateOf("") }
     var isStarting by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isDualModeAppQr by remember { mutableStateOf(false) }
+    val receivedFiles = remember { mutableStateListOf<ReceivedWebFile>() }
 
     val deviceId by NxfrService.deviceId.collectAsState()
+    val notificationManager = remember { TransferNotificationManager(context) }
 
     DisposableEffect(Unit) {
         Log.i("WebUploadScreen", "Starting web upload server...")
@@ -84,6 +113,60 @@ fun WebUploadScreen(
         }
     }
 
+    // Live inbox poller to detect uploaded files, publish to Downloads, and notify
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            while (true) {
+                try {
+                    val inboxDirs = NxfrService.getWebInboxDirs(context)
+                    for (inboxDir in inboxDirs) {
+                        val files = inboxDir.listFiles() ?: continue
+                        for (file in files) {
+                            if (file.isFile && !file.name.endsWith(".tmp") && file.length() > 0) {
+                                val originalName = file.name
+                                val size = file.length()
+                                val publishedPath = FilePublisher.publishToDownloads(context, file)
+
+                                NxfrService.recordHistory(
+                                    context = context,
+                                    direction = "recv",
+                                    peerName = "Web Browser",
+                                    peerId = "web-upload",
+                                    fileCount = 1,
+                                    totalBytes = size,
+                                    status = "completed",
+                                    filePaths = listOf(publishedPath)
+                                )
+
+                                withContext(Dispatchers.Main) {
+                                    notificationManager.showTransferCompleteNotification(
+                                        transferId = (originalName.hashCode() and 0x7FFFFFFF),
+                                        fileName = originalName,
+                                        fileSize = size,
+                                        publishedPath = publishedPath,
+                                        isSending = false,
+                                        peerName = "Web Browser"
+                                    )
+                                    receivedFiles.add(
+                                        0,
+                                        ReceivedWebFile(
+                                            name = originalName,
+                                            sizeBytes = size,
+                                            publishedPath = publishedPath
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("WebUploadScreen", "Inbox poll error: ${e.message}")
+                }
+                delay(800)
+            }
+        }
+    }
+
     val primaryIp = remember { NetworkInterfaceHelper.getPrimaryLocalIp(context) ?: "" }
     val webUrl = remember(primaryIp, uploadPort, uploadToken) {
         if (primaryIp.isNotEmpty() && uploadToken.isNotEmpty()) {
@@ -109,29 +192,33 @@ fun WebUploadScreen(
         return
     }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         
         Icon(
             imageVector = Icons.Outlined.Link,
             contentDescription = null,
-            modifier = Modifier.size(44.dp),
+            modifier = Modifier.size(40.dp),
             tint = MaterialTheme.colorScheme.primary
         )
         
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         
         Text(
             text = stringResource(R.string.receive_web_title),
-            style = MaterialTheme.typography.headlineSmall
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
         )
         
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         
         Text(
             text = stringResource(R.string.receive_web_description),
@@ -140,136 +227,206 @@ fun WebUploadScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         
-        if (errorMessage != null) {
-            Text(
-                text = "Error: $errorMessage",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        } else {
-            // URL Display Card
+        // URL Display Card
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (webUrl.isNotEmpty()) {
+                    Text(
+                        text = if (isStarting) "Starting HTTPS server..." else webUrl,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        textAlign = TextAlign.Center
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    var isCopied by remember { mutableStateOf(false) }
+
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Upload Link", webUrl))
+                            Toast.makeText(context, context.getString(R.string.receive_web_link_copied), Toast.LENGTH_SHORT).show()
+                            isCopied = true
+                            coroutineScope.launch {
+                                delay(1200)
+                                isCopied = false
+                            }
+                        },
+                        enabled = !isStarting
+                    ) {
+                        Icon(
+                            imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (isCopied) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (isCopied) "Link Copied ✓" else stringResource(R.string.receive_web_copy_link))
+                    }
+                } else {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "⚠️ NO LOCAL NETWORK DETECTED",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Connect to Wi-Fi or enable Hotspot / Desert mode so other devices can upload files.",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // QR Code Card with dual mode support (tap to switch)
+        ElevatedCard(
+            modifier = Modifier
+                .size(200.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = {
+                            isDualModeAppQr = !isDualModeAppQr
+                        },
+                        onLongPress = {
+                            isDualModeAppQr = !isDualModeAppQr
+                            val modeStr = if (isDualModeAppQr) "App Ticket (nxfr://)" else "Web HTTPS URL"
+                            Toast.makeText(context, "QR switched to: $modeStr", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                },
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.White, shape = MaterialTheme.shapes.medium),
+                contentAlignment = Alignment.Center
+            ) {
+                if (qrBitmap != null) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "QR Code",
+                        modifier = Modifier.fillMaxSize().padding(12.dp)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.QrCode,
+                        contentDescription = null,
+                        modifier = Modifier.size(100.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = if (isDualModeAppQr) "Mode: App Connection Ticket (Tap to switch)" else "Mode: Web Upload Link (Tap/Hold to switch)",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        // Live Received Files Section
+        if (receivedFiles.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (webUrl.isNotEmpty()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = if (isStarting) "Starting HTTPS server..." else webUrl,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            textAlign = TextAlign.Center
+                            text = "RECEIVED FILES (${receivedFiles.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        var isCopied by remember { mutableStateOf(false) }
-                        val coroutineScope = rememberCoroutineScope()
+                        Text(
+                            text = "Saved to Downloads/NXFR",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                        OutlinedButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Upload Link", webUrl))
-                                Toast.makeText(context, context.getString(R.string.receive_web_link_copied), Toast.LENGTH_SHORT).show()
-                                isCopied = true
-                                coroutineScope.launch {
-                                    kotlinx.coroutines.delay(1200)
-                                    isCopied = false
-                                }
-                            },
-                            enabled = !isStarting
-                        ) {
-                            Icon(
-                                imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = if (isCopied) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (isCopied) "Link Copied ✓" else stringResource(R.string.receive_web_copy_link))
-                        }
-                    } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    receivedFiles.forEach { item ->
                         Surface(
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
                             shape = MaterialTheme.shapes.small,
-                            modifier = Modifier.fillMaxWidth()
+                            color = MaterialTheme.colorScheme.surface
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "⚠️ NO LOCAL NETWORK DETECTED",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.error
+                                Icon(
+                                    imageVector = Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Connect to Wi-Fi or enable Hotspot / Desert mode so other devices can upload files.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = StagingRepository.formatBytes(item.sizeBytes),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FilledTonalButton(
+                                    onClick = { openPublishedFile(context, item.publishedPath) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Open", fontSize = 11.sp)
+                                }
                             }
                         }
                     }
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // QR Code Card with dual mode support (long-press to switch)
-            ElevatedCard(
-                modifier = Modifier
-                    .size(200.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = {
-                                isDualModeAppQr = !isDualModeAppQr
-                            },
-                            onLongPress = {
-                                isDualModeAppQr = !isDualModeAppQr
-                                val modeStr = if (isDualModeAppQr) "App Ticket (nxfr://)" else "Web HTTPS URL"
-                                Toast.makeText(context, "QR switched to: $modeStr", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    },
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.White, shape = MaterialTheme.shapes.medium),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (qrBitmap != null) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "QR Code",
-                            modifier = Modifier.fillMaxSize().padding(12.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Outlined.QrCode,
-                            contentDescription = null,
-                            modifier = Modifier.size(100.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = if (isDualModeAppQr) "Mode: App Connection Ticket (Tap to switch)" else "Mode: Web Upload Link (Tap/Hold to switch)",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
         }
         
         Spacer(modifier = Modifier.height(12.dp))
@@ -306,7 +463,7 @@ fun WebUploadScreen(
                             Text(
                                 text = "SHA-256 Fingerprint (SPKI):",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
                                 text = webFingerprintFormatted,
@@ -322,11 +479,6 @@ fun WebUploadScreen(
                             Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy fingerprint", modifier = Modifier.size(16.dp))
                         }
                     }
-                    Text(
-                        text = "Power users: compare with the browser's certificate viewer.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
                 }
             }
         }
@@ -340,21 +492,51 @@ fun WebUploadScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(20.dp))
         
         Button(
             onClick = onStop,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error
             )
         ) {
-            Text(stringResource(R.string.receive_web_stop))
+            Text(stringResource(R.string.receive_web_stop), fontWeight = FontWeight.Bold)
         }
+        
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
-
+private fun openPublishedFile(context: Context, pathOrUri: String) {
+    try {
+        val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).resolve("NXFR")
+        val file = if (pathOrUri.startsWith("/")) File(pathOrUri) else File(publicDir, File(pathOrUri).name)
+        if (file.exists()) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val mime = context.contentResolver.getType(uri) ?: "*/*"
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } else {
+            val intent = Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        }
+    } catch (_: Exception) {
+        val intent = Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        try {
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "Saved to Downloads/NXFR", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
 
 private fun generateQrBitmap(content: String, sizePx: Int = 512): Bitmap? {
     if (content.isEmpty()) return null

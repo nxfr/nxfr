@@ -264,3 +264,43 @@ Interpretations and decisions made during nxfr-core implementation.
 - `stop_advertising` swallows unregister errors with a `warn!` log instead of propagating. The intent (stop advertising) is achieved regardless since `registered_fullname` is `.take()`n.
 - `start_advertising` guards against double-register: if `registered_fullname.is_some()`, it returns `Ok(())` immediately.
 - 5 rapid cycles in test `T3` produce zero errors.
+
+---
+
+# Phase 10: Android Hardening & Web Portal Notes
+
+## 46. Kotlin Companion Object Initialization Order
+
+**Context**: In Kotlin JVM, defining `companion object { val bottomNavItems = listOf(Receive, Send, Settings) }` within a sealed class causes the companion object's `<clinit>` to execute before child `data object` instances are created. This results in a list populated with `null` references, triggering an NPE during `NavigationBar` rendering.
+
+**Resolution**: Changed eager `val bottomNavItems` to a computed property with getter:
+```kotlin
+val bottomNavItems: List<NxfrScreen>
+    get() = listOf(Receive, Send, Settings)
+```
+
+## 47. Android 12+ Foreground Service Exception Guards
+
+**Context**: Starting on Android 12 (API 31) through Android 15 (API 35), `Service.startForeground()` throws `ForegroundServiceStartNotAllowedException` if invoked while the app is transitioning into background or in restricted state.
+
+**Resolution**: All calls to `startForegroundWithType` in `NxfrService.kt` are wrapped in `try { ... } catch (e: Throwable) { ... }` blocks with fallback handling.
+
+## 48. MediaStore Orphan Cleanup on Interrupted Publish
+
+**Context**: When publishing to `MediaStore.Downloads`, `resolver.insert` creates an entry with `IS_PENDING = 1`. If an I/O error occurs before writing finishes and clearing `IS_PENDING`, a 0-byte ghost row is permanently stranded in MediaStore.
+
+**Resolution**: `FilePublisher.kt` tracks `insertedUri` and issues `resolver.delete(uri, null, null)` in the `catch` block to guarantee atomicity.
+
+## 49. Web Share / Web Upload Fragment Isolation & PIN Gate
+
+**Context**: Web portals for browser downloads/uploads on port `17396` need secure authorization without leaking secrets in server logs or allowing unauthorized local network users to download files.
+
+**Resolution**:
+1. Ephemeral tokens are placed in URL hash fragments (`/#t=<token>`), which are processed exclusively in client-side JavaScript.
+2. Optional 4–8 digit PIN protection presents an interactive PIN entry dialog in the browser and validates requests against `GET /auth` with a 5-attempt rate limiter and 5-minute IP lock.
+
+## 50. Mutex Lock Poisoning Recovery Pattern in FFI
+
+**Context**: When Rust threads panic while holding `std::sync::Mutex`, standard `.lock().unwrap()` calls panic permanently across all subsequent FFI invocations.
+
+**Resolution**: All mutex locks in `crates/nxfr-ffi/src/lib.rs` use `.lock().unwrap_or_else(|e| e.into_inner())` to safely recover the lock guard and preserve app stability.

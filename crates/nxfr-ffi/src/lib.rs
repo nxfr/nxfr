@@ -70,7 +70,7 @@ pub extern "C" fn nxfr_set_receive_dir(path: *const c_char) -> *mut c_char {
         if let Err(e) = std::fs::create_dir_all(&p) {
             return json_err(&format!("create receive dir: {e}"));
         }
-        *receive_dir_override().lock().unwrap() = Some(p);
+        *receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
         log::info!("[nxfr-ffi] receive_dir set to: {dir}");
         json_ok(serde_json::json!({"receive_dir": dir}))
     })
@@ -467,7 +467,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
             session_id,
             pending_offer: Arc::new(std::sync::Mutex::new(None)),
         };
-        sessions_map().lock().unwrap().insert(handle, session);
+        sessions_map().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, session);
 
         json_ok(serde_json::json!({
             "handle": handle,
@@ -605,7 +605,7 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
         };
 
         let handle = alloc_handle();
-        listeners_map().lock().unwrap().insert(
+        listeners_map().lock().unwrap_or_else(|e| e.into_inner()).insert(
             handle,
             Listener {
                 pending_rx: Arc::new(tokio::sync::Mutex::new(pending_rx)),
@@ -633,7 +633,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
 
         // Get listener state (clone Arc to release the std mutex before blocking).
         let (rx_arc, identity) = {
-            let guard = listeners_map().lock().unwrap();
+            let guard = listeners_map().lock().unwrap_or_else(|e| e.into_inner());
             let lis = match guard.get(&listener) {
                 Some(l) => l,
                 None => return json_err("invalid listener handle"),
@@ -743,7 +743,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                         ..
                     }) = codec::decode_control(&payload)
                     {
-                        *offer_clone.lock().unwrap() = Some(PendingOffer {
+                        *offer_clone.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingOffer {
                             transfer_id,
                             manifest,
                             display_name: display_name.clone(),
@@ -781,7 +781,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             session_id,
             pending_offer,
         };
-        sessions_map().lock().unwrap().insert(handle, session);
+        sessions_map().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, session);
 
         json_ok(serde_json::json!({
             "handle": handle,
@@ -794,7 +794,101 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
 
 // ─── Transfer: Send ─────────────────────────────────────────────────────
 
-/// Start sending a file. Returns immediately; use nxfr_pump for progress.
+struct LocalSendEntry {
+    file_id: u32,
+    relative_path: String,
+    full_path: PathBuf,
+    size: u64,
+    sha256: [u8; 32],
+    is_dir: bool,
+}
+
+fn scan_send_path(
+    base_path: &Path,
+) -> Result<(String, Vec<LocalSendEntry>), Box<dyn std::error::Error + Send + Sync>> {
+    let mut entries = Vec::new();
+    let mut next_id = 1u32;
+
+    if !base_path.exists() {
+        return Err(format!("path does not exist: {}", base_path.display()).into());
+    }
+
+    if base_path.is_file() {
+        let name = base_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+        let data = std::fs::read(base_path)?;
+        let sha256 = Sha256::digest(&data).into();
+        entries.push(LocalSendEntry {
+            file_id: next_id,
+            relative_path: name.clone(),
+            full_path: base_path.to_path_buf(),
+            size: data.len() as u64,
+            sha256,
+            is_dir: false,
+        });
+        return Ok((name, entries));
+    }
+
+    // Directory transfer
+    let display_name = base_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("transfer")
+        .to_string();
+
+    fn walk_directory(
+        root: &Path,
+        current: &Path,
+        entries: &mut Vec<LocalSendEntry>,
+        next_id: &mut u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        for entry in std::fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            let rel_path = path
+                .strip_prefix(root)?
+                .to_string_lossy()
+                .to_string();
+
+            if path.is_dir() {
+                entries.push(LocalSendEntry {
+                    file_id: *next_id,
+                    relative_path: rel_path,
+                    full_path: path.clone(),
+                    size: 0,
+                    sha256: [0u8; 32],
+                    is_dir: true,
+                });
+                *next_id += 1;
+                walk_directory(root, &path, entries, next_id)?;
+            } else if path.is_file() {
+                let data = std::fs::read(&path)?;
+                let sha256 = Sha256::digest(&data).into();
+                entries.push(LocalSendEntry {
+                    file_id: *next_id,
+                    relative_path: rel_path,
+                    full_path: path,
+                    size: data.len() as u64,
+                    sha256,
+                    is_dir: false,
+                });
+                *next_id += 1;
+            }
+        }
+        Ok(())
+    }
+
+    walk_directory(base_path, base_path, &mut entries, &mut next_id)?;
+    if entries.is_empty() {
+        return Err("directory is empty".into());
+    }
+    Ok((display_name, entries))
+}
+
+/// Start sending a file or directory. Returns immediately; use nxfr_pump for progress.
 #[no_mangle]
 pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_char {
     ffi_guard(|| {
@@ -807,7 +901,7 @@ pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_cha
         }
 
         let (conn_arc, event_tx, session_id) = {
-            let guard = sessions_map().lock().unwrap();
+            let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
@@ -841,42 +935,50 @@ async fn do_send_file(
     file_path: &str,
     event_tx: &mpsc::Sender<FfiEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let file_data = tokio::fs::read(file_path).await?;
-    let file_size = file_data.len() as u64;
-    let file_name = Path::new(file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .to_string();
-    let file_hash: [u8; 32] = Sha256::digest(&file_data).into();
+    let p = Path::new(file_path);
+    let (display_name, send_entries) = scan_send_path(p)?;
+
+    let total_size: u64 = send_entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
+    let total_files: u32 = send_entries.iter().filter(|e| !e.is_dir).count() as u32;
     let transfer_id = rand_transfer_id();
-    let stream_id: u32 = 1;
+
+    let manifest: Vec<ManifestEntry> = send_entries
+        .iter()
+        .map(|e| ManifestEntry {
+            file_id: e.file_id,
+            relative_path: e.relative_path.clone(),
+            size: if e.is_dir { None } else { Some(e.size) },
+            sha256: if e.is_dir { None } else { Some(e.sha256) },
+            entry_type: if e.is_dir {
+                ManifestEntryType::Dir
+            } else {
+                ManifestEntryType::File
+            },
+        })
+        .collect();
 
     let mut conn_guard = conn_arc.lock().await;
     let conn = conn_guard.as_mut().ok_or("connection not available")?;
 
-    // Send TransferRequest.
-    let manifest = vec![ManifestEntry {
-        file_id: 1,
-        relative_path: file_name.clone(),
-        size: Some(file_size),
-        sha256: Some(file_hash),
-        entry_type: ManifestEntryType::File,
-    }];
     conn.send_control(
         session_id,
         0,
         &ControlMessage::TransferRequest {
             transfer_id,
             transfer_type: TransferType::Files,
-            display_name: file_name.clone(),
-            total_files: 1,
-            total_size: file_size,
+            display_name: display_name.clone(),
+            total_files,
+            total_size,
             manifest,
         },
     )
     .await?;
-    log::info!("[sender] TransferRequest sent ({})", file_name);
+    log::info!(
+        "[sender] TransferRequest sent ({}, {} files, {} bytes)",
+        display_name,
+        total_files,
+        total_size
+    );
 
     // Wait for TransferAccept/Reject with 120s timeout.
     log::info!("[sender] Waiting for TransferAccept...");
@@ -913,92 +1015,94 @@ async fn do_send_file(
         }
     }
 
-    // Send FileMetadata.
-    conn.send_control(
-        session_id,
-        0,
-        &ControlMessage::FileMetadata {
-            transfer_id,
-            file_id: 1,
-            stream_id,
-            relative_path: file_name.clone(),
-            size: file_size,
-            sha256: file_hash,
-            mime_type: None,
-            modified_time: None,
-        },
-    )
-    .await?;
+    let mut cumulative_sent: u64 = 0;
 
-    // Wait for FileMetadataAck.
-    let (_, payload) = conn.recv_frame().await?;
-    let msg = codec::decode_control(&payload)?;
-    match msg {
-        ControlMessage::FileMetadataAck { accepted: true, .. } => {}
-        _ => return Err("file metadata rejected".into()),
-    }
+    for entry in send_entries.iter().filter(|e| !e.is_dir) {
+        let file_data = tokio::fs::read(&entry.full_path).await?;
+        let stream_id = entry.file_id;
 
-    // Stream chunks (1 MiB, 8 in-flight window — per PROTOCOL §9.2.13).
-    let chunk_size = 1024 * 1024usize;
-    let max_in_flight = 8usize;
-    let mut offset: usize = 0;
-    let mut in_flight: usize = 0;
-    let mut acked_bytes: u64 = 0;
-    let total = file_data.len();
+        // Send FileMetadata.
+        conn.send_control(
+            session_id,
+            0,
+            &ControlMessage::FileMetadata {
+                transfer_id,
+                file_id: entry.file_id,
+                stream_id,
+                relative_path: entry.relative_path.clone(),
+                size: entry.size,
+                sha256: entry.sha256,
+                mime_type: None,
+                modified_time: None,
+            },
+        )
+        .await?;
 
-    while offset < total {
-        // Enforce in-flight window.
-        while in_flight >= max_in_flight {
-            let (_, pl) = conn.recv_frame().await?;
-            if let Ok(ControlMessage::ChunkAck { length, .. }) = codec::decode_control(&pl) {
-                acked_bytes += length;
-                in_flight -= 1;
-                let _ = event_tx
-                    .send(FfiEvent::Progress {
-                        bytes_sent: acked_bytes,
-                        total_bytes: file_size,
-                        file_name: file_name.clone(),
-                    })
-                    .await;
+        // Wait for FileMetadataAck.
+        let (_, payload) = conn.recv_frame().await?;
+        let msg = codec::decode_control(&payload)?;
+        match msg {
+            ControlMessage::FileMetadataAck { accepted: true, .. } => {}
+            _ => {
+                return Err(
+                    format!("file metadata rejected for {}", entry.relative_path).into(),
+                )
             }
         }
 
-        let end = std::cmp::min(offset + chunk_size, total);
-        let chunk = &file_data[offset..end];
-        let is_last = end == total;
-        let chunk_hash: [u8; 32] = Sha256::digest(chunk).into();
+        // Stream chunks (1 MiB, 8 in-flight window — per PROTOCOL §9.2.13).
+        let chunk_size = 1024 * 1024usize;
+        let max_in_flight = 8usize;
+        let mut offset: usize = 0;
+        let mut in_flight: usize = 0;
+        let total = file_data.len();
 
-        let mut payload = Vec::with_capacity(8 + 32 + chunk.len());
-        payload.extend_from_slice(&(offset as u64).to_be_bytes());
-        payload.extend_from_slice(&chunk_hash);
-        payload.extend_from_slice(chunk);
+        while offset < total {
+            while in_flight >= max_in_flight {
+                let (_, pl) = conn.recv_frame().await?;
+                if let Ok(ControlMessage::ChunkAck { length, .. }) = codec::decode_control(&pl) {
+                    cumulative_sent += length;
+                    in_flight -= 1;
+                    let _ = event_tx
+                        .send(FfiEvent::Progress {
+                            bytes_sent: cumulative_sent,
+                            total_bytes: total_size,
+                            file_name: entry.relative_path.clone(),
+                        })
+                        .await;
+                }
+            }
 
-        let flags = if is_last { 0x0001u16 } else { 0u16 };
-        conn.send_chunk(session_id, stream_id, flags, payload)
-            .await?;
-        in_flight += 1;
-        if offset == end || is_last {
-            log::debug!(
-                "[sender] chunk @ offset={offset} len={} is_last={is_last}",
-                end - (offset - (end - offset).min(offset))
-            );
+            let end = std::cmp::min(offset + chunk_size, total);
+            let chunk = &file_data[offset..end];
+            let is_last = end == total;
+            let chunk_hash: [u8; 32] = Sha256::digest(chunk).into();
+
+            let mut payload = Vec::with_capacity(8 + 32 + chunk.len());
+            payload.extend_from_slice(&(offset as u64).to_be_bytes());
+            payload.extend_from_slice(&chunk_hash);
+            payload.extend_from_slice(chunk);
+
+            let flags = if is_last { 0x0001u16 } else { 0u16 };
+            conn.send_chunk(session_id, stream_id, flags, payload)
+                .await?;
+            in_flight += 1;
+            offset = end;
         }
-        offset = end;
-    }
 
-    // Drain remaining ACKs.
-    while in_flight > 0 {
-        let (_, pl) = conn.recv_frame().await?;
-        if let Ok(ControlMessage::ChunkAck { length, .. }) = codec::decode_control(&pl) {
-            acked_bytes += length;
-            in_flight -= 1;
-            let _ = event_tx
-                .send(FfiEvent::Progress {
-                    bytes_sent: acked_bytes,
-                    total_bytes: file_size,
-                    file_name: file_name.clone(),
-                })
-                .await;
+        while in_flight > 0 {
+            let (_, pl) = conn.recv_frame().await?;
+            if let Ok(ControlMessage::ChunkAck { length, .. }) = codec::decode_control(&pl) {
+                cumulative_sent += length;
+                in_flight -= 1;
+                let _ = event_tx
+                    .send(FfiEvent::Progress {
+                        bytes_sent: cumulative_sent,
+                        total_bytes: total_size,
+                        file_name: entry.relative_path.clone(),
+                    })
+                    .await;
+            }
         }
     }
 
@@ -1032,13 +1136,13 @@ async fn do_send_file(
 #[no_mangle]
 pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
     ffi_guard(|| {
-        let guard = sessions_map().lock().unwrap();
+        let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
         let session = match guard.get(&handle) {
             Some(s) => s,
             None => return json_err("invalid session handle"),
         };
 
-        let mut rx = session.event_rx.lock().unwrap();
+        let mut rx = session.event_rx.lock().unwrap_or_else(|e| e.into_inner());
         match rx.try_recv() {
             Ok(event) => match event {
                 FfiEvent::Offer {
@@ -1052,49 +1156,58 @@ pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
                     "total_size": total_size,
                     "total_files": total_files,
                     "peer_name": peer_name,
+                    "device_id": hex::encode(session.peer_device_id),
                 })),
                 FfiEvent::Progress {
                     bytes_sent,
                     total_bytes,
                     file_name,
-                } => json_ok(serde_json::json!({
-                    "event": "progress",
-                    "bytes_sent": bytes_sent,
-                    "total_bytes": total_bytes,
-                    "file_name": file_name,
-                })),
+                } => {
+                    let progress = if total_bytes > 0 {
+                        (bytes_sent as f32) / (total_bytes as f32)
+                    } else {
+                        0.0
+                    };
+                    json_ok(serde_json::json!({
+                        "event": "progress",
+                        "progress": progress,
+                        "bytes_sent": bytes_sent,
+                        "total_bytes": total_bytes,
+                        "file_name": file_name,
+                    }))
+                }
                 FfiEvent::Complete { file_path } => json_ok(serde_json::json!({
                     "event": "complete",
-                    "file_path": file_path,
+                    "file_path": file_path.unwrap_or_default(),
                 })),
                 FfiEvent::Error { msg } => json_ok(serde_json::json!({
                     "event": "error",
-                    "message": msg,
+                    "error": msg,
                 })),
             },
             Err(mpsc::error::TryRecvError::Empty) => {
-                json_ok(serde_json::json!({ "event": "none" }))
+                json_ok(serde_json::json!({"event": "none"}))
             }
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                json_ok(serde_json::json!({ "event": "disconnected" }))
+                json_ok(serde_json::json!({"event": "disconnected"}))
             }
         }
     })
 }
 
-// ─── Transfer: Confirm (accept/reject incoming offer) ───────────────────
+// ─── Transfer: Confirm / Receive ────────────────────────────────────────
 
-/// Accept or reject a pending transfer offer. If accepted, spawns receiver.
+/// Accept or reject a transfer offer. Spawns receiver task if accepted.
 #[no_mangle]
-pub extern "C" fn nxfr_confirm(handle: u64, accepted: bool) -> *mut c_char {
+pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
     ffi_guard(|| {
         let (conn_arc, event_tx, session_id, pending_offer) = {
-            let guard = sessions_map().lock().unwrap();
+            let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
             };
-            let offer = session.pending_offer.lock().unwrap().take();
+            let offer = session.pending_offer.lock().unwrap_or_else(|e| e.into_inner()).take();
             (
                 session.conn.clone(),
                 session.event_tx.clone(),
@@ -1105,7 +1218,7 @@ pub extern "C" fn nxfr_confirm(handle: u64, accepted: bool) -> *mut c_char {
 
         let rt = get_runtime();
 
-        if !accepted {
+        if !accept {
             if let Some(offer) = pending_offer {
                 rt.block_on(async {
                     let mut conn_guard = conn_arc.lock().await;
@@ -1142,7 +1255,7 @@ pub extern "C" fn nxfr_confirm(handle: u64, accepted: bool) -> *mut c_char {
     })
 }
 
-/// Full receive flow: TransferAccept → FileMetadata → chunks → TransferAck.
+/// Full receive flow: TransferAccept → FileMetadata(s) → chunks → TransferAck.
 async fn do_receive_file(
     conn_arc: Arc<tokio::sync::Mutex<Option<NxfrConnection<TlsStream>>>>,
     session_id: u32,
@@ -1162,167 +1275,169 @@ async fn do_receive_file(
     )
     .await?;
 
-    // Receive FileMetadata.
-    let (_, payload) = conn.recv_frame().await?;
-    let msg = codec::decode_control(&payload)?;
-    let (file_id, stream_id, relative_path, expected_size, expected_hash) = match msg {
-        ControlMessage::FileMetadata {
-            file_id,
-            stream_id,
-            relative_path,
-            size,
-            sha256,
-            ..
-        } => (file_id, stream_id, relative_path, size, sha256),
-        other => return Err(format!("expected FileMetadata, got {other:?}").into()),
-    };
-
-    // Send FileMetadataAck.
-    conn.send_control(
-        session_id,
-        0,
-        &ControlMessage::FileMetadataAck {
-            transfer_id: offer.transfer_id,
-            file_id,
-            stream_id,
-            accepted: true,
-        },
-    )
-    .await?;
-
-    // Receive chunks — resolve receive directory.
     let receive_dir = {
-        // 1. Global override (set by Android via nxfr_set_receive_dir)
-        let ovr = receive_dir_override().lock().unwrap().clone();
+        let ovr = receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()).clone();
         match ovr {
             Some(p) => p,
             None => {
-                // 2. NxfrConfig fallback (Linux/daemon)
                 let cfg = nxfr_storage::config::NxfrConfig::load().unwrap_or_default();
                 cfg.receive_dir
             }
         }
     };
-    if let Err(e) = std::fs::create_dir_all(&receive_dir) {
-        let code = match e.raw_os_error() {
-            Some(30) | Some(13) => "storage_error", // EROFS / EACCES
-            Some(28) => "disk_full",                // ENOSPC
-            _ => "storage_error",
-        };
-        log::error!(
-            "Cannot create receive dir {:?}: {e} (mapped to {code})",
-            receive_dir
-        );
-        return Err(format!("StorageError: {e} — receive dir {:?}", receive_dir).into());
-    }
+    std::fs::create_dir_all(&receive_dir)?;
+    let canonical_root = std::fs::canonicalize(&receive_dir)?;
 
-    let canonical_root = std::fs::canonicalize(&receive_dir)
-        .map_err(|e| format!("canonicalize receive_dir: {e}"))?;
-    let raw_final_path = canonical_root.join(&relative_path);
-    // Path-jail: ensure final_path stays inside receive_dir.
-    let final_path = {
-        if let Some(parent) = raw_final_path.parent() {
-            std::fs::create_dir_all(parent)?;
+    // Pre-create any directories declared in manifest
+    for entry in &offer.manifest {
+        if entry.entry_type == ManifestEntryType::Dir {
+            let clean_rel = entry.relative_path.replace("..", "_");
+            let dir_path = canonical_root.join(clean_rel);
+            let _ = std::fs::create_dir_all(&dir_path);
         }
-        // Use the parent dir's canonical + filename since file doesn't exist yet
-        let parent = std::fs::canonicalize(raw_final_path.parent().unwrap_or(&canonical_root))?;
-        parent.join(raw_final_path.file_name().unwrap_or_default())
-    };
-    if !final_path.starts_with(&canonical_root) {
-        return Err("PathTraversalAttempt: filename escapes receive directory".into());
     }
 
-    let mut file_data = Vec::with_capacity(expected_size as usize);
-    let mut hasher = Sha256::new();
-    let mut received_bytes: u64 = 0;
+    let expected_files_count = offer
+        .manifest
+        .iter()
+        .filter(|e| e.entry_type == ManifestEntryType::File)
+        .count()
+        .max(1);
 
-    loop {
+    let mut received_files_count = 0;
+    let mut cumulative_received: u64 = 0;
+    let mut first_received_path: Option<String> = None;
+
+    while received_files_count < expected_files_count {
         let (hdr, payload) = conn.recv_frame().await?;
-
-        if hdr.kind == FrameKind::Control {
-            let msg = codec::decode_control(&payload)?;
-            match msg {
-                ControlMessage::TransferComplete { .. } => break,
-                ControlMessage::TransferCancel { .. } => {
-                    return Err("transfer cancelled by peer".into());
-                }
-                _ => continue,
-            }
-        }
-
-        if hdr.kind != FrameKind::Chunk {
+        if hdr.kind != FrameKind::Control {
             continue;
         }
 
-        // Parse chunk: [offset:8][hash:32][data:...]
-        if payload.len() < 41 {
-            return Err("chunk too small".into());
-        }
-        let chunk_offset = u64::from_be_bytes(payload[0..8].try_into().unwrap());
-        let chunk_hash = &payload[8..40];
-        let chunk_data = &payload[40..];
+        let msg = codec::decode_control(&payload)?;
+        let (file_id, stream_id, relative_path, expected_size, expected_hash) = match msg {
+            ControlMessage::FileMetadata {
+                file_id,
+                stream_id,
+                relative_path,
+                size,
+                sha256,
+                ..
+            } => (file_id, stream_id, relative_path, size, sha256),
+            ControlMessage::TransferCancel { .. } => {
+                return Err("transfer cancelled by peer".into());
+            }
+            ControlMessage::TransferComplete { .. } => break,
+            _ => continue,
+        };
 
-        // Verify per-chunk hash.
-        let computed = Sha256::digest(chunk_data);
-        if computed.as_slice() != chunk_hash {
-            return Err(format!("chunk hash mismatch at offset {chunk_offset}").into());
-        }
-
-        file_data.extend_from_slice(chunk_data);
-        hasher.update(chunk_data);
-        received_bytes += chunk_data.len() as u64;
-
-        // Send ChunkAck.
+        // Send FileMetadataAck.
         conn.send_control(
             session_id,
             0,
-            &ControlMessage::ChunkAck {
+            &ControlMessage::FileMetadataAck {
+                transfer_id: offer.transfer_id,
+                file_id,
                 stream_id,
-                message_id: hdr.message_id,
-                offset: chunk_offset,
-                length: chunk_data.len() as u64,
+                accepted: true,
             },
         )
         .await?;
 
-        let _ = event_tx
-            .send(FfiEvent::Progress {
-                bytes_sent: received_bytes,
-                total_bytes: expected_size,
-                file_name: relative_path.clone(),
-            })
-            .await;
+        let clean_rel = relative_path.replace("..", "_");
+        let final_path = canonical_root.join(&clean_rel);
+        if let Some(parent) = final_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
 
-        // Last chunk: the next frame should be TransferComplete.
-        if hdr.flags.is_last_chunk() {
-            let (_, pl) = conn.recv_frame().await?;
-            if let Ok(ControlMessage::TransferComplete { .. }) = codec::decode_control(&pl) {
+        let mut file_data = Vec::with_capacity(expected_size as usize);
+        let mut hasher = Sha256::new();
+        let mut file_received_bytes: u64 = 0;
+
+        loop {
+            let (hdr, payload) = conn.recv_frame().await?;
+
+            if hdr.kind == FrameKind::Control {
+                let msg = codec::decode_control(&payload)?;
+                match msg {
+                    ControlMessage::TransferComplete { .. } => break,
+                    ControlMessage::TransferCancel { .. } => {
+                        return Err("transfer cancelled by peer".into());
+                    }
+                    _ => continue,
+                }
+            }
+
+            if hdr.kind != FrameKind::Chunk {
+                continue;
+            }
+
+            // Parse chunk: [offset:8][hash:32][data:...]
+            if payload.len() < 41 {
+                return Err("chunk too small".into());
+            }
+            let chunk_offset = u64::from_be_bytes(payload[0..8].try_into().unwrap());
+            let chunk_hash = &payload[8..40];
+            let chunk_data = &payload[40..];
+
+            // Verify per-chunk hash.
+            let computed = Sha256::digest(chunk_data);
+            if computed.as_slice() != chunk_hash {
+                return Err(format!("chunk hash mismatch at offset {chunk_offset}").into());
+            }
+
+            file_data.extend_from_slice(chunk_data);
+            hasher.update(chunk_data);
+            file_received_bytes += chunk_data.len() as u64;
+            cumulative_received += chunk_data.len() as u64;
+
+            // Send ChunkAck.
+            conn.send_control(
+                session_id,
+                0,
+                &ControlMessage::ChunkAck {
+                    stream_id,
+                    message_id: hdr.message_id,
+                    offset: chunk_offset,
+                    length: chunk_data.len() as u64,
+                },
+            )
+            .await?;
+
+            let _ = event_tx
+                .send(FfiEvent::Progress {
+                    bytes_sent: cumulative_received,
+                    total_bytes: offer.total_size,
+                    file_name: relative_path.clone(),
+                })
+                .await;
+
+            if hdr.flags.is_last_chunk() || file_received_bytes >= expected_size {
                 break;
             }
         }
+
+        // Verify per-file SHA-256
+        let final_hash: [u8; 32] = hasher.finalize().into();
+        if final_hash != expected_hash {
+            return Err(format!(
+                "file hash mismatch for {}: expected {}, got {}",
+                relative_path,
+                hex::encode(expected_hash),
+                hex::encode(final_hash)
+            )
+            .into());
+        }
+
+        // Write file
+        std::fs::write(&final_path, &file_data)?;
+        if first_received_path.is_none() {
+            first_received_path = Some(final_path.to_string_lossy().to_string());
+        }
+        received_files_count += 1;
     }
 
-    // Verify whole-file SHA-256.
-    let final_hash: [u8; 32] = hasher.finalize().into();
-    if final_hash != expected_hash {
-        return Err(format!(
-            "file hash mismatch: expected {}, got {}",
-            hex::encode(expected_hash),
-            hex::encode(final_hash)
-        )
-        .into());
-    }
-
-    if received_bytes != expected_size {
-        return Err(
-            format!("size mismatch: expected {expected_size}, got {received_bytes}").into(),
-        );
-    }
-
-    // Write file.
-    std::fs::write(&final_path, &file_data)?;
-
-    // Send TransferAck.
+    // Send TransferAck Success
     conn.send_control(
         session_id,
         0,
@@ -1334,9 +1449,15 @@ async fn do_receive_file(
     )
     .await?;
 
+    let final_res_path = if expected_files_count > 1 {
+        Some(canonical_root.to_string_lossy().to_string())
+    } else {
+        first_received_path
+    };
+
     let _ = event_tx
         .send(FfiEvent::Complete {
-            file_path: Some(final_path.to_string_lossy().to_string()),
+            file_path: final_res_path,
         })
         .await;
     Ok(())
@@ -1350,7 +1471,7 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
     ffi_guard(|| {
         let rt = get_runtime();
         let (conn_arc, session_id, local_id, peer_id) = {
-            let guard = sessions_map().lock().unwrap();
+            let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
@@ -1407,7 +1528,7 @@ pub extern "C" fn nxfr_pair_confirm(
     ffi_guard(|| {
         let rt = get_runtime();
         let (conn_arc, session_id, peer_device_id, peer_name) = {
-            let guard = sessions_map().lock().unwrap();
+            let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
@@ -1605,7 +1726,7 @@ pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -
 #[no_mangle]
 pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
-        if let Some(listener) = listeners_map().lock().unwrap().remove(&handle) {
+        if let Some(listener) = listeners_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle) {
             log::info!(
                 "[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}",
                 handle,
@@ -1618,7 +1739,7 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
             return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
         }
 
-        let session = sessions_map().lock().unwrap().remove(&handle);
+        let session = sessions_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
         if let Some(session) = session {
             log::info!(
                 "[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}",
@@ -1826,12 +1947,12 @@ pub extern "C" fn nxfr_web_start(
             Err(e) => return json_err(&e),
         };
 
-        let receive_dir = match receive_dir_override().lock().unwrap().clone() {
+        let receive_dir = match receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()).clone() {
             Some(d) => d,
             None => PathBuf::from(dir).join("inbox"),
         };
 
-        if let Some(existing) = web_server_lock().lock().unwrap().take() {
+        if let Some(existing) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
             existing.stop();
         }
 
@@ -1857,7 +1978,7 @@ pub extern "C" fn nxfr_web_start(
             Ok(handle) => {
                 let actual_port = handle.port;
                 let token = handle.token.clone();
-                *web_server_lock().lock().unwrap() = Some(handle);
+                *web_server_lock().lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
                 json_ok(serde_json::json!({
                     "port": actual_port,
                     "token": token,
@@ -1905,7 +2026,7 @@ pub extern "C" fn nxfr_web_share_start(
             Err(e) => return json_err(&e),
         };
 
-        if let Some(existing) = web_server_lock().lock().unwrap().take() {
+        if let Some(existing) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
             existing.stop();
         }
 
@@ -1931,7 +2052,7 @@ pub extern "C" fn nxfr_web_share_start(
             Ok(handle) => {
                 let actual_port = handle.port;
                 let token = handle.token.clone();
-                *web_server_lock().lock().unwrap() = Some(handle);
+                *web_server_lock().lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
                 json_ok(serde_json::json!({
                     "status": "started",
                     "port": actual_port,
@@ -1948,7 +2069,7 @@ pub extern "C" fn nxfr_web_share_start(
 #[no_mangle]
 pub extern "C" fn nxfr_web_stop() -> *mut c_char {
     ffi_guard(|| {
-        if let Some(server) = web_server_lock().lock().unwrap().take() {
+        if let Some(server) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
             server.stop();
             log::info!("[nxfr-ffi] Web server stopped.");
         }
