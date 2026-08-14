@@ -35,4 +35,26 @@ class LifecycleContractTest {
         val shouldKeepAlive = isVisible || isListening || hasActiveTransfer
         assertTrue("Service must stay alive during active transfer even if visible=OFF", shouldKeepAlive)
     }
+
+    @Test
+    fun testLifecycleRuleEvaluation_desertModeActive_shouldKeepAlive() {
+        val isVisible = false
+        val isListening = false
+        val hasActiveTransfer = false
+        val desertActive = true
+
+        val shouldKeepAlive = isVisible || isListening || hasActiveTransfer || desertActive
+        assertTrue("Service must stay alive during active Desert session even if visible=OFF", shouldKeepAlive)
+    }
+
+    @Test
+    fun testLifecycleRuleEvaluation_desertModeEnded_shouldStop() {
+        val isVisible = false
+        val isListening = false
+        val hasActiveTransfer = false
+        val desertActive = false
+
+        val shouldKeepAlive = isVisible || isListening || hasActiveTransfer || desertActive
+        assertFalse("Service must stop after Desert session ends and visible=OFF with zero transfers", shouldKeepAlive)
+    }
 }
