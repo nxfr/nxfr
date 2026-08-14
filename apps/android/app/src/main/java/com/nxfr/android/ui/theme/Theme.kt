@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -13,6 +14,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.Font
@@ -22,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.nxfr.android.R
 
-// ── Inter font family (static bundle, SIL OFL) ───────────────────────
+// ── Bold Identity Color Schemes ───────────────────────────────────────
 val InterFontFamily = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal),
     Font(R.font.inter_medium, FontWeight.Medium),
@@ -98,12 +103,6 @@ private val NxfrLightColorScheme = lightColorScheme(
     background = LightSurface,
     onBackground = LightOnSurface,
 )
-
-import androidx.compose.material3.ColorScheme
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 
 val OledDarkColorScheme = darkColorScheme(
     primary = ElectricCyan,
