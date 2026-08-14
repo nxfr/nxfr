@@ -207,8 +207,9 @@ class NxfrService : Service() {
         external fun nxfr_listen(port: Int, storeDir: String): String
         external fun nxfr_accept(listener: Long): String
 
-        // ── Web Upload ─────────────────────────────────────
+        // ── Web Upload / Share ──────────────────────────────
         external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String
+        external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String): String
         external fun nxfr_web_stop(): String
         external fun nxfr_web_fingerprint(storeDir: String): String
 

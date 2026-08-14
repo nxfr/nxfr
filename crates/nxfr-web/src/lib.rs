@@ -115,6 +115,89 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebShareItem {
+    pub id: usize,
+    pub name: String,
+    pub size: u64,
+    pub mime: String,
+    pub path: String,
+}
+
+const HTML_DOWNLOAD_PAGE: &str = r#"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NXFR — Direct Download</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
+.card{background:#1E293B;border-radius:16px;padding:32px;max-width:520px;width:100%;box-shadow:0 4px 24px #00000066}
+h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
+.sub{color:#94A3B8;margin:0 0 20px;font-size:14px}
+.fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px}
+.file-list{margin-top:16px;display:flex;flex-direction:column;gap:12px}
+.file-item{display:flex;align-items:center;justify-content:space-between;background:#0F172A;padding:12px 16px;border-radius:8px;border:1px solid #334155}
+.file-info{display:flex;flex-direction:column;overflow:hidden;margin-right:12px}
+.file-name{font-weight:600;color:#F8FAFC;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-size{font-size:12px;color:#94A3B8;margin-top:2px}
+.btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap}
+.btn:hover{background:#38BDF8}
+.btn-all{background:#22C55E;color:#0F172A;width:100%;justify-content:center;padding:12px;font-size:16px;margin-bottom:16px}
+.btn-all:hover{background:#4ADE80}
+</style></head><body>
+<div class="card">
+<h1>NXFR Direct Download</h1>
+<p class="sub">Download files shared directly from this device</p>
+<div class="fp-box">
+You're connected to the device showing this fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+</div>
+<button class="btn btn-all" id="btn-all" onclick="downloadAll()">Download All Files</button>
+<div class="file-list" id="file-list"></div>
+</div>
+<script>
+const manifest = {{MANIFEST_JSON}};
+const hashToken = location.hash.replace(/^#t=/, '').replace(/^#/, '');
+const params = new URLSearchParams(location.search);
+const t = hashToken || params.get('t') || '';
+
+function fmtBytes(b){
+  if(b<=0) return '0 B';
+  const u=['B','KB','MB','GB','TB'];
+  const i=Math.floor(Math.log(b)/Math.log(1024));
+  return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
+}
+
+const list = document.getElementById('file-list');
+manifest.forEach(item => {
+  const div = document.createElement('div');
+  div.className = 'file-item';
+  const dlUrl = `/dl/${item.id}` + (t ? `?t=${t}` : '');
+  div.innerHTML = `
+    <div class="file-info">
+      <div class="file-name" title="${item.name}">${item.name}</div>
+      <div class="file-size">${fmtBytes(item.size)}</div>
+    </div>
+    <a class="btn" href="${dlUrl}" download="${item.name}">Download</a>
+  `;
+  list.appendChild(div);
+});
+
+function downloadAll(){
+  manifest.forEach((item, idx) => {
+    setTimeout(() => {
+      const dlUrl = `/dl/${item.id}` + (t ? `?t=${t}` : '');
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, idx * 500);
+  });
+}
+</script></body></html>"#;
+
 pub struct WebServerHandle {
     pub handle: JoinHandle<()>,
     pub token: String,
@@ -137,6 +220,7 @@ pub struct WebServer {
     pub receive_dir: PathBuf,
     pub max_file_size: u64,
     pub fingerprint: String,
+    pub share_manifest: Option<Vec<WebShareItem>>,
     pub failed_attempts: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
 }
 
@@ -147,6 +231,7 @@ impl WebServer {
         max_file_size: u64,
         pin: Option<String>,
         fingerprint: String,
+        share_manifest: Option<Vec<WebShareItem>>,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let token = generate_token();
@@ -161,6 +246,7 @@ impl WebServer {
                 receive_dir,
                 max_file_size,
                 fingerprint,
+                share_manifest,
                 failed_attempts: Arc::new(Mutex::new(HashMap::new())),
             },
             cancel,
@@ -215,6 +301,7 @@ impl WebServer {
             1024 * 1024 * 1024,
             pin,
             fp_formatted,
+            None,
         );
         let token = server.token.clone();
         let expiry = server.expiry;
@@ -240,6 +327,113 @@ impl WebServer {
                     }
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(expiry)) => {
                         log::info!("[nxfr-web] Server 10-minute expiry reached. Stopping server.");
+                        cancel_clone.cancel();
+                        break;
+                    }
+                    res = listener.accept() => {
+                        match res {
+                            Ok((stream, addr)) => {
+                                let acceptor = acceptor.clone();
+                                let server_arc = server_arc.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(mut tls_stream) = acceptor.accept(stream).await {
+                                        if let Err(e) = server_arc.handle_connection(&mut tls_stream, addr.ip()).await {
+                                            log::debug!("[nxfr-web] Connection error from {}: {}", addr.ip(), e);
+                                        }
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                log::warn!("[nxfr-web] Accept error: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(WebServerHandle {
+            handle: join_handle,
+            token,
+            port: actual_port,
+            cancel,
+        })
+    }
+
+    pub async fn start_share(
+        key_der: &[u8],
+        cert_der: &[u8],
+        preferred_port: u16,
+        pin: Option<String>,
+        share_manifest: Vec<WebShareItem>,
+    ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
+        let mut listener = None;
+        let mut actual_port = preferred_port;
+
+        for p in preferred_port..(preferred_port + MAX_PORT_ATTEMPTS) {
+            match TcpListener::bind(("0.0.0.0", p)).await {
+                Ok(l) => {
+                    listener = Some(l);
+                    actual_port = p;
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("[nxfr-web] Share port {} bound failed: {}, trying next...", p, e);
+                }
+            }
+        }
+
+        let listener = match listener {
+            Some(l) => l,
+            None => {
+                return Err(format!(
+                    "Could not bind to any port in range {}..{}",
+                    preferred_port,
+                    preferred_port + MAX_PORT_ATTEMPTS
+                )
+                .into())
+            }
+        };
+
+        let fp_bytes = nxfr_crypto::identity::device_id_from_cert(cert_der).unwrap_or([0u8; 32]);
+        let fp_formatted = fp_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(":");
+
+        let (server, cancel) = Self::new(
+            PathBuf::new(),
+            actual_port,
+            1024 * 1024 * 1024,
+            pin,
+            fp_formatted,
+            Some(share_manifest),
+        );
+        let token = server.token.clone();
+        let expiry = server.expiry;
+
+        let tls_config = build_web_tls_config(key_der, cert_der)?;
+        let acceptor = TlsAcceptor::from(tls_config);
+        let server_arc = Arc::new(server);
+
+        let token_for_log = token.clone();
+        let cancel_clone = cancel.clone();
+        let join_handle = tokio::spawn(async move {
+            log::info!(
+                "[nxfr-web] Web share server started on port {}, token={}",
+                actual_port,
+                token_for_log
+            );
+
+            loop {
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        log::info!("[nxfr-web] Share server cancel token triggered. Stopping server.");
+                        break;
+                    }
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(expiry)) => {
+                        log::info!("[nxfr-web] Share server 10-minute expiry reached. Stopping server.");
                         cancel_clone.cancel();
                         break;
                     }
@@ -339,18 +533,153 @@ impl WebServer {
         };
 
         if method == "GET" && path == "/" {
-            let page = HTML_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
-            let response = format!(
+            if let Some(manifest) = &self.share_manifest {
+                let manifest_json = serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
+                let page = HTML_DOWNLOAD_PAGE
+                    .replace("{{FINGERPRINT}}", &self.fingerprint)
+                    .replace("{{MANIFEST_JSON}}", &manifest_json);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/html; charset=utf-8\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\
+                     \r\n\
+                     {}",
+                    page.len(),
+                    page
+                );
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            } else {
+                let page = HTML_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/html; charset=utf-8\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\
+                     \r\n\
+                     {}",
+                    page.len(),
+                    page
+                );
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+        }
+
+        if method == "GET" && path.starts_with("/dl/") {
+            let mut auth_token: Option<String> = None;
+            for line in lines {
+                let lower = line.to_lowercase();
+                if lower.starts_with("authorization: bearer ") {
+                    auth_token = Some(line[22..].trim().to_string());
+                }
+            }
+            if auth_token.is_none() && !query.is_empty() {
+                for pair in query.split('&') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k == "t" {
+                            auth_token = Some(v.to_string());
+                        }
+                    }
+                }
+            }
+
+            let valid = match &auth_token {
+                Some(tok) => tok == &self.token || self.pin.as_ref() == Some(tok),
+                None => false,
+            };
+
+            if !valid {
+                let response = "HTTP/1.1 403 Forbidden\r\n\
+                                Content-Type: application/json\r\n\
+                                Connection: close\r\n\
+                                \r\n\
+                                {\"error\": \"Invalid token or PIN\"}";
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+
+            let id_str = &path[4..];
+            let id: usize = match id_str.parse() {
+                Ok(i) => i,
+                Err(_) => {
+                    let response = "HTTP/1.1 404 Not Found\r\n\
+                                    Content-Type: application/json\r\n\
+                                    Connection: close\r\n\
+                                    \r\n\
+                                    {\"error\": \"File not found\"}";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+            };
+
+            let manifest = match &self.share_manifest {
+                Some(m) => m,
+                None => {
+                    let response = "HTTP/1.1 404 Not Found\r\n\
+                                    Content-Type: application/json\r\n\
+                                    Connection: close\r\n\
+                                    \r\n\
+                                    {\"error\": \"Download mode not active\"}";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+            };
+
+            let item = match manifest.iter().find(|i| i.id == id) {
+                Some(i) => i,
+                None => {
+                    let response = "HTTP/1.1 404 Not Found\r\n\
+                                    Content-Type: application/json\r\n\
+                                    Connection: close\r\n\
+                                    \r\n\
+                                    {\"error\": \"File not found\"}";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+            };
+
+            let file_path = PathBuf::from(&item.path);
+            if !file_path.exists() {
+                let response = "HTTP/1.1 404 Not Found\r\n\
+                                Content-Type: application/json\r\n\
+                                Connection: close\r\n\
+                                \r\n\
+                                {\"error\": \"File missing on disk\"}";
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+
+            let mut f = match tokio::fs::File::open(&file_path).await {
+                Ok(f) => f,
+                Err(_) => {
+                    let response = "HTTP/1.1 500 Internal Error\r\n\
+                                    Connection: close\r\n\r\n";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+            };
+
+            let mime = if item.mime.is_empty() { "application/octet-stream" } else { &item.mime };
+            let header = format!(
                 "HTTP/1.1 200 OK\r\n\
-                 Content-Type: text/html; charset=utf-8\r\n\
+                 Content-Type: {}\r\n\
                  Content-Length: {}\r\n\
+                 Content-Disposition: attachment; filename=\"{}\"\r\n\
                  Connection: close\r\n\
-                 \r\n\
-                 {}",
-                page.len(),
-                page
+                 \r\n",
+                mime, item.size, sanitize_filename(&item.name)
             );
-            stream.write_all(response.as_bytes()).await?;
+
+            stream.write_all(header.as_bytes()).await?;
+
+            let mut file_buf = [0u8; 65536];
+            loop {
+                let n = f.read(&mut file_buf).await?;
+                if n == 0 { break; }
+                stream.write_all(&file_buf[..n]).await?;
+            }
             return Ok(());
         }
 
@@ -519,5 +848,32 @@ impl WebServer {
                         \r\n";
         stream.write_all(response.as_bytes()).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_web_share_item_serialization() {
+        let item = WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 100,
+            mime: "text/plain".to_string(),
+            path: "/tmp/test.txt".to_string(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("test.txt"));
+        let decoded: WebShareItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, 0);
+        assert_eq!(decoded.name, "test.txt");
+    }
+
+    #[test]
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("../etc/passwd"), ".._etc_passwd");
+        assert_eq!(sanitize_filename("photo 1.jpg"), "photo_1.jpg");
     }
 }

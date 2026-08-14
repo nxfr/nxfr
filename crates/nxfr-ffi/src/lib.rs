@@ -1869,6 +1869,81 @@ pub extern "C" fn nxfr_web_start(
     })
 }
 
+/// Start the sender-hosted share-via-link web download server.
+#[no_mangle]
+pub extern "C" fn nxfr_web_share_start(
+    port: u16,
+    store_dir: *const c_char,
+    pin: *const c_char,
+    manifest_json: *const c_char,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let dir = match cstr_to_str(store_dir) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let manifest_str = match cstr_to_str(manifest_json) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let items: Vec<nxfr_web::WebShareItem> = match serde_json::from_str(manifest_str) {
+            Ok(v) => v,
+            Err(e) => return json_err(&format!("invalid manifest_json: {e}")),
+        };
+
+        let pin_opt = if !pin.is_null() {
+            match cstr_to_str(pin) {
+                Ok(s) if !s.is_empty() => Some(s.to_string()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let identity = match load_or_create_identity(dir) {
+            Ok(id) => id,
+            Err(e) => return json_err(&e),
+        };
+
+        if let Some(existing) = web_server_lock().lock().unwrap().take() {
+            existing.stop();
+        }
+
+        let rt = get_runtime();
+        let preferred_port = if port == 0 {
+            nxfr_web::DEFAULT_WEB_PORT
+        } else {
+            port
+        };
+
+        let handle_res = rt.block_on(async {
+            nxfr_web::WebServer::start_share(
+                &identity.key_der,
+                &identity.cert_der,
+                preferred_port,
+                pin_opt,
+                items,
+            )
+            .await
+        });
+
+        match handle_res {
+            Ok(handle) => {
+                let actual_port = handle.port;
+                let token = handle.token.clone();
+                *web_server_lock().lock().unwrap() = Some(handle);
+                json_ok(serde_json::json!({
+                    "status": "started",
+                    "port": actual_port,
+                    "token": token,
+                    "mode": "share",
+                }))
+            }
+            Err(e) => json_err(&format!("web_share_start: {e}")),
+        }
+    })
+}
+
 /// Stop the running web upload server.
 #[no_mangle]
 pub extern "C" fn nxfr_web_stop() -> *mut c_char {
