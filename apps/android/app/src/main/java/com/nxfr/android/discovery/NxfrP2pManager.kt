@@ -1,0 +1,364 @@
+package com.nxfr.android.discovery
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.net.NetworkInfo
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pInfo
+import android.net.wifi.p2p.WifiP2pManager
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
+import android.os.Build
+import android.util.Log
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import java.net.NetworkInterface
+
+sealed class P2pState {
+    data object Idle : P2pState()
+    data object Discovering : P2pState()
+    data class PeersFound(val peers: List<P2pPeer>) : P2pState()
+    data object Forming : P2pState()
+    data class Ready(val isGO: Boolean, val goIp: String, val iface: String) : P2pState()
+    data class Failed(val reason: String) : P2pState()
+}
+
+data class P2pPeer(
+    val deviceAddress: String,  // MAC address for WifiP2pConfig
+    val deviceName: String,
+    val aid: String,            // advertised_id from DNS-SD TXT record
+    val port: Int = 17394
+)
+
+class NxfrP2pManager {
+
+    private val _state = MutableStateFlow<P2pState>(P2pState.Idle)
+    val state: StateFlow<P2pState> = _state
+
+    private var manager: WifiP2pManager? = null
+    private var channel: WifiP2pManager.Channel? = null
+    private var receiver: BroadcastReceiver? = null
+    private var localServiceInfo: WifiP2pDnsSdServiceInfo? = null
+    private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
+    
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var context: Context? = null
+    private var localAid: String = ""
+    private var localName: String = ""
+    private var discoveryJob: Job? = null
+    private var connectRetryCount = 0
+
+    private val discoveredPeers = mutableMapOf<String, P2pPeer>()
+
+    companion object {
+        private const val TAG = "NxfrP2p"
+    }
+
+    fun initialize(context: Context) {
+        this.context = context.applicationContext
+        manager = this.context?.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+        channel = manager?.initialize(this.context, this.context?.mainLooper, null)
+
+        if (manager == null) {
+            Log.e(TAG, "Wi-Fi P2P is not supported by the hardware")
+        }
+    }
+
+    private fun checkPermission(): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context!!, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                return Manifest.permission.NEARBY_WIFI_DEVICES
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(context!!, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return Manifest.permission.ACCESS_FINE_LOCATION
+            }
+        }
+        return null
+    }
+
+    fun startDiscovery(localAid: String, localName: String) {
+        val missingPermission = checkPermission()
+        if (missingPermission != null) {
+            _state.value = P2pState.Failed("Permission required: $missingPermission")
+            return
+        }
+
+        this.localAid = localAid
+        this.localName = localName
+        _state.value = P2pState.Discovering
+        discoveredPeers.clear()
+
+        setupReceiver()
+
+        val txtRecord = mapOf("aid" to localAid, "name" to localName, "port" to "17394")
+        localServiceInfo = WifiP2pDnsSdServiceInfo.newInstance(localName, "_nxfr._tcp", txtRecord)
+        
+        addLocalService()
+
+        manager?.setDnsSdResponseListeners(channel,
+            { instanceName, registrationType, device ->
+                Log.d(TAG, "DNS-SD Service Response: $instanceName, $registrationType, ${device.deviceName}")
+            },
+            { fullDomainName, txtRecordMap, device ->
+                Log.d(TAG, "DNS-SD TXT Record Response: $fullDomainName, $txtRecordMap")
+                val aid = txtRecordMap["aid"]
+                val name = txtRecordMap["name"] ?: device.deviceName
+                val portStr = txtRecordMap["port"]
+                val port = portStr?.toIntOrNull() ?: 17394
+
+                if (aid != null && aid != this.localAid) {
+                    val peer = P2pPeer(device.deviceAddress, name, aid, port)
+                    discoveredPeers[device.deviceAddress] = peer
+                    _state.value = P2pState.PeersFound(discoveredPeers.values.toList())
+                }
+            }
+        )
+
+        serviceRequest = WifiP2pDnsSdServiceRequest.newInstance()
+        addServiceRequestAndDiscover()
+
+        discoveryJob = scope.launch {
+            delay(8000)
+            if (_state.value is P2pState.Discovering && discoveredPeers.isEmpty()) {
+                Log.i(TAG, "DNS-SD timeout, falling back to discoverPeers()")
+                discoverPeersFallback()
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun addLocalService() {
+        manager?.addLocalService(channel, localServiceInfo, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.i(TAG, "Local service added successfully")
+            }
+
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "Failed to add local service, reason: $reason")
+            }
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun addServiceRequestAndDiscover() {
+        manager?.addServiceRequest(channel, serviceRequest, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                manager?.discoverServices(channel, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() {
+                        Log.i(TAG, "Service discovery started successfully")
+                    }
+
+                    override fun onFailure(reason: Int) {
+                        Log.e(TAG, "Failed to start service discovery, reason: $reason")
+                    }
+                })
+            }
+
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "Failed to add service request, reason: $reason")
+            }
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun discoverPeersFallback() {
+        manager?.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.i(TAG, "Fallback peer discovery started successfully")
+            }
+
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "Failed to start fallback peer discovery, reason: $reason")
+            }
+        })
+    }
+
+    private fun setupReceiver() {
+        val intentFilter = IntentFilter().apply {
+            addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+        }
+
+        receiver = object : BroadcastReceiver() {
+            @SuppressLint("MissingPermission")
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
+                        val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
+                        if (state != WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
+                            _state.value = P2pState.Failed("Wi-Fi Direct not available")
+                        }
+                    }
+                    WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                        if (checkPermission() == null) {
+                            manager?.requestPeers(channel) { peers ->
+                                val fallbackPeers = peers.deviceList
+                                    .filter { it.deviceName.contains("NXFR", ignoreCase = true) }
+                                    .map { P2pPeer(it.deviceAddress, it.deviceName, "fallback_aid") }
+                                
+                                if (fallbackPeers.isNotEmpty()) {
+                                    fallbackPeers.forEach { discoveredPeers[it.deviceAddress] = it }
+                                    _state.value = P2pState.PeersFound(discoveredPeers.values.toList())
+                                }
+                            }
+                        }
+                    }
+                    WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                        val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
+                        if (networkInfo?.isConnected == true) {
+                            manager?.requestConnectionInfo(channel) { info: WifiP2pInfo ->
+                                val goIp = info.groupOwnerAddress?.hostAddress ?: "192.168.49.1"
+                                val isGO = info.isGroupOwner
+                                val iface = findP2pInterface() ?: "p2p0"
+                                _state.value = P2pState.Ready(isGO = isGO, goIp = goIp, iface = iface)
+                                connectRetryCount = 0
+                            }
+                        }
+                    }
+                    WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
+                        val device = intent.getParcelableExtra<WifiP2pDevice>(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE)
+                        Log.i(TAG, "This device changed: ${device?.deviceName}")
+                    }
+                }
+            }
+        }
+
+        // Wi-Fi P2P intents are system broadcasts — must use RECEIVER_EXPORTED on API 33+.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context?.registerReceiver(receiver, intentFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            context?.registerReceiver(receiver, intentFilter)
+        }
+    }
+
+    fun connect(peer: P2pPeer) {
+        val missingPermission = checkPermission()
+        if (missingPermission != null) {
+            _state.value = P2pState.Failed("Permission required: $missingPermission")
+            return
+        }
+
+        _state.value = P2pState.Forming
+        val config = WifiP2pConfig().apply { 
+            deviceAddress = peer.deviceAddress 
+        }
+
+        connectInternal(config, peer)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectInternal(config: WifiP2pConfig, peer: P2pPeer) {
+        manager?.connect(channel, config, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.i(TAG, "Connection initiated to ${peer.deviceAddress}")
+            }
+
+            override fun onFailure(reason: Int) {
+                if (reason == WifiP2pManager.BUSY && connectRetryCount < 2) {
+                    connectRetryCount++
+                    Log.i(TAG, "Connection busy, retrying... ($connectRetryCount/2)")
+                    scope.launch {
+                        delay(500)
+                        connectInternal(config, peer)
+                    }
+                } else if (connectRetryCount >= 2) {
+                    _state.value = P2pState.Failed("Connection failed after 2 retries")
+                } else {
+                    _state.value = P2pState.Failed("Connection failed, reason: $reason")
+                }
+            }
+        })
+    }
+
+    private fun findP2pInterface(): String? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            for (intf in interfaces) {
+                if (intf.isUp) {
+                    val name = intf.name
+                    if (name.startsWith("p2p") || name.contains("-p2p") || name.contains("p2p-")) {
+                        return name
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding P2P interface", e)
+        }
+        return null
+    }
+
+    fun teardown() {
+        discoveryJob?.cancel()
+        receiver?.let { 
+            try {
+                context?.unregisterReceiver(it) 
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unregistering receiver", e)
+            }
+        }
+        receiver = null
+        
+        localServiceInfo?.let { 
+            manager?.removeLocalService(channel, it, null) 
+        }
+        localServiceInfo = null
+        
+        serviceRequest?.let { 
+            manager?.removeServiceRequest(channel, it, null) 
+        }
+        serviceRequest = null
+
+        manager?.removeGroup(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.i(TAG, "Group removed successfully")
+            }
+
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "Failed to remove group, reason: $reason")
+            }
+        })
+
+        _state.value = P2pState.Idle
+        connectRetryCount = 0
+        Log.i(TAG, "P2P teardown complete")
+    }
+
+    fun cancelDiscoveryOnly() {
+        discoveryJob?.cancel()
+        
+        manager?.stopPeerDiscovery(channel, null)
+        
+        serviceRequest?.let { 
+            manager?.removeServiceRequest(channel, it, null) 
+        }
+        serviceRequest = null
+        
+        receiver?.let { 
+            try {
+                context?.unregisterReceiver(it) 
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unregistering receiver", e)
+            }
+        }
+        receiver = null
+        
+        _state.value = P2pState.Idle
+        Log.i(TAG, "P2P discovery cancelled")
+    }
+}
