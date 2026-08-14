@@ -1627,6 +1627,7 @@ dependencies = [
 name = "nxfr-web"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "getrandom 0.2.17",
  "hex",
  "log",
@@ -1636,6 +1637,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-rustls",
  "tokio-util",

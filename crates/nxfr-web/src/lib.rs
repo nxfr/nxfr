@@ -1,3 +1,4 @@
+use futures_util::FutureExt;
 use rustls::ServerConfig;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -24,10 +25,10 @@ const HTML_PAGE: &str = r#"<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NXFR — Web Upload</title>
 <style>
-body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
-.card{background:#1E293B;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 4px 24px #00000066}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
+.card{background:#1E293B;border-radius:16px;padding:32px;max-width:440px;width:100%;box-shadow:0 4px 24px #00000066}
 h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
-.sub{color:#94A3B8;margin:0 0 24px;font-size:14px}
+.sub{color:#94A3B8;margin:0 0 20px;font-size:14px}
 input[type=file]{display:none}
 .drop{border:2px dashed #334155;border-radius:12px;padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s}
 .drop:hover,.drop.over{border-color:#00E5FF}
@@ -36,12 +37,13 @@ input[type=file]{display:none}
 .progress{width:100%;height:8px;background:#334155;border-radius:4px;margin-top:12px;overflow:hidden}
 .bar{height:100%;background:#00E5FF;width:0%;transition:width .3s}
 .status{text-align:center;margin-top:8px;font-size:14px;color:#94A3B8}
+.fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;border:1px solid #1E293B}
 </style></head><body>
 <div class="card">
 <h1>NXFR Direct Upload</h1>
 <p class="sub">Select or drop a file to send to this device</p>
-<div class="fp-box" style="font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;">
-You're connected to the device showing this fingerprint:<br>
+<div class="fp-box">
+Connected Device Fingerprint:<br>
 <strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
 </div>
 <div class="drop" id="drop">Click or drag a file here</div>
@@ -67,7 +69,7 @@ btn.onclick=()=>{
 if(!sel)return;
 const fd=new FormData();fd.append('file',sel);
 const xhr=new XMLHttpRequest();
-xhr.open('POST','/upload');
+xhr.open('POST','/upload' + (t ? '?t=' + encodeURIComponent(t) : ''));
 if(t) xhr.setRequestHeader('Authorization','Bearer '+t);
 xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);bar.style.width=p+'%';st.textContent=p+'%';}};
 pg.style.display='block';btn.disabled=true;
@@ -77,7 +79,7 @@ xhr.send(fd);
 };
 </script></body></html>"#;
 
-fn build_web_tls_config(
+pub fn build_web_tls_config(
     key_der: &[u8],
     cert_der: &[u8],
 ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
@@ -131,25 +133,32 @@ const HTML_DOWNLOAD_PAGE: &str = r#"<!DOCTYPE html>
 <title>NXFR — Direct Download</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
-.card{background:#1E293B;border-radius:16px;padding:32px;max-width:520px;width:100%;box-shadow:0 4px 24px #00000066}
+.card{background:#1E293B;border-radius:16px;padding:32px;max-width:540px;width:100%;box-shadow:0 4px 24px #00000066}
 h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .sub{color:#94A3B8;margin:0 0 20px;font-size:14px}
-.fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px}
+.fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;border:1px solid #1E293B}
 .file-list{margin-top:16px;display:flex;flex-direction:column;gap:12px}
-.file-item{display:flex;align-items:center;justify-content:space-between;background:#0F172A;padding:12px 16px;border-radius:8px;border:1px solid #334155}
+.file-item{display:flex;flex-direction:column;background:#0F172A;padding:14px 16px;border-radius:8px;border:1px solid #334155}
+.file-row{display:flex;align-items:center;justify-content:space-between}
 .file-info{display:flex;flex-direction:column;overflow:hidden;margin-right:12px}
 .file-name{font-weight:600;color:#F8FAFC;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-size{font-size:12px;color:#94A3B8;margin-top:2px}
-.btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap}
+.btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap;transition:background 0.2s}
 .btn:hover{background:#38BDF8}
-.btn-all{background:#22C55E;color:#0F172A;width:100%;justify-content:center;padding:12px;font-size:16px;margin-bottom:16px}
+.btn:disabled{opacity:0.6;cursor:not-allowed}
+.btn-success{background:#22C55E;color:#0F172A}
+.btn-all{background:#22C55E;color:#0F172A;width:100%;justify-content:center;padding:12px;font-size:15px;margin-bottom:16px}
 .btn-all:hover{background:#4ADE80}
+.btn-all:disabled{opacity:0.6;cursor:not-allowed}
+.pg-track{width:100%;height:6px;background:#334155;border-radius:3px;margin-top:10px;overflow:hidden;display:none}
+.pg-bar{height:100%;background:#00E5FF;width:0%;transition:width 0.15s ease}
+.pg-status{font-size:11px;color:#94A3B8;margin-top:4px;display:none;font-family:monospace}
 </style></head><body>
 <div class="card">
 <h1>NXFR Direct Download</h1>
-<p class="sub">Download files shared directly from this device</p>
+<p class="sub">Download files shared directly from this device over TLS</p>
 <div class="fp-box">
-You're connected to the device showing this fingerprint:<br>
+Connected Device Fingerprint:<br>
 <strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
 </div>
 <button class="btn btn-all" id="btn-all" onclick="downloadAll()">Download All Files</button>
@@ -172,29 +181,118 @@ const list = document.getElementById('file-list');
 manifest.forEach(item => {
   const div = document.createElement('div');
   div.className = 'file-item';
-  const dlUrl = `/dl/${item.id}` + (t ? `?t=${t}` : '');
+  div.id = `item-${item.id}`;
   div.innerHTML = `
-    <div class="file-info">
-      <div class="file-name" title="${item.name}">${item.name}</div>
-      <div class="file-size">${fmtBytes(item.size)}</div>
+    <div class="file-row">
+      <div class="file-info">
+        <div class="file-name" title="${item.name}">${item.name}</div>
+        <div class="file-size">${fmtBytes(item.size)}</div>
+      </div>
+      <button class="btn" id="btn-${item.id}" onclick="downloadItem(${item.id})">Download</button>
     </div>
-    <a class="btn" href="${dlUrl}" download="${item.name}">Download</a>
+    <div class="pg-track" id="pg-track-${item.id}">
+      <div class="pg-bar" id="pg-bar-${item.id}"></div>
+    </div>
+    <div class="pg-status" id="pg-status-${item.id}"></div>
   `;
   list.appendChild(div);
 });
 
-function downloadAll(){
-  manifest.forEach((item, idx) => {
-    setTimeout(() => {
-      const dlUrl = `/dl/${item.id}` + (t ? `?t=${t}` : '');
-      const a = document.createElement('a');
-      a.href = dlUrl;
-      a.download = item.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }, idx * 500);
-  });
+async function downloadItem(id) {
+  const item = manifest.find(i => i.id === id);
+  if (!item) return;
+
+  const btn = document.getElementById(`btn-${id}`);
+  const pgTrack = document.getElementById(`pg-track-${id}`);
+  const pgBar = document.getElementById(`pg-bar-${id}`);
+  const pgStatus = document.getElementById(`pg-status-${id}`);
+
+  if (btn) btn.disabled = true;
+  if (pgTrack) pgTrack.style.display = 'block';
+  if (pgStatus) {
+    pgStatus.style.display = 'block';
+    pgStatus.textContent = 'Connecting...';
+  }
+
+  const url = `/dl/${item.id}` + (t ? `?t=${encodeURIComponent(t)}` : '');
+  const headers = {};
+  if (t) headers['Authorization'] = 'Bearer ' + t;
+
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => 'Download failed');
+      throw new Error(`HTTP ${response.status}: ${errText}`);
+    }
+
+    const contentLength = response.headers.get('Content-Length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : item.size;
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let receivedBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      receivedBytes += value.length;
+
+      if (totalBytes > 0) {
+        const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
+        if (pgBar) pgBar.style.width = pct + '%';
+        if (pgStatus) pgStatus.textContent = `${pct}% · ${fmtBytes(receivedBytes)} / ${fmtBytes(totalBytes)}`;
+      } else {
+        if (pgStatus) pgStatus.textContent = `${fmtBytes(receivedBytes)}`;
+      }
+    }
+
+    if (pgBar) {
+      pgBar.style.width = '100%';
+      pgBar.style.background = '#22C55E';
+    }
+    if (pgStatus) pgStatus.textContent = 'Complete ✓';
+
+    const blob = new Blob(chunks, { type: item.mime || 'application/octet-stream' });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = item.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
+
+    if (btn) {
+      btn.textContent = 'Downloaded ✓';
+      btn.className = 'btn btn-success';
+      btn.disabled = false;
+    }
+  } catch (err) {
+    if (pgStatus) {
+      pgStatus.style.display = 'block';
+      pgStatus.textContent = 'Error: ' + err.message;
+      pgStatus.style.color = '#EF4444';
+    }
+    if (pgBar) pgBar.style.background = '#EF4444';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Retry';
+    }
+  }
+}
+
+async function downloadAll() {
+  const btnAll = document.getElementById('btn-all');
+  if (btnAll) btnAll.disabled = true;
+  for (const item of manifest) {
+    await downloadItem(item.id);
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (btnAll) {
+    btnAll.disabled = false;
+    btnAll.textContent = 'All Downloads Complete ✓';
+  }
 }
 </script></body></html>"#;
 
@@ -336,10 +434,23 @@ impl WebServer {
                                 let acceptor = acceptor.clone();
                                 let server_arc = server_arc.clone();
                                 tokio::spawn(async move {
-                                    if let Ok(mut tls_stream) = acceptor.accept(stream).await {
-                                        if let Err(e) = server_arc.handle_connection(&mut tls_stream, addr.ip()).await {
-                                            log::debug!("[nxfr-web] Connection error from {}: {}", addr.ip(), e);
+                                    let task_result = std::panic::AssertUnwindSafe(async {
+                                        match acceptor.accept(stream).await {
+                                            Ok(mut tls_stream) => {
+                                                if let Err(e) = server_arc.handle_connection(&mut tls_stream, addr.ip()).await {
+                                                    log::debug!("[nxfr-web] [{}] Connection finished with: {}", addr.ip(), e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::warn!("[nxfr-web] [{}] TLS handshake failed: {}", addr.ip(), e);
+                                            }
                                         }
+                                    })
+                                    .catch_unwind()
+                                    .await;
+
+                                    if let Err(panic_info) = task_result {
+                                        log::error!("[nxfr-web] [{}] Request handler panicked: {:?}", addr.ip(), panic_info);
                                     }
                                 });
                             }
@@ -378,7 +489,11 @@ impl WebServer {
                     break;
                 }
                 Err(e) => {
-                    log::warn!("[nxfr-web] Share port {} bound failed: {}, trying next...", p, e);
+                    log::warn!(
+                        "[nxfr-web] Share port {} bound failed: {}, trying next...",
+                        p,
+                        e
+                    );
                 }
             }
         }
@@ -443,10 +558,23 @@ impl WebServer {
                                 let acceptor = acceptor.clone();
                                 let server_arc = server_arc.clone();
                                 tokio::spawn(async move {
-                                    if let Ok(mut tls_stream) = acceptor.accept(stream).await {
-                                        if let Err(e) = server_arc.handle_connection(&mut tls_stream, addr.ip()).await {
-                                            log::debug!("[nxfr-web] Connection error from {}: {}", addr.ip(), e);
+                                    let task_result = std::panic::AssertUnwindSafe(async {
+                                        match acceptor.accept(stream).await {
+                                            Ok(mut tls_stream) => {
+                                                if let Err(e) = server_arc.handle_connection(&mut tls_stream, addr.ip()).await {
+                                                    log::debug!("[nxfr-web] [{}] Connection finished with: {}", addr.ip(), e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::warn!("[nxfr-web] [{}] TLS handshake failed: {}", addr.ip(), e);
+                                            }
                                         }
+                                    })
+                                    .catch_unwind()
+                                    .await;
+
+                                    if let Err(panic_info) = task_result {
+                                        log::error!("[nxfr-web] [{}] Request handler panicked: {:?}", addr.ip(), panic_info);
                                     }
                                 });
                             }
@@ -467,12 +595,41 @@ impl WebServer {
         })
     }
 
+    async fn send_response(
+        stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
+        status: &str,
+        content_type: &str,
+        body: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let header = format!(
+            "HTTP/1.1 {}\r\n\
+             Content-Type: {}\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            status,
+            content_type,
+            body.len()
+        );
+        stream.write_all(header.as_bytes()).await?;
+        if !body.is_empty() {
+            stream.write_all(body).await?;
+        }
+        stream.flush().await?;
+        let _ = stream.shutdown().await;
+        Ok(())
+    }
+
     async fn handle_connection(
         &self,
         stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
         ip: IpAddr,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if Instant::now() > self.expiry {
+            log::warn!(
+                "[nxfr-web] [{}] Connection rejected: server session expired",
+                ip
+            );
             return Ok(());
         }
 
@@ -482,13 +639,16 @@ impl WebServer {
             if let Some((count, last_fail)) = failed.get(&ip) {
                 if *count >= MAX_FAILED_ATTEMPTS {
                     if last_fail.elapsed() < BLOCK_DURATION {
-                        let response = "HTTP/1.1 403 Forbidden\r\n\
-                                        Content-Type: application/json\r\n\
-                                        Connection: close\r\n\
-                                        \r\n\
-                                        {\"error\": \"Too many failed attempts. Temporarily blocked.\"}";
-                        stream.write_all(response.as_bytes()).await?;
-                        return Ok(());
+                        log::warn!("[nxfr-web] [{}] 403 Forbidden: IP temporarily blocked due to excessive failed attempts", ip);
+                        let body =
+                            b"{\"error\": \"Too many failed attempts. Temporarily blocked.\"}";
+                        return Self::send_response(
+                            stream,
+                            "403 Forbidden",
+                            "application/json",
+                            body,
+                        )
+                        .await;
                     } else {
                         failed.remove(&ip);
                     }
@@ -515,7 +675,8 @@ impl WebServer {
                 break;
             }
             if headers_buf.len() > 8192 {
-                return Ok(()); // headers too large
+                log::warn!("[nxfr-web] [{}] Request headers exceeded 8KB limit", ip);
+                return Ok(());
             }
         }
 
@@ -532,38 +693,42 @@ impl WebServer {
             None => (raw_path, ""),
         };
 
+        log::info!("[nxfr-web] [{}] HTTP Request: {} {}", ip, method, path);
+
         if method == "GET" && path == "/" {
             if let Some(manifest) = &self.share_manifest {
-                let manifest_json = serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
+                let manifest_json =
+                    serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
                 let page = HTML_DOWNLOAD_PAGE
                     .replace("{{FINGERPRINT}}", &self.fingerprint)
                     .replace("{{MANIFEST_JSON}}", &manifest_json);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\n\
-                     Content-Type: text/html; charset=utf-8\r\n\
-                     Content-Length: {}\r\n\
-                     Connection: close\r\n\
-                     \r\n\
-                     {}",
-                    page.len(),
-                    page
+                log::info!(
+                    "[nxfr-web] [{}] 200 OK: Served download portal ({} items, {} bytes)",
+                    ip,
+                    manifest.len(),
+                    page.len()
                 );
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                return Self::send_response(
+                    stream,
+                    "200 OK",
+                    "text/html; charset=utf-8",
+                    page.as_bytes(),
+                )
+                .await;
             } else {
                 let page = HTML_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\n\
-                     Content-Type: text/html; charset=utf-8\r\n\
-                     Content-Length: {}\r\n\
-                     Connection: close\r\n\
-                     \r\n\
-                     {}",
-                    page.len(),
-                    page
+                log::info!(
+                    "[nxfr-web] [{}] 200 OK: Served upload portal ({} bytes)",
+                    ip,
+                    page.len()
                 );
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                return Self::send_response(
+                    stream,
+                    "200 OK",
+                    "text/html; charset=utf-8",
+                    page.as_bytes(),
+                )
+                .await;
             }
         }
 
@@ -591,77 +756,93 @@ impl WebServer {
             };
 
             if !valid {
-                let response = "HTTP/1.1 403 Forbidden\r\n\
-                                Content-Type: application/json\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                {\"error\": \"Invalid token or PIN\"}";
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                log::warn!(
+                    "[nxfr-web] [{}] 403 Forbidden: Invalid token for download '{}'",
+                    ip,
+                    path
+                );
+                let body = b"{\"error\": \"Invalid token or PIN\"}";
+                return Self::send_response(stream, "403 Forbidden", "application/json", body)
+                    .await;
             }
 
             let id_str = &path[4..];
             let id: usize = match id_str.parse() {
                 Ok(i) => i,
                 Err(_) => {
-                    let response = "HTTP/1.1 404 Not Found\r\n\
-                                    Content-Type: application/json\r\n\
-                                    Connection: close\r\n\
-                                    \r\n\
-                                    {\"error\": \"File not found\"}";
-                    stream.write_all(response.as_bytes()).await?;
-                    return Ok(());
+                    log::warn!(
+                        "[nxfr-web] [{}] 404 Not Found: Invalid file id '{}'",
+                        ip,
+                        id_str
+                    );
+                    let body = b"{\"error\": \"Invalid file id format\"}";
+                    return Self::send_response(stream, "404 Not Found", "application/json", body)
+                        .await;
                 }
             };
 
             let manifest = match &self.share_manifest {
                 Some(m) => m,
                 None => {
-                    let response = "HTTP/1.1 404 Not Found\r\n\
-                                    Content-Type: application/json\r\n\
-                                    Connection: close\r\n\
-                                    \r\n\
-                                    {\"error\": \"Download mode not active\"}";
-                    stream.write_all(response.as_bytes()).await?;
-                    return Ok(());
+                    log::warn!("[nxfr-web] [{}] 404 Not Found: Share mode not active", ip);
+                    let body = b"{\"error\": \"Download mode not active\"}";
+                    return Self::send_response(stream, "404 Not Found", "application/json", body)
+                        .await;
                 }
             };
 
             let item = match manifest.iter().find(|i| i.id == id) {
                 Some(i) => i,
                 None => {
-                    let response = "HTTP/1.1 404 Not Found\r\n\
-                                    Content-Type: application/json\r\n\
-                                    Connection: close\r\n\
-                                    \r\n\
-                                    {\"error\": \"File not found\"}";
-                    stream.write_all(response.as_bytes()).await?;
-                    return Ok(());
+                    log::warn!(
+                        "[nxfr-web] [{}] 404 Not Found: Item id {} not in manifest",
+                        ip,
+                        id
+                    );
+                    let body = b"{\"error\": \"File not found in manifest\"}";
+                    return Self::send_response(stream, "404 Not Found", "application/json", body)
+                        .await;
                 }
             };
 
             let file_path = PathBuf::from(&item.path);
             if !file_path.exists() {
-                let response = "HTTP/1.1 404 Not Found\r\n\
-                                Content-Type: application/json\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                {\"error\": \"File missing on disk\"}";
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                log::error!(
+                    "[nxfr-web] [{}] 404 Not Found: Item '{}' missing from disk at {}",
+                    ip,
+                    item.name,
+                    item.path
+                );
+                let body = b"{\"error\": \"File missing on disk\"}";
+                return Self::send_response(stream, "404 Not Found", "application/json", body)
+                    .await;
             }
 
             let mut f = match tokio::fs::File::open(&file_path).await {
                 Ok(f) => f,
-                Err(_) => {
-                    let response = "HTTP/1.1 500 Internal Error\r\n\
-                                    Connection: close\r\n\r\n";
-                    stream.write_all(response.as_bytes()).await?;
-                    return Ok(());
+                Err(err) => {
+                    log::error!(
+                        "[nxfr-web] [{}] 500 Internal Error opening '{}': {}",
+                        ip,
+                        item.name,
+                        err
+                    );
+                    let body = b"{\"error\": \"Failed to read file from storage\"}";
+                    return Self::send_response(
+                        stream,
+                        "500 Internal Error",
+                        "application/json",
+                        body,
+                    )
+                    .await;
                 }
             };
 
-            let mime = if item.mime.is_empty() { "application/octet-stream" } else { &item.mime };
+            let mime = if item.mime.is_empty() {
+                "application/octet-stream"
+            } else {
+                &item.mime
+            };
             let header = format!(
                 "HTTP/1.1 200 OK\r\n\
                  Content-Type: {}\r\n\
@@ -669,17 +850,34 @@ impl WebServer {
                  Content-Disposition: attachment; filename=\"{}\"\r\n\
                  Connection: close\r\n\
                  \r\n",
-                mime, item.size, sanitize_filename(&item.name)
+                mime,
+                item.size,
+                sanitize_filename(&item.name)
             );
 
             stream.write_all(header.as_bytes()).await?;
 
             let mut file_buf = [0u8; 65536];
+            let mut total_sent: u64 = 0;
             loop {
                 let n = f.read(&mut file_buf).await?;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 stream.write_all(&file_buf[..n]).await?;
+                total_sent += n as u64;
             }
+            stream.flush().await?;
+            let _ = stream.shutdown().await;
+
+            log::info!(
+                "[nxfr-web] [{}] 200 OK: Completed streaming '{}' (id={}, {} / {} bytes)",
+                ip,
+                item.name,
+                item.id,
+                total_sent,
+                item.size
+            );
             return Ok(());
         }
 
@@ -715,7 +913,7 @@ impl WebServer {
             }
 
             if is_query_token && auth_token.as_deref() == Some(&self.token) {
-                log::debug!("[nxfr-web] token via query string (test path)");
+                log::debug!("[nxfr-web] token via query string");
             }
 
             let valid = match &auth_token {
@@ -737,25 +935,32 @@ impl WebServer {
                     }
                 }
 
-                let response = "HTTP/1.1 403 Forbidden\r\n\
-                                Content-Type: application/json\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                {\"error\": \"Invalid token or PIN\"}";
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                log::warn!(
+                    "[nxfr-web] [{}] 403 Forbidden: Invalid token for upload",
+                    ip
+                );
+                let body = b"{\"error\": \"Invalid token or PIN\"}";
+                return Self::send_response(stream, "403 Forbidden", "application/json", body)
+                    .await;
             }
 
             if let Some(boundary_str) = boundary {
                 let mut length = content_length.unwrap_or(0);
                 if length as u64 > self.max_file_size {
-                    let response = "HTTP/1.1 413 Payload Too Large\r\n\
-                                    Content-Type: application/json\r\n\
-                                    Connection: close\r\n\
-                                    \r\n\
-                                    {\"error\": \"File size exceeds limit\"}";
-                    stream.write_all(response.as_bytes()).await?;
-                    return Ok(());
+                    log::warn!(
+                        "[nxfr-web] [{}] 413 Payload Too Large: {} > {}",
+                        ip,
+                        length,
+                        self.max_file_size
+                    );
+                    let body = b"{\"error\": \"File size exceeds limit\"}";
+                    return Self::send_response(
+                        stream,
+                        "413 Payload Too Large",
+                        "application/json",
+                        body,
+                    )
+                    .await;
                 }
 
                 let boundary_bytes = format!("--{}", boundary_str).into_bytes();
@@ -822,38 +1027,34 @@ impl WebServer {
                 }
 
                 log::info!(
-                    "[nxfr-web] Web upload successfully received: {}",
+                    "[nxfr-web] [{}] 200 OK: Web upload successfully saved to {}",
+                    ip,
                     final_path.display()
                 );
-                let response = "HTTP/1.1 200 OK\r\n\
-                                Content-Type: text/plain\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                Upload successful";
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                let body = b"Upload successful";
+                return Self::send_response(stream, "200 OK", "text/plain", body).await;
             } else {
-                let response = "HTTP/1.1 200 OK\r\n\
-                                Content-Type: text/plain\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                Upload successful";
-                stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                let body = b"Upload successful";
+                return Self::send_response(stream, "200 OK", "text/plain", body).await;
             }
         }
 
-        let response = "HTTP/1.1 404 Not Found\r\n\
-                        Connection: close\r\n\
-                        \r\n";
-        stream.write_all(response.as_bytes()).await?;
-        Ok(())
+        log::warn!(
+            "[nxfr-web] [{}] 404 Not Found: Unhandled route '{}'",
+            ip,
+            path
+        );
+        let body = b"Not Found";
+        Self::send_response(stream, "404 Not Found", "text/plain", body).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    use tokio_rustls::TlsConnector;
 
     #[test]
     fn test_web_share_item_serialization() {
@@ -875,5 +1076,180 @@ mod tests {
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("../etc/passwd"), ".._etc_passwd");
         assert_eq!(sanitize_filename("photo 1.jpg"), "photo_1.jpg");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_share_downloads_with_sha256() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_test_share_{}", generate_token()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+
+        // Create 2 test files with distinct content
+        let file1_path = temp_dir.join("payload_alpha.bin");
+        let file2_path = temp_dir.join("payload_beta.bin");
+
+        let content1 = b"ALPHA_STREAM_PACKET_CONTENT_1234567890";
+        let content2 = b"BETA_STREAM_PACKET_CONTENT_0987654321_ABCDEFGHIJ";
+
+        let mut f1 = std::fs::File::create(&file1_path).unwrap();
+        f1.write_all(content1).unwrap();
+        drop(f1);
+
+        let mut f2 = std::fs::File::create(&file2_path).unwrap();
+        f2.write_all(content2).unwrap();
+        drop(f2);
+
+        let hash1_expected = hex::encode(Sha256::digest(content1));
+        let hash2_expected = hex::encode(Sha256::digest(content2));
+
+        let manifest = vec![
+            WebShareItem {
+                id: 0,
+                name: "payload_alpha.bin".to_string(),
+                size: content1.len() as u64,
+                mime: "application/octet-stream".to_string(),
+                path: file1_path.to_str().unwrap().to_string(),
+            },
+            WebShareItem {
+                id: 1,
+                name: "payload_beta.bin".to_string(),
+                size: content2.len() as u64,
+                mime: "application/octet-stream".to_string(),
+                path: file2_path.to_str().unwrap().to_string(),
+            },
+        ];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17450,
+            None,
+            manifest,
+        )
+        .await
+        .expect("Failed to start share server");
+
+        let server_port = handle.port;
+        let token = handle.token.clone();
+
+        // Setup TLS client config that accepts the self-signed cert
+        #[derive(Debug)]
+        struct NoCertVerifier;
+        impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls_pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+                _server_name: &rustls_pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls_pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![
+                    rustls::SignatureScheme::ED25519,
+                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                    rustls::SignatureScheme::RSA_PSS_SHA256,
+                ]
+            }
+        }
+
+        let mut client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth();
+        client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let connector = TlsConnector::from(Arc::new(client_config));
+
+        // Client 1: Download item 0 via Authorization: Bearer <token>
+        let connector1 = connector.clone();
+        let token1 = token.clone();
+        let task1 = tokio::spawn(async move {
+            let stream = TcpStream::connect(("127.0.0.1", server_port))
+                .await
+                .unwrap();
+            let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+            let mut tls_stream = connector1.connect(domain, stream).await.unwrap();
+
+            let request = format!(
+                "GET /dl/0 HTTP/1.1\r\n\
+                 Host: localhost:{}\r\n\
+                 Authorization: Bearer {}\r\n\
+                 Connection: close\r\n\
+                 \r\n",
+                server_port, token1
+            );
+            tls_stream.write_all(request.as_bytes()).await.unwrap();
+            tls_stream.flush().await.unwrap();
+
+            let mut resp = Vec::new();
+            tls_stream.read_to_end(&mut resp).await.unwrap();
+            resp
+        });
+
+        // Client 2: Download item 1 via query string ?t=<token>
+        let connector2 = connector.clone();
+        let token2 = token.clone();
+        let task2 = tokio::spawn(async move {
+            let stream = TcpStream::connect(("127.0.0.1", server_port))
+                .await
+                .unwrap();
+            let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+            let mut tls_stream = connector2.connect(domain, stream).await.unwrap();
+
+            let request = format!(
+                "GET /dl/1?t={} HTTP/1.1\r\n\
+                 Host: localhost:{}\r\n\
+                 Connection: close\r\n\
+                 \r\n",
+                token2, server_port
+            );
+            tls_stream.write_all(request.as_bytes()).await.unwrap();
+            tls_stream.flush().await.unwrap();
+
+            let mut resp = Vec::new();
+            tls_stream.read_to_end(&mut resp).await.unwrap();
+            resp
+        });
+
+        let (resp1, resp2) = tokio::join!(task1, task2);
+        let resp1 = resp1.unwrap();
+        let resp2 = resp2.unwrap();
+
+        // Extract body after \r\n\r\n
+        let body1_pos = resp1.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body1 = &resp1[body1_pos..];
+        let hash1_actual = hex::encode(Sha256::digest(body1));
+        assert_eq!(hash1_actual, hash1_expected);
+        assert_eq!(body1, content1);
+
+        let body2_pos = resp2.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body2 = &resp2[body2_pos..];
+        let hash2_actual = hex::encode(Sha256::digest(body2));
+        assert_eq!(hash2_actual, hash2_expected);
+        assert_eq!(body2, content2);
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

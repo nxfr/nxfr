@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import com.nxfr.android.discovery.NetworkInterfaceHelper
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.staging.StagedItem
 import com.nxfr.android.staging.StagingRepository
@@ -93,17 +94,21 @@ fun WebShareScreen(
             if (res.optString("status") == "started") {
                 val port = res.optInt("port", 17396)
                 val token = res.optString("token", "")
-                val ip = getDeviceIp(context)
-                val url = "https://$ip:$port/#t=$token"
-                shareUrl = url
+                val ip = NetworkInterfaceHelper.getPrimaryLocalIp(context)
+                if (ip != null && ip.isNotEmpty()) {
+                    val url = "https://$ip:$port/#t=$token"
+                    shareUrl = url
+                    qrBitmap = generateQrBitmap(url)
+                } else {
+                    shareUrl = ""
+                    qrBitmap = null
+                }
 
                 try {
                     val fpJson = NxfrService.NxfrBridge.nxfr_web_fingerprint(storeDir)
                     val fpObj = JSONObject(fpJson)
                     fingerprint = fpObj.optString("spki_sha256", "Unknown")
                 } catch (_: Throwable) {}
-
-                qrBitmap = generateQrBitmap(url)
             } else {
                 Toast.makeText(context, "Failed to start web share: ${res.optString("error")}", Toast.LENGTH_LONG).show()
             }
@@ -184,25 +189,51 @@ fun WebShareScreen(
                 modifier = Modifier.padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = shareUrl.ifEmpty { "Starting share server..." },
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    textAlign = TextAlign.Center
-                )
+                if (shareUrl.isNotEmpty()) {
+                    Text(
+                        text = shareUrl,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        textAlign = TextAlign.Center
+                    )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedButton(
-                    onClick = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Share Link", shareUrl))
-                        Toast.makeText(context, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
-                    },
-                    enabled = shareUrl.isNotEmpty()
-                ) {
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Copy link")
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Share Link", shareUrl))
+                            Toast.makeText(context, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Copy link")
+                    }
+                } else {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "⚠️ NO LOCAL NETWORK DETECTED",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Connect to Wi-Fi or enable Hotspot / Desert mode so other devices can reach this link.",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -259,26 +290,6 @@ fun WebShareScreen(
     }
 }
 
-private fun getDeviceIp(context: Context): String {
-    try {
-        val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
-        val ips = mutableListOf<String>()
-        while (interfaces.hasMoreElements()) {
-            val iface = interfaces.nextElement()
-            if (iface.isLoopback || !iface.isUp) continue
-            val addrs = iface.inetAddresses
-            while (addrs.hasMoreElements()) {
-                val addr = addrs.nextElement()
-                if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                    ips.add(addr.hostAddress ?: "")
-                }
-            }
-        }
-        return if (ips.isEmpty()) "127.0.0.1" else ips.first()
-    } catch (_: Exception) {
-        return "127.0.0.1"
-    }
-}
 
 private fun generateQrBitmap(content: String): Bitmap? {
     return try {

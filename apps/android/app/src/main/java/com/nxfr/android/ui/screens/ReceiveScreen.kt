@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nxfr.android.discovery.NetworkInterfaceHelper
 import com.nxfr.android.prefs.NxfrPreferences
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.components.*
@@ -197,31 +198,5 @@ fun ReceiveScreen(
 }
 
 private fun getDeviceIps(context: Context): List<String> {
-    try {
-        val wifiOnly = NxfrPreferences.advertiseMode.value == "wifi_only"
-        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
-        val ips = mutableListOf<Pair<String, String>>()
-        while (interfaces.hasMoreElements()) {
-            val iface = interfaces.nextElement()
-            if (iface.isLoopback || !iface.isUp) continue
-            val ifName = iface.name.lowercase()
-            if (wifiOnly && (ifName.startsWith("rmnet") || ifName.startsWith("pdp") || ifName.startsWith("ccmni") || ifName.contains("cell"))) {
-                continue
-            }
-            val addrs = iface.inetAddresses
-            while (addrs.hasMoreElements()) {
-                val addr = addrs.nextElement()
-                if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                    val host = addr.hostAddress ?: ""
-                    if (wifiOnly && host.startsWith("100.")) continue
-                    ips.add(iface.name to host)
-                }
-            }
-        }
-        return ips.sortedByDescending {
-            it.first.startsWith("wlan") || it.first.startsWith("ap")
-        }.map { "${it.second} (${it.first})" }
-    } catch (_: Exception) {
-        return emptyList()
-    }
+    return NetworkInterfaceHelper.getOrderedLocalIps(context).map { "${it.second} (${it.first})" }
 }

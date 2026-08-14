@@ -27,16 +27,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.nxfr.android.R
+import com.nxfr.android.discovery.NetworkInterfaceHelper
 import com.nxfr.android.service.NxfrService
 import org.json.JSONObject
-import java.io.File
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 @Composable
 fun WebUploadScreen(
@@ -85,7 +84,7 @@ fun WebUploadScreen(
         }
     }
 
-    val primaryIp = remember { getPrimaryIp(context) }
+    val primaryIp = remember { NetworkInterfaceHelper.getPrimaryLocalIp(context) ?: "" }
     val webUrl = remember(primaryIp, uploadPort, uploadToken) {
         if (primaryIp.isNotEmpty() && uploadToken.isNotEmpty()) {
             "https://$primaryIp:$uploadPort/#t=$uploadToken"
@@ -159,20 +158,20 @@ fun WebUploadScreen(
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = if (isStarting) "Starting HTTPS server..." else webUrl,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        textAlign = TextAlign.Center
-                    )
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    var isCopied by remember { mutableStateOf(false) }
-                    val coroutineScope = rememberCoroutineScope()
+                    if (webUrl.isNotEmpty()) {
+                        Text(
+                            text = if (isStarting) "Starting HTTPS server..." else webUrl,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            textAlign = TextAlign.Center
+                        )
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        var isCopied by remember { mutableStateOf(false) }
+                        val coroutineScope = rememberCoroutineScope()
 
-                    OutlinedButton(
-                        onClick = {
-                            if (webUrl.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clipboard.setPrimaryClip(ClipData.newPlainText("NXFR Upload Link", webUrl))
                                 Toast.makeText(context, context.getString(R.string.receive_web_link_copied), Toast.LENGTH_SHORT).show()
@@ -181,18 +180,43 @@ fun WebUploadScreen(
                                     kotlinx.coroutines.delay(1200)
                                     isCopied = false
                                 }
+                            },
+                            enabled = !isStarting
+                        ) {
+                            Icon(
+                                imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = if (isCopied) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isCopied) "Link Copied ✓" else stringResource(R.string.receive_web_copy_link))
+                        }
+                    } else {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "⚠️ NO LOCAL NETWORK DETECTED",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Connect to Wi-Fi or enable Hotspot / Desert mode so other devices can upload files.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                        },
-                        enabled = !isStarting
-                    ) {
-                        Icon(
-                            imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = if (isCopied) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isCopied) "Link Copied ✓" else stringResource(R.string.receive_web_copy_link))
+                        }
                     }
                 }
             }
@@ -330,29 +354,7 @@ fun WebUploadScreen(
     }
 }
 
-private fun getPrimaryIp(context: Context): String {
-    try {
-        val interfaces = NetworkInterface.getNetworkInterfaces()
-        val ips = mutableListOf<Pair<String, String>>()
-        while (interfaces.hasMoreElements()) {
-            val iface = interfaces.nextElement()
-            if (iface.isLoopback || !iface.isUp) continue
-            val addrs = iface.inetAddresses
-            while (addrs.hasMoreElements()) {
-                val addr = addrs.nextElement()
-                if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                    ips.add(iface.name to (addr.hostAddress ?: ""))
-                }
-            }
-        }
-        val best = ips.sortedByDescending { 
-            it.first.startsWith("wlan") || it.first.startsWith("ap") 
-        }.firstOrNull()
-        return best?.second ?: ""
-    } catch (_: Exception) {
-        return ""
-    }
-}
+
 
 private fun generateQrBitmap(content: String, sizePx: Int = 512): Bitmap? {
     if (content.isEmpty()) return null
