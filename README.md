@@ -83,23 +83,16 @@ cargo build --release
 cargo test --workspace
 ```
 
-### 2. Build Android Native Libraries (`cargo ndk`)
-Compile the native `libnxfr_ffi.so` binaries for Android architectures:
-```bash
-cargo ndk \
-  -t arm64-v8a \
-  -t x86_64 \
-  -o apps/android/app/src/main/jniLibs \
-  build --package nxfr-ffi --release
-```
-
-### 3. Build & Test Android App (Gradle Gate)
-The Gradle build pipeline includes automated freshness verification (`verifyNativeFresh` and `verifyNativeSymbols`) ensuring native binaries are always in sync:
+### 2. Build Android App & Native Binaries
+The Gradle build pipeline features automated symbol verification and fresh compilation via `rebuildNative`:
 ```bash
 cd apps/android
 
-# Run unit tests and assemble debug APK
-./gradlew verifyNativeFresh test assembleDebug
+# One-liner to build native JNI binaries via cargo ndk and assemble debug APK
+./gradlew rebuildNative assembleDebug
+
+# Run unit tests
+./gradlew test
 ```
 
 ---

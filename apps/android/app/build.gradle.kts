@@ -81,24 +81,57 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
+tasks.register<Exec>("rebuildNative") {
+    group = "build"
+    description = "Compiles native Rust FFI crates for Android via cargo ndk"
+    workingDir = file("../../")
+    commandLine(
+        "cargo", "ndk",
+        "-t", "arm64-v8a",
+        "-t", "x86_64",
+        "-o", "apps/android/app/src/main/jniLibs",
+        "build", "--release", "-p", "nxfr-ffi"
+    )
+}
+
 tasks.register("verifyNativeSymbols") {
     doLast {
+        val externalFunRegex = Regex("""external\s+fun\s+([a-zA-Z0-9_]+)\s*\(""")
+        val javaDir = file("src/main/java")
+        val declaredExternalFunctions = mutableSetOf<String>()
+        if (javaDir.exists()) {
+            javaDir.walkTopDown().filter { it.isFile && it.extension == "kt" }.forEach { file ->
+                val text = file.readText()
+                externalFunRegex.findAll(text).forEach { match ->
+                    declaredExternalFunctions.add(match.groupValues[1])
+                }
+            }
+        }
+
         val jniDirs = listOf("arm64-v8a", "x86_64")
         val jniBase = file("src/main/jniLibs")
         for (abi in jniDirs) {
             val soFile = file("$jniBase/$abi/libnxfr_ffi.so")
-            if (soFile.exists()) {
-                val output = ByteArrayOutputStream()
-                exec {
-                    commandLine("nm", "-D", soFile.absolutePath)
-                    standardOutput = output
-                }
-                val symbols = output.toString()
-                check(symbols.contains("nxfr_web_start")) {
-                    "Native library at ${soFile.path} is missing nxfr_web_start symbol!"
-                }
-                println("Verified exported native symbols in ${soFile.name} ($abi)")
+            check(soFile.exists()) {
+                "MISSING NATIVE LIB: ${soFile.path} does not exist — run ./gradlew rebuildNative"
             }
+
+            val output = ByteArrayOutputStream()
+            exec {
+                commandLine("nm", "-D", soFile.absolutePath)
+                standardOutput = output
+            }
+            val symbols = output.toString()
+
+            for (fnName in declaredExternalFunctions) {
+                val mangledJni = "Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_" + fnName.replace("_", "_1")
+                val hasMangled = symbols.contains(mangledJni)
+                val hasDirect = symbols.contains(" $fnName\n") || symbols.contains(" $fnName\r\n")
+                if (!hasMangled && !hasDirect) {
+                    throw GradleException("MISSING JNI SYMBOL: $fnName in $abi — run ./gradlew rebuildNative")
+                }
+            }
+            println("Verified ${declaredExternalFunctions.size} exported JNI symbols in ${soFile.name} ($abi)")
         }
     }
 }
@@ -122,7 +155,7 @@ tasks.register("verifyNativeFresh") {
             val soFile = file("$jniBase/$abi/libnxfr_ffi.so")
             if (soFile.exists() && newestRsTime > 0) {
                 check(soFile.lastModified() >= newestRsTime) {
-                    "STALE NATIVE LIB — run cargo ndk -t arm64-v8a -t x86_64 -o apps/android/app/src/main/jniLibs build --release -p nxfr-ffi"
+                    "STALE NATIVE LIB — run ./gradlew rebuildNative"
                 }
                 println("Verified native freshness for ${soFile.name} ($abi)")
             }

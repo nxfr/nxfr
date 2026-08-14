@@ -567,3 +567,86 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     }));
     result.unwrap_or(std::ptr::null_mut())
 }
+
+/// `external fun nxfr_web_fingerprint(storeDir: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1fingerprint(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let ptr = super::nxfr_web_fingerprint(c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_history_add(jsonRecord: String, storeDir: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1history_1add(
+    mut env: JNIEnv,
+    _class: JClass,
+    json_record: JString,
+    store_dir: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let record = match jstring_to_string(&mut env, &json_record) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let dir = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_record = std::ffi::CString::new(record).unwrap_or_default();
+        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let ptr = super::nxfr_history_add(c_record.as_ptr(), c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_history_list(limit: Int, storeDir: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1history_1list(
+    mut env: JNIEnv,
+    _class: JClass,
+    limit: jint,
+    store_dir: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let ptr = super::nxfr_history_list(limit as u32, c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_history_clear(storeDir: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1history_1clear(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_dir: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = match jstring_to_string(&mut env, &store_dir) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let ptr = super::nxfr_history_clear(c_dir.as_ptr());
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
