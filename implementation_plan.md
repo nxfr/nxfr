@@ -1,10 +1,10 @@
-# Implementation Plan — NXFR Protocol (v0.3.0)
+# Implementation Plan — NXFR Protocol (v0.3.1)
 
 Master engineering implementation roadmap tracking completed architectural milestones and upcoming protocol phases.
 
 ---
 
-## 🏁 Completed Milestones (Phases 9.7 – 10.1)
+## 🏁 Completed Milestones (Phases 9.7 – 10.6)
 
 ### Phase 9.7–9.9: Stability & Storage Architecture
 - [x] **Interactive Consent Flow**: Native JNI bridge to `NxfrState.Offering` with 120s automatic offer timeout ([`#9.7a`](https://github.com/nxfr/nxfr/commit/51273b3), [`#9.7c`](https://github.com/nxfr/nxfr/commit/a339976)).
@@ -45,6 +45,13 @@ Master engineering implementation roadmap tracking completed architectural miles
 - [x] **T1 — Entry Points**: Header `[⌖ ADD NODE]` action button, Diagnostics sheet `[ENTER ADDRESS MANUALLY]`, and refined empty state buttons ([`557530b`](https://github.com/nxfr/nxfr/commit/557530b)).
 - [x] **T2 — ManualConnectSheet**: IPv4/IPv6/hostname address parser, MRU recent nodes persistence (last 5), and failure feedback.
 - [x] **T3 — Tests & Gates**: Unit tests for parser edge cases, version bump to `0.3.0-alpha` (code 17).
+
+### Phase 10.6: Consolidated Hardening
+- [x] **T1 & T2 — Native Symbol Proof & Dynamic Gradle Gate**: Missing JNI mangled exports added in `jni_bindings.rs`, dynamic `external fun` reflection in `build.gradle.kts`, `rebuildNative` task, and `scripts/check-native-fresh.sh` ([`408f044`](https://github.com/nxfr/nxfr/commit/408f044)).
+- [x] **T3 — Universal JNI Error Containment**: All UI and service native entry points guarded with `try/catch (UnsatisfiedLinkError)` and `ErrorScreen` fallbacks ([`45b2fd2`](https://github.com/nxfr/nxfr/commit/45b2fd2)).
+- [x] **T4 — Contact $\rightarrow$ vCard Exporter**: Lookup URI + typed vCard resolution with optional permission request and `"BEGIN:VCARD"` content validation ([`c6db1d8`](https://github.com/nxfr/nxfr/commit/c6db1d8)).
+- [x] **T5 — Deck-Styled History Ledger**: Robust JSON row parsing, monospace metadata, `TX ↗`/`RX ↙` direction badges, and purge modal ([`0a89116`](https://github.com/nxfr/nxfr/commit/0a89116)).
+- [x] **T6 — Tests & Versioning**: Unit tests for parser, model, vCard validation; version bump to `0.3.1-alpha` (code 18) ([`9055715`](https://github.com/nxfr/nxfr/commit/9055715)).
 
 ---
 

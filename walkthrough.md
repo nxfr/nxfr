@@ -1,50 +1,58 @@
-# Walkthrough — Phase 10.1: Manual Connect Parity
+# Walkthrough — Phase 10.6: Consolidated Hardening
 
 ## Overview
 
-In Phase 10.1, we delivered direct manual node connection with address parsing, recent targets history, and honest UI entry points matching the Instrument Deck design language.
+In Phase 10.6, we implemented consolidated hardening across the native Rust/JNI bridge, Gradle build system, JNI error containment, contacts vCard export engine, and the Instrument Deck session ledger.
 
 ---
 
 ## 🛠️ Key Deliverables
 
-### 1. Entry Points (T1)
-- **NEARBY NODES Header Action**: Added `[⌖ ADD NODE]` target crosshair icon button (`Icons.Outlined.GpsFixed`) in `SignalBeam` directly between the Mode chip and the QR scanner.
-- **Connection & Diagnostics Sheet**: Added `[ENTER ADDRESS MANUALLY]` button above "Run Live Diagnostics" inside `TroubleshootSheet.kt`.
-- **Empty-State Refinement**: Renamed the primary button to `[DIAGNOSTICS]` and added a dedicated outlined `[⌖ MANUAL CONNECT]` button alongside it.
+### 1. Native JNI Bindings & Symbol Verification (T1 & T2)
+- **Exported JNI Mappings ([`jni_bindings.rs`](file:///home/sanro/NXFR%20protocol/crates/nxfr-ffi/src/jni_bindings.rs))**:
+  - Implemented mangled JNI exports for all missing native methods: `nxfr_web_fingerprint`, `nxfr_history_add`, `nxfr_history_list`, `nxfr_history_clear`.
+  - Verified symbol export proof via `nm -D` on both `arm64-v8a` and `x86_64` architectures.
+- **Dynamic Gradle Symbol Gate ([`build.gradle.kts`](file:///home/sanro/NXFR%20protocol/apps/android/app/build.gradle.kts))**:
+  - Automatically parses all `external fun` declarations in Kotlin source files during `preBuild`.
+  - Asserts matching `Java_com_nxfr_...` mangled symbols or direct C exports in both architectures. Fails build with actionable message: `"MISSING JNI SYMBOL: <name> in <abi> — run ./gradlew rebuildNative"`.
+- **Automated `rebuildNative` Task**:
+  - Executes `cargo ndk` to compile `arm64-v8a` and `x86_64` `.so` libraries directly from Gradle.
+- **Freshness Pre-Push Script ([`scripts/check-native-fresh.sh`](file:///home/sanro/NXFR%20protocol/scripts/check-native-fresh.sh))**:
+  - Compares newest `crates/**/*.rs` modification timestamps with `jniLibs` binaries.
 
-### 2. ManualConnectSheet (T2 — [`ManualConnectSheet.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/main/java/com/nxfr/android/ui/sheets/ManualConnectSheet.kt))
-- **Instrument Deck Styling**: Structural `DeckSurface` card, `[TLS 1.3 / TCP 17394]` badge, monospace input field with clear action.
-- **Address Parser ([`AddressParser.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/main/java/com/nxfr/android/transfer/AddressParser.kt))**:
-  - Handles IPv4 (`192.168.1.104`), IPv4:port (`192.168.1.104:17394`), bracketed IPv6 (`[fe80::1]`, `[fe80::1]:17394`), bare IPv6 (`fe80::1`), and LAN hostnames (`laptop.local:9000`).
-  - Automatically strips URL prefixes (`http://`, `https://`, `nxfr://`) and trailing path slashes.
-  - Returns `null` on invalid port numbers ($<1$ or $>65535$), unclosed brackets, or garbage strings.
-- **Recent Target Nodes ([`RecentNodesRepository.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/main/java/com/nxfr/android/transfer/RecentNodesRepository.kt))**:
-  - Automatically stores the last 5 successful manual connections in `SharedPreferences`.
-  - Displayed as quick-tap monospace chips (`⌖ 192.168.1.104:17394`) above the input field.
-- **Failure Resilience**: Connection errors or socket timeouts produce the honest message: `"NODE UNREACHABLE — check IP, port, firewall"`.
+### 2. Universal JNI Error Containment (T3)
+- Wrapped all UI entry points calling `NxfrBridge` in `try/catch (t: Throwable)` / `try/catch (e: UnsatisfiedLinkError)`:
+  - `WebShareScreen`: Displays `ErrorScreen("NATIVE LIB OUTDATED", "Run ./gradlew rebuildNative and reinstall")` instead of crashing.
+  - `WebUploadScreen`: Displays error state with clear user instructions.
+  - `HistorySheet`, `SettingsScreen`, `TransferScreen`, `HotspotAwareDiscovery`, `NxfrNavHost`: Fully guarded against linkage failures.
 
-### 3. Unit Tests & Versioning (T3)
-- **Unit Tests ([`AddressParserTest.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/test/java/com/nxfr/android/transfer/AddressParserTest.kt))**:
-  - `testParse_plainIpv4_defaultsPort`
-  - `testParse_ipv4WithPort_parsesCorrectly`
-  - `testParse_bracketedIpv6_defaultsPort`
-  - `testParse_bracketedIpv6WithPort_parsesCorrectly`
-  - `testParse_bareIpv6_defaultsPort`
-  - `testParse_hostname_defaultsPort`
-  - `testParse_hostnameWithPort_parsesCorrectly`
-  - `testParse_urlPrefixes_strippedGracefully`
-  - `testParse_whitespaceTrimmed`
-  - `testParse_invalidInputs_returnsNull`
-- **Version Bump**: `versionCode = 17`, `versionName = "0.3.0-alpha"`.
+### 3. Contact $\rightarrow$ vCard Exporter ([`ContactsVCardExporter.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/main/java/com/nxfr/android/staging/ContactsVCardExporter.kt) — T4)
+- **Lookup URI & vCard Resolvers**:
+  - Queries `LOOKUP_KEY` and `DISPLAY_NAME` from picked contact URI.
+  - Resolves vCard stream via `CONTENT_VCARD_URI` and fallback `CONTENT_LOOKUP_URI` (`text/x-vcard`).
+- **Optional Runtime Permission Request**:
+  - If direct lookup requires permission, prompts with honest rationale: *"Only used to export the contact YOU pick as .vcf — never synced, never uploaded"*.
+- **Content Validation**:
+  - Writes to cache and validates that the file is non-empty and contains the `"BEGIN:VCARD"` header.
+
+### 4. Deck-Styled History Ledger ([`HistorySheet.kt`](file:///home/sanro/NXFR%20protocol/apps/android/app/src/main/java/com/nxfr/android/ui/sheets/HistorySheet.kt) — T5)
+- **Robust JSON Parsing**:
+  - Per-record JSON parsing inside `try/catch`, skipping malformed or old-schema rows without dying.
+- **Instrument Deck Aesthetic**:
+  - Structural `DeckSurface` bottom sheet with `0.5dp` `DeckGridLine` dividers.
+  - `TX ↗` / `RX ↙` direction badges, monospace session metadata (`did:nxfr:<id>`, bytes, relative time), and `SignalSuccess` / `SignalAlert` status pills.
+  - Clear confirmation modal for purging history.
+  - Tapping a row opens the payload via `FileProvider` if present on disk; otherwise displays toast `"PAYLOAD NO LONGER ON DEVICE"`.
 
 ---
 
 ## 📋 Verification Results
 
 ```
-- Android Unit Tests (:app:testDebugUnitTest): 100% PASSED
 - Rust Workspace Tests (cargo test --workspace): 46 core + 16 crypto + 4 transport + 39 ffi PASSED
-- Gradle Assemble Debug (:app:assembleDebug): SUCCESSFUL (0 errors)
-- Commit: feat(android): manual connect parity — address sheet + recent nodes (#10.1) [557530b]
+- Gradle Task :app:rebuildNative: SUCCESSFUL
+- Gradle Task :app:verifyNativeFresh: PASSED
+- Gradle Task :app:verifyNativeSymbols: 28/28 symbols verified on arm64-v8a & x86_64
+- Android Unit Tests (:app:testDebugUnitTest & :app:testReleaseUnitTest): 100% PASSED
+- Gradle Assemble Debug (:app:assembleDebug): SUCCESSFUL (APK: 33 MB, versionCode: 18)
 ```
