@@ -99,18 +99,80 @@ private val NxfrLightColorScheme = lightColorScheme(
     onBackground = LightOnSurface,
 )
 
+import androidx.compose.material3.ColorScheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+
+val OledDarkColorScheme = darkColorScheme(
+    primary = ElectricCyan,
+    onPrimary = DarkOnPrimary,
+    primaryContainer = Color(0xFF002233),
+    onPrimaryContainer = ElectricCyan,
+    secondary = DarkSecondary,
+    surface = Color(0xFF000000),
+    surfaceVariant = Color(0xFF111111),
+    surfaceContainer = Color(0xFF000000),
+    onSurface = Color(0xFFFFFFFF),
+    onSurfaceVariant = Color(0xFFAAAAAA),
+    background = Color(0xFF000000),
+    onBackground = Color(0xFFFFFFFF),
+    outline = Color(0xFF333333)
+)
+
+fun generateCustomColorScheme(seedColor: Color, darkTheme: Boolean): ColorScheme {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(seedColor.toArgb(), hsv)
+
+    val primary = seedColor
+    val onPrimary = if (hsv[2] > 0.6f && hsv[1] < 0.5f) Color.Black else Color.White
+
+    return if (darkTheme) {
+        darkColorScheme(
+            primary = primary,
+            onPrimary = onPrimary,
+            primaryContainer = primary.copy(alpha = 0.25f),
+            onPrimaryContainer = primary,
+            surface = Color(0xFF0F172A),
+            surfaceVariant = Color(0xFF1E293B),
+            surfaceContainer = Color(0xFF0F172A),
+            onSurface = Color(0xFFF8FAFC),
+            onSurfaceVariant = Color(0xFF94A3B8),
+            background = Color(0xFF0F172A),
+            onBackground = Color(0xFFF8FAFC),
+            outline = Color(0xFF334155)
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            onPrimary = onPrimary,
+            primaryContainer = primary.copy(alpha = 0.15f),
+            onPrimaryContainer = primary,
+            surface = Color(0xFFF8FAFC),
+            surfaceVariant = Color(0xFFF1F5F9),
+            surfaceContainer = Color(0xFFF8FAFC),
+            onSurface = Color(0xFF0F172A),
+            onSurfaceVariant = Color(0xFF64748B),
+            background = Color(0xFFFFFFFF),
+            onBackground = Color(0xFF0F172A),
+            outline = Color(0xFFCBD5E1)
+        )
+    }
+}
+
 // ── Theme Composable ──────────────────────────────────────────────────
 @Composable
 fun NxfrTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Default: Bold Identity brand palette
     content: @Composable () -> Unit
 ) {
+    val colorMode by ThemePreference.colorMode.collectAsState()
+    val customSeedArgb by ThemePreference.customSeedColor.collectAsState()
+
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
+        colorMode == ThemePreference.COLOR_MODE_OLED && darkTheme -> OledDarkColorScheme
+        colorMode == ThemePreference.COLOR_MODE_CUSTOM -> generateCustomColorScheme(Color(customSeedArgb), darkTheme)
         darkTheme -> NxfrDarkColorScheme
         else -> NxfrLightColorScheme
     }
