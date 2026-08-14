@@ -157,11 +157,12 @@ class NxfrSoftApManager {
                 override fun onAvailable(network: Network) {
                     // Bind process to this network so TCP connections go over SoftAP
                     cm.bindProcessToNetwork(network)
+                    val iface = cm.getLinkProperties(network)?.interfaceName ?: "softap"
                     
                     // Find the gateway/host IP (typically .1 on the AP subnet)
                     val hostIp = findApHostIp(network, cm) ?: "192.168.43.1"
                     _clientState.value = ClientJoinState.Connected(hostIp)
-                    Log.i(TAG, "Joined SoftAP network, hostIp=$hostIp")
+                    Log.i(TAG, "Bound process to SoftAP network: $network, iface=$iface, hostIp=$hostIp")
                 }
                 
                 override fun onUnavailable() {
@@ -172,6 +173,7 @@ class NxfrSoftApManager {
                 override fun onLost(network: Network) {
                     cm.bindProcessToNetwork(null)  // Unbind
                     _clientState.value = ClientJoinState.Failed("SoftAP network lost")
+                    Log.i(TAG, "Unbound process from SoftAP network (onLost)")
                 }
             }
             
@@ -188,6 +190,7 @@ class NxfrSoftApManager {
             try {
                 cm?.unregisterNetworkCallback(cb)
                 cm?.bindProcessToNetwork(null)
+                Log.i(TAG, "Unbound process from SoftAP network (leaveNetwork)")
             } catch (e: Throwable) {
                 Log.w(TAG, "Network callback unregister error: ${e.message}")
             }

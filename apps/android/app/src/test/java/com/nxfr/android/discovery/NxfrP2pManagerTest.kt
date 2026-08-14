@@ -130,4 +130,11 @@ class NxfrP2pManagerTest {
         clientState = ClientJoinState.Failed("Network request denied or timed out")
         assertTrue(clientState is ClientJoinState.Failed)
     }
+
+    @Test
+    fun testP2pManagerBoundIfaceStateFlow() {
+        val manager = NxfrP2pManager()
+        assertNull(manager.boundIface.value)
+        assertEquals(P2pState.Idle, manager.state.value)
+    }
 }

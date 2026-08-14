@@ -33,6 +33,7 @@ import com.nxfr.android.discovery.P2pState
 import com.nxfr.android.discovery.SoftApState
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.theme.deckColors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 
 private fun hasPermission(context: android.content.Context): Boolean {
@@ -55,6 +56,7 @@ fun DesertSheet(
     val haptic = LocalHapticFeedback.current
 
     val p2pState by (NxfrService.p2pManager?.state ?: MutableStateFlow(P2pState.Idle)).collectAsState()
+    val boundIface by (NxfrService.p2pManager?.boundIface ?: MutableStateFlow<String?>(null)).collectAsState()
     val softApState by (NxfrService.softApManager?.hostState ?: MutableStateFlow(SoftApState.Idle)).collectAsState()
     val clientJoinState by (NxfrService.softApManager?.clientState ?: MutableStateFlow(ClientJoinState.Idle)).collectAsState()
 
@@ -178,11 +180,15 @@ fun DesertSheet(
                     }
                 }
             } else {
-                // 4. Status Row (when P2pState.Ready or SoftApState.Active)
-                if (p2pState is P2pState.Ready || softApState is SoftApState.Active) {
+                // 4. Status Row (when P2pState.Ready, SoftApState.Active, or ClientJoinState.Connected)
+                if (p2pState is P2pState.Ready || softApState is SoftApState.Active || clientJoinState is ClientJoinState.Connected) {
                     val statusText = if (p2pState is P2pState.Ready) {
                         val ready = p2pState as P2pState.Ready
-                        "📡 DIRECT LINK · ${if (ready.isGO) "GO" else "CLIENT"} · p2p0 / ${ready.goIp}"
+                        val routed = boundIface ?: ready.iface
+                        "📡 DIRECT LINK · ${if (ready.isGO) "GO" else "CLIENT"} · ${ready.goIp}\nROUTED: $routed"
+                    } else if (clientJoinState is ClientJoinState.Connected) {
+                        val connected = clientJoinState as ClientJoinState.Connected
+                        "📡 HOTSPOT LINK · CLIENT · ${connected.hostIp}\nROUTED: softap"
                     } else {
                         "📡 HOTSPOT ACTIVE · HOST"
                     }
@@ -515,6 +521,7 @@ fun DesertSheet(
                     if (p2pState is P2pState.Ready) {
                         val readyState = p2pState as P2pState.Ready
                         if (!readyState.isGO) {
+                            delay(300) // Allow GO listener socket and process network binding to stabilize
                             onConnectToNode("${readyState.goIp}:17394")
                         }
                     }

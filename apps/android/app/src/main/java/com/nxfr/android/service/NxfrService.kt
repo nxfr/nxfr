@@ -563,10 +563,23 @@ class NxfrService : Service() {
             val storeDir = identityDir()
             Log.i(TAG, "Manual connect to $addr")
 
-            val connJson = withContext(Dispatchers.IO) {
+            val isDesert = _desertSessionActive.value || addr.startsWith("192.168.49.") || addr.startsWith("192.168.43.")
+            var connJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_connect(addr, storeDir)
             }
-            val connResult = JSONObject(connJson)
+            var connResult = JSONObject(connJson)
+
+            // For Desert path, allow retry after 500ms delay to absorb WFD link jitter (total 10s budget)
+            if (isDesert && connResult.has("error")) {
+                val firstError = connResult.getString("error")
+                Log.w(TAG, "Desert connect attempt 1 error ($firstError), retrying in 500ms (10s total budget)...")
+                delay(500)
+                connJson = withContext(Dispatchers.IO) {
+                    NxfrBridge.nxfr_connect(addr, storeDir)
+                }
+                connResult = JSONObject(connJson)
+            }
+
             if (connResult.has("error")) {
                 val msg = connResult.getString("error")
                 Log.e(TAG, "Manual connect failed: $msg")
@@ -590,11 +603,25 @@ class NxfrService : Service() {
         val storeDir = identityDir()
         // Identity already loaded in onCreate.
 
+        val isDesert = _desertSessionActive.value || addr.startsWith("192.168.49.") || addr.startsWith("192.168.43.")
+
         // Connect.
-        val connJson = withContext(Dispatchers.IO) {
+        var connJson = withContext(Dispatchers.IO) {
             NxfrBridge.nxfr_connect(addr, storeDir)
         }
-        val connResult = JSONObject(connJson)
+        var connResult = JSONObject(connJson)
+
+        // For Desert path, allow retry after 500ms delay to absorb WFD link jitter (total 10s budget)
+        if (isDesert && connResult.has("error")) {
+            val firstError = connResult.getString("error")
+            Log.w(TAG, "Desert send connect attempt 1 error ($firstError), retrying in 500ms (10s total budget)...")
+            delay(500)
+            connJson = withContext(Dispatchers.IO) {
+                NxfrBridge.nxfr_connect(addr, storeDir)
+            }
+            connResult = JSONObject(connJson)
+        }
+
         if (connResult.has("error")) {
             _nxfrState.value = NxfrState.Error(connResult.getString("error"))
             return

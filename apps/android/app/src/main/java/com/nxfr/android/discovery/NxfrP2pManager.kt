@@ -7,6 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.NetworkInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -17,6 +21,7 @@ import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.nxfr.android.service.NxfrService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.net.NetworkInterface
 
@@ -47,6 +53,10 @@ class NxfrP2pManager {
 
     private val _state = MutableStateFlow<P2pState>(P2pState.Idle)
     val state: StateFlow<P2pState> = _state
+
+    private var boundNetwork: Network? = null
+    private val _boundIface = MutableStateFlow<String?>(null)
+    val boundIface: StateFlow<String?> = _boundIface.asStateFlow()
 
     private var manager: WifiP2pManager? = null
     private var channel: WifiP2pManager.Channel? = null
@@ -250,8 +260,22 @@ class NxfrP2pManager {
                                 val goIp = info.groupOwnerAddress?.hostAddress ?: "192.168.49.1"
                                 val isGO = info.isGroupOwner
                                 val iface = findP2pInterface() ?: "p2p0"
+
+                                // 1. Find WFD network and bind process to ensure sockets egress over p2p
+                                bindToWfdNetwork(iface)
+
+                                // 2. On GO side, ensure startListening completed BEFORE client's first SYN can arrive
+                                if (isGO) {
+                                    ensureGoListenerStarted()
+                                }
+
                                 _state.value = P2pState.Ready(isGO = isGO, goIp = goIp, iface = iface)
                                 connectRetryCount = 0
+                            }
+                        } else {
+                            unbindWfdNetwork()
+                            if (_state.value is P2pState.Ready || _state.value is P2pState.Forming) {
+                                _state.value = P2pState.Idle
                             }
                         }
                     }
@@ -268,6 +292,80 @@ class NxfrP2pManager {
             context?.registerReceiver(receiver, intentFilter, Context.RECEIVER_EXPORTED)
         } else {
             context?.registerReceiver(receiver, intentFilter)
+        }
+    }
+
+    private fun bindToWfdNetwork(ifaceFallback: String) {
+        scope.launch {
+            val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return@launch
+
+            for (attempt in 1..10) {
+                val networks = cm.allNetworks
+                var targetNet: Network? = null
+                var targetIface: String? = null
+
+                for (net in networks) {
+                    val caps = cm.getNetworkCapabilities(net)
+                    val lp = cm.getLinkProperties(net)
+                    val ifName = lp?.interfaceName
+
+                    val isWfdTransport = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_WIFI_P2P) == true
+                    } else false
+
+                    val isP2pIface = ifName != null && (ifName.startsWith("p2p") || ifName.contains("p2p"))
+
+                    if (isWfdTransport || isP2pIface) {
+                        targetNet = net
+                        targetIface = ifName ?: ifaceFallback
+                        break
+                    }
+                }
+
+                if (targetNet != null) {
+                    try {
+                        cm.bindProcessToNetwork(targetNet)
+                        boundNetwork = targetNet
+                        _boundIface.value = targetIface
+                        Log.i(TAG, "Bound process to WFD network: $targetNet, iface=$targetIface")
+                        return@launch
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to bind process to WFD network", e)
+                    }
+                }
+                delay(100)
+            }
+
+            _boundIface.value = ifaceFallback
+            Log.w(TAG, "No distinct WFD network found in ConnectivityManager; using fallback iface: $ifaceFallback")
+        }
+    }
+
+    private fun unbindWfdNetwork() {
+        val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (boundNetwork != null || _boundIface.value != null) {
+            try {
+                cm?.bindProcessToNetwork(null)
+                Log.i(TAG, "Unbound process from WFD network (previously ${_boundIface.value})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unbinding process from network", e)
+            }
+            boundNetwork = null
+            _boundIface.value = null
+        }
+    }
+
+    private fun ensureGoListenerStarted() {
+        context?.let { ctx ->
+            try {
+                if (!NxfrService.isListening.value) {
+                    Log.i(TAG, "Ensuring GO listener socket is up on TCP 17394...")
+                    NxfrService.startListening(ctx)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting GO listener", e)
+            }
         }
     }
 
@@ -329,6 +427,8 @@ class NxfrP2pManager {
 
     fun teardown() {
         discoveryJob?.cancel()
+        unbindWfdNetwork()
+
         receiver?.let { 
             try {
                 context?.unregisterReceiver(it) 
@@ -365,6 +465,7 @@ class NxfrP2pManager {
 
     fun cancelDiscoveryOnly() {
         discoveryJob?.cancel()
+        unbindWfdNetwork()
         
         manager?.stopPeerDiscovery(channel, null)
         
