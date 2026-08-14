@@ -39,6 +39,7 @@ import com.nxfr.android.R
 import com.nxfr.android.discovery.DeviceUiModel
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.service.NxfrState
+import com.nxfr.android.staging.ContactsVCardExporter
 import com.nxfr.android.staging.StagedItem
 import com.nxfr.android.staging.StagedType
 import com.nxfr.android.staging.StagingRepository
@@ -198,6 +199,30 @@ fun SendScreen(
     }
 
     // 4. Contacts (.vcf)
+    var pendingContactUri by remember { mutableStateOf<Uri?>(null) }
+    var showContactPermissionRationale by remember { mutableStateOf(false) }
+
+    val contactPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val uri = pendingContactUri
+            if (uri != null) {
+                coroutineScope.launch(Dispatchers.IO) {
+                    val res = ContactsVCardExporter.exportContact(context, uri)
+                    handleContactExportResult(res, context)
+                }
+            }
+        } else {
+            Toast.makeText(
+                context,
+                "Contacts permission denied — cannot export vCard",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        pendingContactUri = null
+    }
+
     val contactsPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -205,22 +230,14 @@ fun SendScreen(
             val contactUri = result.data?.data
             if (contactUri != null) {
                 coroutineScope.launch(Dispatchers.IO) {
-                    val vcfFile = exportContactVcf(context, contactUri)
-                    if (vcfFile != null && vcfFile.exists()) {
-                        val stagedItem = StagedItem(
-                            id = UUID.randomUUID().toString(),
-                            type = StagedType.CONTACT,
-                            displayName = vcfFile.name,
-                            sizeBytes = vcfFile.length(),
-                            localFile = vcfFile
-                        )
+                    val res = ContactsVCardExporter.exportContact(context, contactUri)
+                    if (res.needsPermission) {
+                        pendingContactUri = contactUri
                         withContext(Dispatchers.Main) {
-                            StagingRepository.addItems(context, listOf(stagedItem))
+                            showContactPermissionRationale = true
                         }
                     } else {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Failed to read contact as vCard", Toast.LENGTH_SHORT).show()
-                        }
+                        handleContactExportResult(res, context)
                     }
                 }
             }
@@ -670,6 +687,51 @@ fun SendScreen(
             }
         )
     }
+
+    if (showContactPermissionRationale) {
+        AlertDialog(
+            onDismissRequest = {
+                showContactPermissionRationale = false
+                pendingContactUri = null
+            },
+            title = {
+                Text(
+                    text = "EXPORT CONTACT AS .VCF",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Only used to export the contact YOU pick as .vcf — never synced, never uploaded.",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = deck.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showContactPermissionRationale = false
+                        contactPermissionLauncher.launch(android.Manifest.permission.READ_CONTACTS)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = deck.signalBeam, contentColor = deck.rootBackground)
+                ) {
+                    Text("GRANT & EXPORT", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showContactPermissionRationale = false
+                        pendingContactUri = null
+                    }
+                ) {
+                    Text("CANCEL", fontFamily = FontFamily.Monospace)
+                }
+            }
+        )
+    }
 }
 
 // ── Helpers ──
@@ -697,43 +759,26 @@ private fun pasteFromClipboard(
     coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = clipboard.primaryClip
-    if (clip != null && clip.itemCount > 0) {
-        val item = clip.getItemAt(0)
-        val text = item.text?.toString()
-        val uri = item.uri
+    val clipData = clipboard.primaryClip
+    if (clipData != null && clipData.itemCount > 0) {
+        val item = clipData.getItemAt(0)
+        val text = item.text?.toString() ?: item.uri?.toString() ?: ""
+        if (text.isNotBlank()) {
+            coroutineScope.launch(Dispatchers.IO) {
+                val stagingDir = File(context.cacheDir, "nxfr_paste").apply { mkdirs() }
+                val pasteFile = File(stagingDir, "clipboard_${System.currentTimeMillis()}.txt")
+                pasteFile.writeText(text)
 
-        if (uri != null) {
-            coroutineScope.launch(Dispatchers.IO) {
-                val (name, size) = queryUriDetails(context, uri)
-                val staged = StagedItem(
-                    id = UUID.randomUUID().toString(),
-                    type = StagedType.FILE,
-                    displayName = name,
-                    sizeBytes = size,
-                    uri = uri
-                )
-                withContext(Dispatchers.Main) {
-                    StagingRepository.addItems(context, listOf(staged))
-                    Toast.makeText(context, "Pasted from clipboard", Toast.LENGTH_SHORT).show()
-                }
-            }
-        } else if (!text.isNullOrBlank()) {
-            coroutineScope.launch(Dispatchers.IO) {
-                val cacheDir = File(context.cacheDir, "nxfr_staged_paste")
-                cacheDir.mkdirs()
-                val file = File(cacheDir, "clipboard_${System.currentTimeMillis()}.txt")
-                file.writeText(text)
-                val staged = StagedItem(
+                val stagedItem = StagedItem(
                     id = UUID.randomUUID().toString(),
                     type = StagedType.TEXT,
-                    displayName = file.name,
-                    sizeBytes = file.length(),
-                    localFile = file
+                    displayName = pasteFile.name,
+                    sizeBytes = pasteFile.length(),
+                    localFile = pasteFile
                 )
                 withContext(Dispatchers.Main) {
-                    StagingRepository.addItems(context, listOf(staged))
-                    Toast.makeText(context, "Pasted text as .txt", Toast.LENGTH_SHORT).show()
+                    StagingRepository.addItems(context, listOf(stagedItem))
+                    Toast.makeText(context, "Pasted snippet staged", Toast.LENGTH_SHORT).show()
                 }
             }
         } else {
@@ -744,29 +789,15 @@ private fun pasteFromClipboard(
     }
 }
 
-private fun queryUriDetails(context: Context, uri: Uri): Pair<String, Long> {
-    var name = "file_${System.currentTimeMillis()}"
-    var size = 0L
-    try {
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (nameIndex != -1) name = cursor.getString(nameIndex) ?: name
-                if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
-            }
-        }
-    } catch (_: Exception) {}
-    return name to size
-}
-
-private fun calculateFolderStats(context: Context, docFile: DocumentFile?): Pair<Int, Long> {
-    if (docFile == null || !docFile.exists()) return 0 to 0L
+private fun countFilesInDirectory(docFile: DocumentFile): Pair<Int, Long> {
     var count = 0
     var bytes = 0L
+
     fun walk(df: DocumentFile) {
         if (df.isDirectory) {
-            df.listFiles().forEach { walk(it) }
+            df.listFiles().forEach { child ->
+                walk(child)
+            }
         } else {
             count++
             bytes += df.length()
@@ -776,23 +807,26 @@ private fun calculateFolderStats(context: Context, docFile: DocumentFile?): Pair
     return count to bytes
 }
 
-private fun exportContactVcf(context: Context, contactUri: Uri): File? {
-    return try {
-        val lookupUri = ContactsContract.Contacts.getLookupUri(context.contentResolver, contactUri) ?: contactUri
-        val vcfUri = Uri.withAppendedPath(lookupUri, ContactsContract.Contacts.Entity.CONTENT_DIRECTORY)
-        val fd = context.contentResolver.openAssetFileDescriptor(vcfUri, "r")
-        val inputStream = fd?.createInputStream() ?: return null
-
-        val cacheDir = File(context.cacheDir, "nxfr_contacts")
-        cacheDir.mkdirs()
-        val file = File(cacheDir, "contact_${System.currentTimeMillis()}.vcf")
-        file.outputStream().use { out ->
-            inputStream.copyTo(out)
+private suspend fun handleContactExportResult(
+    res: ContactsVCardExporter.ExportResult,
+    context: Context
+) {
+    if (res.file != null && res.file.exists()) {
+        val stagedItem = StagedItem(
+            id = UUID.randomUUID().toString(),
+            type = StagedType.CONTACT,
+            displayName = res.displayName ?: res.file.name,
+            sizeBytes = res.file.length(),
+            localFile = res.file
+        )
+        withContext(Dispatchers.Main) {
+            StagingRepository.addItems(context, listOf(stagedItem))
+            Toast.makeText(context, "Staged ${res.displayName ?: res.file.name}", Toast.LENGTH_SHORT).show()
         }
-        inputStream.close()
-        fd.close()
-        file
-    } catch (_: Exception) {
-        null
+    } else {
+        withContext(Dispatchers.Main) {
+            val msg = res.error ?: "Failed to export contact as vCard"
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
     }
 }
