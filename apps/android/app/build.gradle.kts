@@ -14,8 +14,8 @@ android {
         applicationId = "com.nxfr.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.2.6-alpha"
+        versionCode = 14
+        versionName = "0.2.7-alpha"
     }
 
     buildTypes {

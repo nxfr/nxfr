@@ -12,6 +12,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -50,6 +52,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
+enum class SendMode(val label: String) {
+    SINGLE("Single recipient"),
+    MULTIPLE("Multiple recipients"),
+    WEB_SHARE("Share via link")
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SendScreen(
@@ -59,6 +67,7 @@ fun SendScreen(
     showHotspotBanner: Boolean = false,
     onRefresh: () -> Unit = {},
     onDeviceTap: (DeviceUiModel) -> Unit = {},
+    onNavigateToWebShare: () -> Unit = {},
     onDismissBanner: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -68,6 +77,10 @@ fun SendScreen(
     var showStagingEditSheet by remember { mutableStateOf(false) }
     var showInstalledAppsSheet by remember { mutableStateOf(false) }
     var showTextComposeDialog by remember { mutableStateOf(false) }
+    var showModeExplanationDialog by remember { mutableStateOf(false) }
+    var showModeMenu by remember { mutableStateOf(false) }
+    var sendMode by remember { mutableStateOf(SendMode.SINGLE) }
+    var queuedDeviceIds by remember { mutableStateOf(setOf<String>()) }
     var isConnecting by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -84,8 +97,10 @@ fun SendScreen(
                 isConnecting = false
             }
             is NxfrState.Complete -> {
-                StagingRepository.clear()
-                StagingRepository.cleanStagingCache(context)
+                if (sendMode == SendMode.SINGLE) {
+                    StagingRepository.clear()
+                    StagingRepository.cleanStagingCache(context)
+                }
             }
             is NxfrState.Error -> {
                 isConnecting = false
@@ -331,11 +346,58 @@ fun SendScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = stringResource(R.string.send_nearby_devices),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stringResource(R.string.send_nearby_devices),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Box {
+                        IconButton(onClick = { showModeMenu = true }) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "Send mode")
+                        }
+                        DropdownMenu(
+                            expanded = showModeMenu,
+                            onDismissRequest = { showModeMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text((if (sendMode == SendMode.SINGLE) "✓ " else "") + "Single recipient") },
+                                onClick = {
+                                    sendMode = SendMode.SINGLE
+                                    queuedDeviceIds = emptySet()
+                                    showModeMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text((if (sendMode == SendMode.MULTIPLE) "✓ " else "") + "Multiple recipients") },
+                                onClick = {
+                                    sendMode = SendMode.MULTIPLE
+                                    showModeMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text((if (sendMode == SendMode.WEB_SHARE) "✓ " else "") + "Share via link") },
+                                onClick = {
+                                    sendMode = SendMode.WEB_SHARE
+                                    showModeMenu = false
+                                    if (stagedItems.isNotEmpty()) {
+                                        onNavigateToWebShare()
+                                    } else {
+                                        Toast.makeText(context, "Stage files first before sharing via link", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Mode explanations") },
+                                onClick = {
+                                    showModeExplanationDialog = true
+                                    showModeMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
                 Row {
                     IconButton(onClick = {
                         val permissionState = androidx.core.content.ContextCompat.checkSelfPermission(
@@ -361,6 +423,27 @@ fun SendScreen(
                     IconButton(onClick = { showTroubleshootSheet = true }) {
                         Icon(Icons.Outlined.Lan, contentDescription = stringResource(R.string.cd_manual_connect))
                     }
+                }
+            }
+
+            // Mode chip if not default SINGLE
+            if (sendMode != SendMode.SINGLE) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 0.dp)
+                ) {
+                    AssistChip(
+                        onClick = { showModeExplanationDialog = true },
+                        label = { Text("Mode: ${sendMode.label}") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Info,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
                 }
             }
 
@@ -453,14 +536,26 @@ fun SendScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(sortedDevices, key = { it.deviceId }) { device ->
-                        ElevatedCard(
+                        val isQueued = queuedDeviceIds.contains(device.deviceId)
+                        Card(
                             onClick = {
-                                val addr = "${device.host}:${device.port}"
-                                startSendFlow(context, coroutineScope, addr)
-                                onDeviceTap(device)
+                                if (sendMode == SendMode.MULTIPLE) {
+                                    queuedDeviceIds = if (isQueued) {
+                                        queuedDeviceIds - device.deviceId
+                                    } else {
+                                        queuedDeviceIds + device.deviceId
+                                    }
+                                } else {
+                                    val addr = "${device.host}:${device.port}"
+                                    startSendFlow(context, coroutineScope, addr)
+                                    onDeviceTap(device)
+                                }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = MaterialTheme.shapes.medium
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (isQueued) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium) else Modifier),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = CardDefaults.elevatedCardColors()
                         ) {
                             Row(
                                 modifier = Modifier
@@ -515,12 +610,67 @@ fun SendScreen(
                                         }
                                     }
                                 }
+                                if (isQueued) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = MaterialTheme.shapes.small
+                                    ) {
+                                        Text(
+                                            text = "✓ Queued",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // Multi-send bottom bar
+            if (sendMode == SendMode.MULTIPLE && queuedDeviceIds.isNotEmpty()) {
+                Surface(
+                    tonalElevation = 8.dp,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${queuedDeviceIds.size} device${if (queuedDeviceIds.size > 1) "s" else ""} selected",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Button(
+                            onClick = {
+                                val targetDevices = devices.filter { queuedDeviceIds.contains(it.deviceId) }
+                                targetDevices.forEach { dev ->
+                                    val addr = "${dev.host}:${dev.port}"
+                                    startSendFlow(context, coroutineScope, addr)
+                                }
+                            }
+                        ) {
+                            Text("Send to ${queuedDeviceIds.size} device${if (queuedDeviceIds.size > 1) "s" else ""}")
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    // Dialogs & Sheets
+    if (showModeExplanationDialog) {
+        com.nxfr.android.ui.dialogs.SendModeExplanationDialog(
+            onDismiss = { showModeExplanationDialog = false }
+        )
     }
 
     // Sheets & Dialogs

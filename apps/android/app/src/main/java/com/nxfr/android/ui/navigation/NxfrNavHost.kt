@@ -184,6 +184,9 @@ fun NxfrNavHost(
                         pendingDevice = device
                         filePicker.launch(arrayOf("*/*"))
                     },
+                    onNavigateToWebShare = {
+                        navController.navigate(NxfrScreen.WebShare.route)
+                    }
                 )
             }
             composable(NxfrScreen.Settings.route) {
@@ -210,6 +213,13 @@ fun NxfrNavHost(
             }
             composable(NxfrScreen.WebUpload.route) {
                 WebUploadScreen(
+                    onStop = { navController.popBackStack() }
+                )
+            }
+            composable(NxfrScreen.WebShare.route) {
+                val stagedItems by com.nxfr.android.staging.StagingRepository.stagedItems.collectAsState()
+                com.nxfr.android.ui.screens.WebShareScreen(
+                    stagedItems = stagedItems,
                     onStop = { navController.popBackStack() }
                 )
             }
