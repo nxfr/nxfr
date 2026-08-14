@@ -4,7 +4,7 @@ Master engineering implementation roadmap tracking completed architectural miles
 
 ---
 
-## 🏁 Completed Milestones (Phases 9.7 – 10-ID)
+## 🏁 Completed Milestones (Phases 9.7 – 10.1)
 
 ### Phase 9.7–9.9: Stability & Storage Architecture
 - [x] **Interactive Consent Flow**: Native JNI bridge to `NxfrState.Offering` with 120s automatic offer timeout ([`#9.7a`](https://github.com/nxfr/nxfr/commit/51273b3), [`#9.7c`](https://github.com/nxfr/nxfr/commit/a339976)).
@@ -41,18 +41,14 @@ Master engineering implementation roadmap tracking completed architectural miles
 - [x] **P2 — Send Compose & Transfer Console**: `AttachChipRail`, `StagedFilmstrip`, `DeviceDeckCard`, `PacketStreamVisualizer`, and `TerminalStatsBlock` ([`#10-id-c`](https://github.com/nxfr/nxfr/commit/e15422c)).
 - [x] **P3 — Consent Verification & Settings Ledger**: Cryptographic consent modal manifest, SAS auth digits, and structured settings ledger with stamp seals ([`#10-id-d`](https://github.com/nxfr/nxfr/commit/84dfcbb)).
 
+### Phase 10.1: Manual Connect Parity
+- [x] **T1 — Entry Points**: Header `[⌖ ADD NODE]` action button, Diagnostics sheet `[ENTER ADDRESS MANUALLY]`, and refined empty state buttons ([`557530b`](https://github.com/nxfr/nxfr/commit/557530b)).
+- [x] **T2 — ManualConnectSheet**: IPv4/IPv6/hostname address parser, MRU recent nodes persistence (last 5), and failure feedback.
+- [x] **T3 — Tests & Gates**: Unit tests for parser edge cases, version bump to `0.3.0-alpha` (code 17).
+
 ---
 
 ## 🚀 Next Milestones (Roadmap to v1.0)
-
-```mermaid
-graph TD
-    A["v0.3.0: Instrument Deck & Flagship Send (SHIPPED)"] --> B["Phase 11: Desert Mode (Wi-Fi Direct / SoftAP)"]
-    A --> C["Phase 10 (Core): iroh / Anywhere Mode"]
-    B --> D["Phase 12: Desktop & iOS Shells"]
-    C --> D
-    D --> E["Phase 13: Packaging & Distribution (F-Droid, Flatpak, winget)"]
-```
 
 ### 🏜️ Phase 11: Desert Mode (Off-Grid Wi-Fi Direct & SoftAP)
 - **Goal**: Enable sovereign file transfer in the field with zero local Wi-Fi router or infrastructure.
