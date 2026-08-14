@@ -807,6 +807,38 @@ private fun countFilesInDirectory(docFile: DocumentFile): Pair<Int, Long> {
     return count to bytes
 }
 
+private fun queryUriDetails(context: Context, uri: Uri): Pair<String, Long> {
+    var name = "file_${System.currentTimeMillis()}"
+    var size = 0L
+    try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (nameIndex != -1) name = cursor.getString(nameIndex) ?: name
+                if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+            }
+        }
+    } catch (_: Exception) {}
+    return name to size
+}
+
+private fun calculateFolderStats(context: Context, docFile: DocumentFile?): Pair<Int, Long> {
+    if (docFile == null || !docFile.exists()) return 0 to 0L
+    var count = 0
+    var bytes = 0L
+    fun walk(df: DocumentFile) {
+        if (df.isDirectory) {
+            df.listFiles().forEach { walk(it) }
+        } else {
+            count++
+            bytes += df.length()
+        }
+    }
+    walk(docFile)
+    return count to bytes
+}
+
 private suspend fun handleContactExportResult(
     res: ContactsVCardExporter.ExportResult,
     context: Context
