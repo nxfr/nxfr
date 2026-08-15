@@ -112,6 +112,8 @@ class NxfrP2pManager {
         _state.value = P2pState.Discovering
         discoveredPeers.clear()
 
+        Log.i(TAG, "[Hop 1/5] Starting P2P discovery: localAid=$localAid localName=$localName")
+
         setupReceiver()
 
         val txtRecord = mapOf("aid" to localAid, "name" to localName, "port" to "17394")
@@ -133,6 +135,7 @@ class NxfrP2pManager {
                 if (aid != null && aid != this.localAid) {
                     val peer = P2pPeer(device.deviceAddress, name, aid, port)
                     discoveredPeers[device.deviceAddress] = peer
+                    Log.i(TAG, "[Hop 2/5] Discovered P2P peer via DNS-SD: ${peer.deviceName} (${peer.deviceAddress}, aid=${peer.aid})")
                     _state.value = P2pState.PeersFound(discoveredPeers.values.toList())
                 }
             }
@@ -261,16 +264,22 @@ class NxfrP2pManager {
                                 val isGO = info.isGroupOwner
                                 val iface = findP2pInterface() ?: "p2p0"
 
-                                // 1. Find WFD network and bind process to ensure sockets egress over p2p
-                                bindToWfdNetwork(iface)
+                                Log.i(TAG, "[Hop 4/5] P2P group formed: isGO=$isGO, goIp=$goIp, iface=$iface")
 
-                                // 2. On GO side, ensure startListening completed BEFORE client's first SYN can arrive
-                                if (isGO) {
-                                    ensureGoListenerStarted()
+                                scope.launch(Dispatchers.IO) {
+                                    // 1. Group Owner: ensure listener is active on TCP 17394 BEFORE client connects
+                                    if (isGO) {
+                                        ensureGoListenerStarted()
+                                    }
+
+                                    // 2. Find WFD network and bind process so all sockets egress over P2P interface
+                                    val boundIfaceName = bindToWfdNetworkSync(iface)
+
+                                    // 3. Transition to Ready state once process network is bound
+                                    _state.value = P2pState.Ready(isGO = isGO, goIp = goIp, iface = boundIfaceName)
+                                    connectRetryCount = 0
+                                    Log.i(TAG, "[Hop 5/5] Desert Mode READY: role=${if (isGO) "GROUP_OWNER" else "CLIENT"}, goIp=$goIp, routedIface=$boundIfaceName")
                                 }
-
-                                _state.value = P2pState.Ready(isGO = isGO, goIp = goIp, iface = iface)
-                                connectRetryCount = 0
                             }
                         } else {
                             unbindWfdNetwork()
@@ -295,59 +304,65 @@ class NxfrP2pManager {
         }
     }
 
-    private fun bindToWfdNetwork(ifaceFallback: String) {
-        scope.launch {
-            val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return@launch
+    private suspend fun bindToWfdNetworkSync(ifaceFallback: String): String {
+        val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return ifaceFallback
 
-            for (attempt in 1..10) {
-                val networks = cm.allNetworks
-                var targetNet: Network? = null
-                var targetIface: String? = null
+        Log.i(TAG, "[Hop 4a/5] Searching for WFD network in ConnectivityManager...")
 
-                for (net in networks) {
-                    val caps = cm.getNetworkCapabilities(net)
-                    val lp = cm.getLinkProperties(net)
-                    val ifName = lp?.interfaceName
+        for (attempt in 1..20) {
+            val networks = cm.allNetworks
+            var targetNet: Network? = null
+            var targetIface: String? = null
 
-                    val isWfdTransport = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_WIFI_P2P) == true
-                    } else false
+            for (net in networks) {
+                val caps = cm.getNetworkCapabilities(net)
+                val lp = cm.getLinkProperties(net)
+                val ifName = lp?.interfaceName
 
-                    val isP2pIface = ifName != null && (ifName.startsWith("p2p") || ifName.contains("p2p"))
+                val isWfdTransport = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_WIFI_P2P) == true
+                } else false
 
-                    if (isWfdTransport || isP2pIface) {
-                        targetNet = net
-                        targetIface = ifName ?: ifaceFallback
-                        break
-                    }
+                val isP2pIface = ifName != null && (ifName.startsWith("p2p") || ifName.contains("p2p"))
+                val hasP2pRoute = lp?.routes?.any { route ->
+                    route.destination?.address?.hostAddress?.startsWith("192.168.49.") == true ||
+                    route.gateway?.hostAddress?.startsWith("192.168.49.") == true
+                } == true
+
+                if (isWfdTransport || isP2pIface || hasP2pRoute) {
+                    targetNet = net
+                    targetIface = ifName ?: findP2pInterface() ?: ifaceFallback
+                    break
                 }
-
-                if (targetNet != null) {
-                    try {
-                        cm.bindProcessToNetwork(targetNet)
-                        boundNetwork = targetNet
-                        _boundIface.value = targetIface
-                        Log.i(TAG, "Bound process to WFD network: $targetNet, iface=$targetIface")
-                        return@launch
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to bind process to WFD network", e)
-                    }
-                }
-                delay(100)
             }
 
-            _boundIface.value = ifaceFallback
-            Log.w(TAG, "No distinct WFD network found in ConnectivityManager; using fallback iface: $ifaceFallback")
+            if (targetNet != null) {
+                try {
+                    cm.bindProcessToNetwork(targetNet)
+                    boundNetwork = targetNet
+                    _boundIface.value = targetIface
+                    Log.i(TAG, "[Hop 4b/5] Bound process to WFD network: $targetNet, iface=$targetIface")
+                    return targetIface ?: ifaceFallback
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to bind process to WFD network on attempt $attempt", e)
+                }
+            }
+            delay(100)
         }
+
+        val fallbackIface = findP2pInterface() ?: ifaceFallback
+        _boundIface.value = fallbackIface
+        Log.w(TAG, "No distinct WFD network found in ConnectivityManager; using fallback iface: $fallbackIface")
+        return fallbackIface
     }
 
-    private fun unbindWfdNetwork() {
+    fun unbindWfdNetwork() {
         val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         if (boundNetwork != null || _boundIface.value != null) {
             try {
                 cm?.bindProcessToNetwork(null)
-                Log.i(TAG, "Unbound process from WFD network (previously ${_boundIface.value})")
+                Log.i(TAG, "Unbound process from WFD network (previously ${_boundIface.value}). Normal routing restored.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unbinding process from network", e)
             }
@@ -356,12 +371,18 @@ class NxfrP2pManager {
         }
     }
 
-    private fun ensureGoListenerStarted() {
+    private suspend fun ensureGoListenerStarted() {
         context?.let { ctx ->
             try {
                 if (!NxfrService.isListening.value) {
-                    Log.i(TAG, "Ensuring GO listener socket is up on TCP 17394...")
+                    Log.i(TAG, "[Hop 4c/5] Group Owner starting TCP 17394 listener...")
+                    val intent = Intent(ctx, NxfrService::class.java)
+                    ctx.startService(intent)
                     NxfrService.startListening(ctx)
+                    delay(300) // Allow listener socket to bind and enter accept loop
+                    Log.i(TAG, "[Hop 4d/5] Group Owner TCP 17394 listener is ready.")
+                } else {
+                    Log.i(TAG, "[Hop 4c/5] Group Owner TCP 17394 listener is already active.")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting GO listener", e)
@@ -388,7 +409,7 @@ class NxfrP2pManager {
     private fun connectInternal(config: WifiP2pConfig, peer: P2pPeer) {
         manager?.connect(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "Connection initiated to ${peer.deviceAddress}")
+                Log.i(TAG, "[Hop 3/5] P2P connection initiated to ${peer.deviceName} (${peer.deviceAddress})")
             }
 
             override fun onFailure(reason: Int) {

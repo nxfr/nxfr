@@ -559,15 +559,15 @@ class NxfrService : Service() {
     private suspend fun doManualConnect(addr: String) {
         try {
             val storeDir = identityDir()
-            Log.i(TAG, "Manual connect to $addr")
-
             val isDesert = _desertSessionActive.value || addr.startsWith("192.168.49.") || addr.startsWith("192.168.43.")
+            Log.i(TAG, "Connecting to $addr (isDesert=$isDesert, timeout budget=${if (isDesert) "10s" else "5s"})...")
+
             var connJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_connect(addr, storeDir)
             }
             var connResult = JSONObject(connJson)
 
-            // For Desert path, allow retry after 500ms delay to absorb WFD link jitter (total 10s budget)
+            // For Desert path, allow retry after delay to absorb WFD link jitter (10s total budget)
             if (isDesert && connResult.has("error")) {
                 val firstError = connResult.getString("error")
                 Log.w(TAG, "Desert connect attempt 1 error ($firstError), retrying in 500ms (10s total budget)...")
@@ -580,18 +580,18 @@ class NxfrService : Service() {
 
             if (connResult.has("error")) {
                 val msg = connResult.getString("error")
-                Log.e(TAG, "Manual connect failed: $msg")
+                Log.e(TAG, "Connect to $addr failed: $msg")
                 _nxfrState.value = NxfrState.Error(msg)
                 return
             }
             val handle = connResult.getLong("handle")
             val peerName = connResult.optString("peer_name", addr)
             activeSessionHandle = handle
-            Log.i(TAG, "Manual connected to $addr, peer=$peerName, handle=$handle")
+            Log.i(TAG, "Connected to $addr, peer=$peerName, handle=$handle")
             _nxfrState.value = NxfrState.ManualConnected(addr, peerName, handle)
         } catch (e: Throwable) {
             val msg = e.message ?: "Unknown connect error"
-            Log.e(TAG, "Manual connect exception: $msg", e)
+            Log.e(TAG, "Connect to $addr exception: $msg", e)
             _nxfrState.value = NxfrState.Error(msg)
         }
     }
@@ -599,9 +599,8 @@ class NxfrService : Service() {
     /** Send a file to a remote device. */
     private suspend fun doSendFile(addr: String, filePath: String) {
         val storeDir = identityDir()
-        // Identity already loaded in onCreate.
-
         val isDesert = _desertSessionActive.value || addr.startsWith("192.168.49.") || addr.startsWith("192.168.43.")
+        Log.i(TAG, "doSendFile: addr=$addr filePath=$filePath (isDesert=$isDesert, timeout budget=${if (isDesert) "10s" else "5s"})...")
 
         // Connect.
         var connJson = withContext(Dispatchers.IO) {
@@ -609,7 +608,7 @@ class NxfrService : Service() {
         }
         var connResult = JSONObject(connJson)
 
-        // For Desert path, allow retry after 500ms delay to absorb WFD link jitter (total 10s budget)
+        // For Desert path, allow retry after delay to absorb WFD link jitter (10s total budget)
         if (isDesert && connResult.has("error")) {
             val firstError = connResult.getString("error")
             Log.w(TAG, "Desert send connect attempt 1 error ($firstError), retrying in 500ms (10s total budget)...")
@@ -621,7 +620,9 @@ class NxfrService : Service() {
         }
 
         if (connResult.has("error")) {
-            _nxfrState.value = NxfrState.Error(connResult.getString("error"))
+            val errorMsg = connResult.getString("error")
+            Log.e(TAG, "doSendFile connect to $addr failed: $errorMsg")
+            _nxfrState.value = NxfrState.Error(errorMsg)
             return
         }
         val handle = connResult.getLong("handle")
@@ -629,7 +630,7 @@ class NxfrService : Service() {
         val peer = connResult.optString("peer_name", addr)
         activePeerName = peer
         startForegroundForTransfer()
-        Log.i(TAG, "Connected to $addr, peer=$peer")
+        Log.i(TAG, "Connected to $addr, peer=$peer, handle=$handle. Initiating file send...")
 
         // Send file.
         val sendJson = withContext(Dispatchers.IO) {
@@ -637,7 +638,9 @@ class NxfrService : Service() {
         }
         val sendResult = JSONObject(sendJson)
         if (sendResult.has("error")) {
-            _nxfrState.value = NxfrState.Error(sendResult.getString("error"))
+            val sendError = sendResult.getString("error")
+            Log.e(TAG, "doSendFile nxfr_send_file failed: $sendError")
+            _nxfrState.value = NxfrState.Error(sendError)
             return
         }
         _nxfrState.value = NxfrState.Transferring(0f, 0, filePath, isSending = true)

@@ -210,6 +210,7 @@ fun DesertSheet(
                             OutlinedButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    android.util.Log.i("DesertSheet", "User tapped [END DIRECT LINK] — tearing down P2P/SoftAP and restoring default routing")
                                     NxfrService.p2pManager?.teardown()
                                     NxfrService.softApManager?.teardown()
                                     NxfrService.setDesertSessionActive(false)
@@ -521,7 +522,10 @@ fun DesertSheet(
                     if (p2pState is P2pState.Ready) {
                         val readyState = p2pState as P2pState.Ready
                         if (!readyState.isGO) {
+                            val iface = boundIface ?: readyState.iface
+                            android.util.Log.i("DesertSheet", "Client ready on routed interface $iface — settling 300ms before connecting to GO at ${readyState.goIp}:17394...")
                             delay(300) // Allow GO listener socket and process network binding to stabilize
+                            android.util.Log.i("DesertSheet", "Auto-connecting to GO at ${readyState.goIp}:17394")
                             onConnectToNode("${readyState.goIp}:17394")
                         }
                     }
@@ -530,7 +534,7 @@ fun DesertSheet(
                 // 10. GO Waiting (when Ready and IS GO)
                 if (p2pState is P2pState.Ready && (p2pState as P2pState.Ready).isGO) {
                     Text(
-                        text = "You are the group owner. Waiting for client to connect...\nEnsure your visibility breaker is ON so the client can find you.",
+                        text = "You are the group owner. Waiting for client to connect...\nListener active on TCP port 17394.",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         color = deck.textPrimary
@@ -539,6 +543,7 @@ fun DesertSheet(
 
                     LaunchedEffect(p2pState) {
                         if (!NxfrService.isListening.value) {
+                            android.util.Log.i("DesertSheet", "GO ensuring TCP 17394 listener is active...")
                             val intent = Intent(context, NxfrService::class.java)
                             context.startService(intent)
                             NxfrService.startListening(context)
