@@ -55,6 +55,13 @@ Master engineering implementation roadmap tracking completed architectural miles
 
 ---
 
+## 🎯 Protocol Scope & Non-Goals
+
+> [!NOTE]
+> NXFR is LAN + off-grid by design; internet relay mode is out of scope for v1.x.
+
+---
+
 ## 🚀 Next Milestones (Roadmap to v1.0)
 
 ### 🏜️ Phase 11: Desert Mode (Off-Grid Wi-Fi Direct & SoftAP)
@@ -64,23 +71,16 @@ Master engineering implementation roadmap tracking completed architectural miles
   - **Autonomous SoftAP Hotspot**: Temporary local hotspot broadcasting SSID `NXFR-<short_id>` with QR code ticket.
   - **Hotspot-Aware Socket Rebind**: Automatic daemon listener migration to the `192.168.49.1` or `192.168.43.1` interface upon hotspot ignition.
 
-### 🌐 Phase 10 (Core): iroh / Anywhere Mode (Wide-Area QUIC Hole-Punching)
-- **Goal**: Peer-to-peer transfers across the internet without port forwarding, central accounts, or third-party cloud storage.
+### 📦 Phase 12: Packaging & Distribution
+- **Goal**: Frictionless, trust-verified distribution channels across platforms.
 - **Components**:
-  - **iroh-net Integration**: QUIC transport with DERP (Designated Encrypted Relay for Packets) fallback.
-  - **Direct Hole-Punching**: STUN/UPnP NAT traversal establishing direct UDP pipes.
-  - **Global Node Ticket**: Compact base32 connection string embedding the receiver's public key and relay node hint.
+  - **Android**: F-Droid reproducible build recipe and Google Play Store release.
+  - **Linux**: Flathub Flatpak, Snapcraft, AUR (`nxfr-git`), and native Debian/Ubuntu (`.deb`) and Fedora/RHEL (`.rpm`) repositories.
+  - **Windows & macOS**: `winget install nxfr`, `brew install nxfr`.
 
-### 💻 Phase 12: Desktop & iOS Shells
+### 💻 Phase 13: Desktop & iOS Shells
 - **Goal**: Bring the Instrument Deck visual identity to Linux, macOS, Windows, and iOS.
 - **Components**:
   - **Linux (GTK4 / Libadwaita / Rust)**: Native desktop client integrating with FreeDesktop notifications and file managers.
   - **Windows (WinUI 3 / Rust)**: Windows desktop shell with shell extension "Send to NXFR".
   - **iOS (SwiftUI / Rust via UniFFI)**: Native iOS client using MultipeerConnectivity & AirDrop-adjacent intent extensions.
-
-### 📦 Phase 13: Packaging & Distribution
-- **Goal**: Frictionless, trust-verified distribution channels.
-- **Components**:
-  - **Android**: F-Droid reproducible build recipe and Google Play Store release.
-  - **Linux**: Flathub Flatpak, Snapcraft, AUR (`nxfr-git`), and Debian `.deb` packages.
-  - **Windows & macOS**: `winget install nxfr`, `brew install nxfr`.

@@ -20,6 +20,7 @@
 Unlike proprietary walled gardens (AirDrop, Quick Share) or bloated web wrappers, NXFR is a pure peer-to-peer standard built on uncompromising cryptographic engineering and avionics-grade aesthetics.
 
 - **Zero-Cloud Architecture**: 100% peer-to-peer over local Wi-Fi, Ethernet, or off-grid Hotspots. No telemetry, no accounts, no tracking.
+- **Strict Scope**: NXFR is LAN + off-grid by design; internet relay mode is out of scope for v1.x.
 - **Instrument Deck UI**: High-contrast, mathematical visual identity featuring **The Beam** transmission motif, industrial **Breaker Switches**, and tabular monospace telemetry.
 - **Zero-Permission Staging Matrix**: Send files, media, folders, apps, and contacts via system contracts without granting invasive runtime storage permissions.
 - **3-Tier Storage Engine**: Automatic MediaStore indexing for instant gallery visibility, SAF directory tree writing, and sandbox fallback.
@@ -128,9 +129,8 @@ nxfr send /path/to/payload.tar.gz --to <peer-name>
 ## 🗺️ Roadmap & Next Milestones
 
 - **Phase 11**: Desert Mode (Off-grid Wi-Fi Direct & Autonomous SoftAP Hotspot).
-- **Phase 10 (Core)**: iroh / Anywhere Mode (QUIC NAT hole-punching for wide-area transfers).
-- **Phase 12**: Native Linux (GTK4/Libadwaita), Windows (WinUI 3), and iOS (SwiftUI) shells.
-- **Phase 13**: Packaging & Distribution (F-Droid, Flathub Flatpak, winget, AUR).
+- **Phase 12**: Packaging & Distribution (F-Droid, Google Play, RPM/DEB/APT, Flathub Flatpak).
+- **Phase 13**: Native Linux (GTK4/Libadwaita), Windows (WinUI 3), and iOS (SwiftUI) shells.
 
 ---
 
