@@ -2,8 +2,7 @@
 //!
 //! C-ABI FFI bindings for the NXFR protocol.
 //! Designed for JNI/Android use but works on any platform.
-//!
-//! ## Architecture (Phase 7)
+//! ## Architecture
 //! - One shared Tokio runtime (`OnceLock<Runtime>`), created on first FFI call.
 //! - Sessions stored in `SESSIONS: Mutex<HashMap<u64, Session>>`.
 //! - Listeners stored in `LISTENERS: Mutex<HashMap<u64, Listener>>`.
@@ -1513,9 +1512,8 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
             .map_err(|e| format!("send PairRequest: {e}"))?;
 
             // Derive SAS from device IDs.
-            // Phase 7 simplification: exporter bytes are zeroed. Full TLS
-            // exporter extraction requires access to rustls internals
-            // not exposed through NxfrConnection. (Phase 8: pass exporter.)
+            // Exporter bytes are zeroed for simplified derivation when TLS exporter
+            // is not directly exposed through NxfrConnection.
             let exporter = [0u8; 4];
             let (code, _) = nxfr_core::sas::derive_sas(&local_id, &peer_id, &exporter);
             Ok::<_, String>(code)
@@ -2253,7 +2251,7 @@ mod tests {
         v
     }
 
-    // ── Identity tests (unchanged from Phase 6) ──
+    // ── Identity tests ──
 
     #[test]
     fn test_identity_generate_and_load() {
@@ -2280,7 +2278,7 @@ mod tests {
         assert!(result["error"].as_str().unwrap().contains("null"));
     }
 
-    // ── Utility tests (unchanged from Phase 6) ──
+    // ── Utility tests ──
 
     #[test]
     fn test_sanitize_path_valid() {
@@ -2422,7 +2420,7 @@ mod tests {
         assert_ne!(h1, h2);
     }
 
-    // ── Connection tests (new in Phase 7) ──
+    // ── Connection tests ──
 
     #[test]
     fn test_connect_null_addr() {
@@ -2646,7 +2644,7 @@ mod tests {
         let _ = parse_ffi_json(nxfr_close(receiver_h));
     }
 
-    // ── Identity idempotency test (Bug 1 regression) ──
+    // ── Identity idempotency test ──
 
     #[test]
     fn test_identity_generate_then_load_stable() {
@@ -2677,7 +2675,7 @@ mod tests {
         );
     }
 
-    // ── Protocol defaults tests (Bug 2 regression) ──
+    // ── Protocol defaults tests ──
 
     #[test]
     fn test_default_port_is_17394() {
@@ -2691,7 +2689,7 @@ mod tests {
         let mdns_addr: std::net::Ipv4Addr = "224.0.0.251".parse().unwrap();
         assert_eq!(mdns_addr, std::net::Ipv4Addr::new(224, 0, 0, 251));
     }
-    // ── Pairing storage tests (Phase 8) ──
+    // ── Pairing storage tests ──
 
     #[test]
     fn test_paired_list_empty() {

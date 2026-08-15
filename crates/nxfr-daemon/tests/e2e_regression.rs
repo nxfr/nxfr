@@ -1,16 +1,14 @@
-//! Regression tests for bug-fix passes.
+//! Regression tests for bug fixes and daemon stability.
 //!
-//! Phase 5b:
+//! Test coverage:
 //! 1. Browse task survives 3+ cycles without closed-channel errors.
 //! 2. Config default has receiving_enabled=false.
 //! 3. Single-instance guard detects running daemon.
 //! 4. cmd_set_receiving error produces human-readable message.
 //! 5. Self-send E2E: one daemon connects to itself, watcher, consent, SHA-256 match.
-//!
-//! Final bug-fix pass:
-//! T1. Watcher accepts via watch socket (BUG 1 regression).
-//! T2. send --to name resolution matrix (BUG 2 regression).
-//! T3. 5 rapid toggle cycles produce no panics or errors (BUG 3 regression).
+//! 6. Watcher accepts via watch socket.
+//! 7. send --to name resolution matrix.
+//! 8. 5 rapid toggle cycles produce no panics or errors.
 
 use nxfr_crypto::generate_identity;
 use nxfr_daemon::handler;

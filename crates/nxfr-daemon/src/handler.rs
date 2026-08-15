@@ -157,7 +157,7 @@ pub async fn handle_incoming(
                             "TRANSFER_REQUEST: \"{display_name}\" ({total_files} files, {total_size} bytes)"
                         );
 
-                        // Phase 5 consent logic.
+                        // Check auto-accept policy for paired peers.
                         let auto_accept = if is_paired {
                             let db = state.db.lock().await;
                             db.should_auto_accept(&peer_id_hex)

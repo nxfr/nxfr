@@ -238,10 +238,8 @@ class NxfrService : Service() {
     /**
      * JNI bridge to libnxfr_ffi.so.
      * All protocol logic (CBOR, framing, TLS) stays in Rust.
-     * Kotlin only passes strings/handles and receives JSON events.
-     *
-     * Phase 7: nxfr_connect / nxfr_listen now take storeDir (path to
-     * identity directory) instead of identityJson.
+     * Kotlin passes strings/handles and receives JSON events.
+     * `nxfr_connect` and `nxfr_listen` accept storeDir pointing to the identity directory.
      */
     object NxfrBridge {
         // ── Identity ───────────────────────────────────────

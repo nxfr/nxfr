@@ -137,7 +137,7 @@ fun SettingsScreen(
             title = { Text("Encryption Invariant [SEALED]", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "Why can't I disable encryption?\n\nBecause a sovereign protocol's only job is to never leak plaintext across the network. All pipes are mTLS 1.3 authenticated with ephemeral curve25519 session keys.",
+                    "Why can't I disable encryption?\n\nNXFR requires end-to-end security for all data transfers. All pipes are mTLS 1.3 authenticated with ephemeral curve25519 session keys.",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp
                 )

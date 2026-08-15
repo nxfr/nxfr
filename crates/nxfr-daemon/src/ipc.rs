@@ -1,8 +1,7 @@
 //! IPC server — Unix Domain Socket with line-delimited JSON commands.
 //!
 //! Socket: `~/.local/state/nxfr/nxfr.sock`
-//!
-//! Phase 5: Supports watchers, interactive consent, and resume retry.
+//! Supports watchers, interactive consent, and resume retry.
 
 use crate::DaemonState;
 use log::{error, info, warn};

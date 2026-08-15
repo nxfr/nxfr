@@ -312,7 +312,7 @@ fun TransferScreen(
         }
     }
 
-    // ── Phase 9.15 Restyled Completion Sheet ──
+    // ── Completion Sheet ──
     if (showCompleteSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(

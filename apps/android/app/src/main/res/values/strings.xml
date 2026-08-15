@@ -121,7 +121,7 @@
     <string name="settings_about">About NXFR</string>
     <string name="settings_about_desc">Open-source nearby file transfer protocol</string>
     <string name="settings_changelog">Changelog</string>
-    <string name="settings_changelog_phase7">Phase 7: FFI transfer path + APK build</string>
+    <string name="settings_changelog_phase7">v0.2.0: FFI transfer path + APK build</string>
     <string name="settings_privacy">Privacy Policy</string>
     <string name="settings_privacy_desc">No cloud, no telemetry, no tracking</string>
     <string name="settings_support">Support</string>
