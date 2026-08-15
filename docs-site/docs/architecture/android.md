@@ -1,14 +1,10 @@
 # Android Architecture
 
-!!! info "Alpha Implementation"
-    The Android client is in **alpha** stage (Phase 7). FFI-based file transfers
-    work; UI is placeholder; no resume journal; auto-accept for incoming offers.
+The Android client implementation uses FFI bindings to the Rust protocol core with a Jetpack Compose user interface.
 
 ## FFI Architecture
 
-All protocol logic lives in Rust (`nxfr-ffi` crate). The Kotlin layer is a thin
-wrapper that calls C-ABI exports via JNI. **No CBOR, no frame parsing, no TLS
-config in Kotlin.**
+All protocol logic lives in Rust (`nxfr-ffi` crate). The Kotlin layer is a wrapper that calls C-ABI exports via JNI. **No CBOR, no frame parsing, and no TLS config in Kotlin.**
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -32,11 +28,11 @@ config in Kotlin.**
 └─────────────────────────────────────────────┘
 ```
 
-## FFI Exports (Phase 7)
+## FFI Exports
 
 | Function | Purpose |
 |----------|---------|
-| `nxfr_identity_generate(store_dir)` | Generate P-256 keypair + self-signed cert |
+| `nxfr_identity_generate(store_dir)` | Generate keypair and self-signed certificate |
 | `nxfr_identity_load(store_dir)` | Load existing identity |
 | `nxfr_connect(addr, store_dir)` | TLS 1.3 client connect + HELLO exchange |
 | `nxfr_listen(port, store_dir)` | Bind TLS listener, spawn accept loop |
@@ -92,41 +88,25 @@ sequenceDiagram
 
 ## Discovery (4-Tier Ladder)
 
-The Android client uses a multi-tier discovery strategy for hotspot-resilient
-peer finding. All discovery runs off-main via `Dispatchers.IO`.
+The Android client uses a multi-tier discovery strategy for local networks and hotspots. All discovery runs off the main thread via `Dispatchers.IO`.
 
 | Tier | Mechanism | Implementation | Latency | Hotspot-Safe |
 |------|-----------|----------------|---------|--------------|
-| 0 | **UDP Beacon** | `UdpBeacon.kt` — broadcasts on port 17395 every 1 s | ~1 s | ✅ Yes |
-| 1 | **NSD (mDNS/DNS-SD)** | `NsdDiscovery.kt` — `android.net.nsd.NsdManager` | 2–5 s | ❌ No |
-| 2 | **TCP Subnet Probe** | `HotspotAwareDiscovery.kt` — scan /24 on port 17394 | 5–30 s | ✅ Yes |
-| 3 | **Manual Connect** | UI-driven IP:port → `nxfr_connect()` | User-initiated | ✅ Yes |
+| 0 | **UDP Beacon** | `UdpBeacon.kt` — broadcasts on port 17395 every 1 s | ~1 s | Yes |
+| 1 | **NSD (mDNS/DNS-SD)** | `NsdDiscovery.kt` — `android.net.nsd.NsdManager` | 2–5 s | No |
+| 2 | **TCP Subnet Probe** | `HotspotAwareDiscovery.kt` — scan /24 on port 17394 | 5–30 s | Yes |
+| 3 | **Manual Connect** | UI-driven IP:port → `nxfr_connect()` | User-initiated | Yes |
 
-`HotspotAwareDiscovery.kt` orchestrates all tiers, merging results into a
-single `StateFlow<List<DeviceUiModel>>` with deduplication by `advertised_id`
-(beacon) or `device_id` (NSD/probe).
+`HotspotAwareDiscovery.kt` orchestrates all tiers, merging results into a single `StateFlow<List<DeviceUiModel>>` with deduplication by `advertised_id` (beacon) or `device_id` (NSD/probe).
 
 ### Privacy: Beacon advertised_id
 
-!!! warning "Privacy-Critical"
-    The UDP beacon **NEVER** broadcasts the real `device_id`. Beacons use a
-    daily-rotating `advertised_id` derived via `SHA-256(device_id || YYYY-MM-DD)`.
+The UDP beacon does not broadcast the persistent `device_id`. Beacons use a daily-rotating `advertised_id` derived via `HKDF-SHA256(device_id || YYYY-MM-DD)`.
 
-On `UdpBeacon.start()`, the Kotlin layer calls
-`NxfrBridge.nxfr_advertised_id(deviceIdHex, LocalDate.now().toString())` to
-compute today's rotating ID via the Rust FFI (HKDF-SHA256). The beacon payload
-is:
+On `UdpBeacon.start()`, the Kotlin layer calls `NxfrBridge.nxfr_advertised_id(deviceIdHex, LocalDate.now().toString())` to compute the rotating ID. The beacon payload is:
 
 ```json
 {"v":1,"advertised_id":"a1b2c3d4e5f67890","name":"My Phone","plat":"android","tcp_port":17394}
 ```
 
-The real `device_id` is only revealed after the TLS 1.3 handshake, inside the
-encrypted HELLO message. This two-layer model prevents passive Wi-Fi observers
-from fingerprinting or tracking devices across networks.
-
-## Current Limitations
-
-- **No resume journal** — interrupted transfers restart from zero.
-- **Single session** — one active transfer at a time.
-- **No Android Keystore** — identity stored in app private files.
+The real `device_id` is only revealed after the TLS 1.3 handshake, inside the encrypted HELLO message. This prevents passive Wi-Fi observers from tracking devices across networks.

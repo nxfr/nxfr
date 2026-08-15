@@ -4,7 +4,7 @@ The official Android reference implementation of the **Nearby Xfer Protocol (NXF
 
 ---
 
-## 🎛️ Architecture & Subsystems
+## Architecture & Subsystems
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -33,9 +33,9 @@ The official Android reference implementation of the **Nearby Xfer Protocol (NXF
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
-### 1. Instrument Deck UI (Phase 10-ID)
+### 1. Instrument Deck UI
 - **The Beam Visualizer**: Linear directional transmission channel with scanning pulses and active data flows (replacing circular radar metaphors).
 - **Physical Breaker Switches**: Industrial mechanical switches for listener socket control.
 - **Packet-Stream Console**: Real-time throughput graph with dynamic packet density dots and 16-block chunk matrix (`[■■■■■■■■□□□□□□□□]`).
@@ -46,7 +46,7 @@ The official Android reference implementation of the **Nearby Xfer Protocol (NXF
 - **Direct Browser Transfer**: Share files with or receive files from any device with a modern browser on port `17396`.
 - **Security PIN Gate**:
   - Optional 4 to 8 digit numeric PIN.
-  - Automatic random PIN generator (🎲) and custom PIN editor (✏️).
+  - Automatic random PIN generator and custom PIN editor.
   - Web UI presents an interactive PIN gate dialog before granting access.
   - 5-attempt rate limiter locks out offending IPs for 5 minutes.
 - **Fragment-Only Tokens**: In direct mode, access tokens are isolated in `#t=<token>` URL fragments.
@@ -62,9 +62,9 @@ The official Android reference implementation of the **Nearby Xfer Protocol (NXF
 
 ---
 
-## 🔋 Background Behavior & Battery Contract
+## Background Behavior & Battery Contract
 
-NXFR strictly respects device battery and user privacy:
+NXFR respects device battery and user privacy:
 
 1. **Visibility-Tied Lifetime**:
    - **Visible = ON**: Foreground service remains active with notification `"NXFR visible on LAN — tap to manage"`.
@@ -79,7 +79,7 @@ NXFR strictly respects device battery and user privacy:
 
 ---
 
-## 🛠️ Building & Verification
+## Building & Verification
 
 ### Build Commands
 ```bash

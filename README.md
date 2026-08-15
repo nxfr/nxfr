@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="branding/logo-full.svg" alt="NXFR — Sovereign Peer-to-Peer Transfer Protocol" width="360">
+  <img src="branding/logo-full.svg" alt="NXFR — Peer-to-Peer Transfer Protocol" width="360">
 </p>
 
 <div align="center">
   <h3><strong>No cloud. No accounts. Just math.</strong></h3>
-  <p>An open, sovereign, cryptographic peer-to-peer file transfer protocol and flagship Android/Linux client.</p>
+  <p>An open, cryptographic peer-to-peer file transfer protocol and Android/Linux client.</p>
   <p>
     <a href="https://github.com/nxfr/nxfr/actions"><img src="https://img.shields.io/github/actions/workflow/status/nxfr/nxfr/ci.yml?branch=main" alt="Build Status"></a>
     <a href="https://github.com/nxfr/nxfr/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
@@ -15,59 +15,59 @@
 
 ---
 
-## 🧭 Why NXFR?
+## Overview
 
-Unlike proprietary walled gardens (AirDrop, Quick Share) or bloated web wrappers, NXFR is a pure peer-to-peer standard built on uncompromising cryptographic engineering and avionics-grade aesthetics.
+NXFR is a peer-to-peer file transfer protocol and client implementation built with Rust and Kotlin/Jetpack Compose.
 
-- **Zero-Cloud Architecture**: 100% peer-to-peer over local Wi-Fi, Ethernet, or off-grid Hotspots. No telemetry, no accounts, no tracking.
+- **Local Network Focus**: Peer-to-peer transfers over Wi-Fi, Ethernet, or local hotspots. No cloud servers, user accounts, or tracking.
 - **Strict Scope**: NXFR is LAN + off-grid by design; internet relay mode is out of scope for v1.x.
-- **Instrument Deck UI**: High-contrast, mathematical visual identity featuring **The Beam** transmission motif, industrial **Breaker Switches**, and tabular monospace telemetry.
-- **Zero-Permission Staging Matrix**: Send files, media, folders, apps, and contacts via system contracts without granting invasive runtime storage permissions.
-- **3-Tier Storage Engine**: Automatic MediaStore indexing for instant gallery visibility, SAF directory tree writing, and sandbox fallback.
-- **Share via Link & PIN Protection**: Token-gated browser file transfers with optional 4–8 digit PIN protection for any device with a web browser.
-- **Desert Mode**: Off-grid transfers via autonomous Wi-Fi Direct (P2P) and SoftAP Hotspot.
-- **First-Class Rust Core**: Memory-safe, high-throughput protocol engine running natively on Linux daemons and Android JNI bindings.
+- **Instrument Deck UI**: High-contrast, technical visual identity featuring linear transmission visualizers, mechanical breaker toggles, and monospace telemetry.
+- **Zero-Permission Staging**: Send files, media, folders, installed apps, and contact vCards via Android system pickers without broad storage permissions.
+- **Storage Engine**: MediaStore indexing for gallery access, Storage Access Framework for directory trees, and app sandbox fallbacks.
+- **Browser Transfers**: Token-gated HTTP server with optional PIN protection for transferring files to and from web browsers.
+- **Desert Mode**: Off-grid transfers using Wi-Fi Direct (P2P) and autonomous SoftAP hotspots.
+- **Rust Core Engine**: Core protocol logic, cryptography, and network framing implemented in Rust with JNI bindings for Android.
 
 ---
 
-## 🎛️ Protocol & Engine Invariants
+## Protocol Invariants
 
 | Invariant | Specification | Description |
 | :--- | :--- | :--- |
 | **Transport** | TCP + mTLS 1.3 | Authenticated, encrypted socket pipeline on port `17394`. |
-| **Identity Keys** | Ed25519 / Curve25519 | Persistent sovereign node identities (`did:nxfr:<short_id>`). |
-| **Trust Model** | TOFU + SAS | Trust-On-First-Use key pinning + Short Authentication String verification. |
+| **Identity Keys** | Ed25519 / Curve25519 | Persistent node identities (`did:nxfr:<short_id>`). |
+| **Trust Model** | TOFU + SAS | Trust-On-First-Use key pinning and Short Authentication String verification. |
 | **Discovery** | mDNS / DNS-SD (`_nxfr._tcp`) + UDP Beacon | Local discovery on `17394`/`17395` with daily-rotating ephemeral IDs. |
 | **Encoding** | CBOR (RFC 8949) | Compact binary object representation for transfer handshakes. |
-| **Integrity** | Streaming SHA-256 | Real-time payload checksum verification with live chunk matrix. |
+| **Integrity** | Streaming SHA-256 | Real-time payload checksum verification with chunk matrix tracking. |
 | **Web Portal** | Token & PIN-Gated HTTPS | Port `17396` with fragment-only tokens (`/#t=<token>`) and 4–8 digit PIN gates. |
-| **Off-Grid** | Wi-Fi Direct & SoftAP | Desert Mode for zero-infrastructure device-to-device transfers. |
+| **Off-Grid** | Wi-Fi Direct & SoftAP | Direct device-to-device transfers without external networking hardware. |
 
 ---
 
-## 🔒 Security Invariants
+## Security Invariants
 
-1. **Mandatory TLS 1.3 (Cannot Be Disabled)**: Every pipe between NXFR nodes is authenticated with mutual TLS 1.3 using ephemeral session keys. There is no toggle to disable encryption.
-2. **Path-Jail Enforcement**: All incoming paths are verified against strict canonical sandbox roots (`canonical.starts_with(canonical_inbox)`), rendering path-traversal attacks (`../`) impossible.
-3. **Fragment-Only Web Tokens & PIN Protection**: Web share links store authorization secrets in URL fragments (`https://<ip>:17396/#t=<token>`) or enforce 4–8 digit security PINs with 5-attempt rate-limiting and temporary IP blocks.
-4. **Interactive Cryptographic Consent**: No file data is accepted without user authorization matching SAS codes and audited file manifests.
-5. **Privacy-Preserving Ephemeral IDs**: UDP beacons and Wi-Fi Direct TXT records broadcast daily-rotating HKDF hashes, preventing passive Wi-Fi tracking.
-
----
-
-## 📱 The Instrument Deck Interface
-
-The NXFR UI presentation layer is modeled after precision flight decks and cryptographic consoles:
-
-- **Telemetry Ribbon**: Top status strip displaying live invariants: `● TLS 1.3 ENCRYPTED`, `TCP 17394 [LISTEN]`, and `TOFU: N PAIRED`.
-- **The Beam Visualizer**: Cryptographic transmission wire between local node and broadcast target with scanning sweeps and real-time streaming packets.
-- **Physical Visibility Breaker**: Industrial mechanical switch controlling native socket listeners and broadcasting beacons.
-- **Packet-Stream Console**: Active transfer screen featuring dynamic packet dots scaling with throughput ($MB/s$) and a 16-block chunk matrix (`CHUNKS: [■■■■■■■■■■□□□□□□]`).
-- **Cryptographic Consent Manifest**: Security stamp seals (`[TLS 1.3 MUTUAL AUTH]`, `[TOFU: PAIRED]`), sender telemetry, large SAS auth digits (`● 123 456 ●`), and tabular payload ledgers.
+1. **Mandatory TLS 1.3**: Every connection between nodes is authenticated with mutual TLS 1.3 using ephemeral session keys. Encryption cannot be disabled.
+2. **Path Jail Enforcement**: Incoming files are validated against canonical sandbox roots (`canonical.starts_with(canonical_inbox)`), preventing path traversal attacks.
+3. **Fragment-Only Web Tokens & PIN Protection**: Browser share links keep authentication secrets in URL fragments (`https://<ip>:17396/#t=<token>`) or require numeric PINs with exponential rate limiting.
+4. **Interactive Consent**: Transfers require explicit recipient approval matching SAS codes and audited file manifests.
+5. **Privacy-Preserving Ephemeral IDs**: UDP beacons and Wi-Fi Direct records use daily-rotating HKDF hashes to prevent passive tracking.
 
 ---
 
-## 🛠️ Building & Developing
+## User Interface
+
+The user interface uses the Instrument Deck design system:
+
+- **Telemetry Ribbon**: Displays active protocol state (`TLS 1.3 ENCRYPTED`, `TCP 17394 [LISTEN]`, paired node count).
+- **Beam Visualizer**: Linear transmission channel indicating connection state, scan activity, and transfer throughput.
+- **Breaker Switch**: Toggle switch for controlling socket listeners and beacon broadcasts.
+- **Packet Stream Console**: Real-time throughput indicators and chunk transfer matrix.
+- **Consent Dialog**: Transfer verification with security stamps, SAS codes, and file manifests.
+
+---
+
+## Building and Testing
 
 ### Prerequisites
 - **Rust Toolchain**: 1.75+ (stable) via [rustup.rs](https://rustup.rs/)
@@ -84,32 +84,31 @@ cd nxfr
 # Build daemon and CLI
 cargo build --release
 
-# Run Rust unit tests
+# Run Rust test suite
 cargo test --workspace
 ```
 
 ### 2. Build Android App & Native Binaries
-The Gradle build pipeline features automated symbol verification and fresh compilation via `rebuildNative`:
 ```bash
 cd apps/android
 
-# One-liner to build native JNI binaries via cargo ndk and assemble debug APK
+# Build native JNI libraries and assemble debug APK
 ./gradlew rebuildNative assembleDebug
 
-# Run unit tests
+# Run Android unit tests
 ./gradlew test
 ```
 
 ---
 
-## 💻 CLI Usage
+## CLI Usage
 
-Start the daemon in the background:
+Start the daemon:
 ```bash
 nxfr-daemon &
 ```
 
-Inspect node identity and active socket parameters:
+Inspect node identity and status:
 ```bash
 nxfr status
 ```
@@ -119,22 +118,22 @@ Watch for incoming transfer requests:
 nxfr watch
 ```
 
-Transmit a file or directory:
+Send a file or directory:
 ```bash
 nxfr send /path/to/payload.tar.gz --to <peer-name>
 ```
 
 ---
 
-## 🗺️ Roadmap & Next Milestones
+## Roadmap
 
-- **Phase 11**: Desert Mode (Off-grid Wi-Fi Direct & Autonomous SoftAP Hotspot).
-- **Phase 12**: Packaging & Distribution (F-Droid, Google Play, RPM/DEB/APT, Flathub Flatpak).
-- **Phase 13**: Native Linux (GTK4/Libadwaita), Windows (WinUI 3), and iOS (SwiftUI) shells.
+- **Off-Grid Connectivity (Desert Mode)**: Wi-Fi Direct and SoftAP hotspot transfers.
+- **Packaging and Distribution**: F-Droid, Google Play, RPM/DEB/APT repositories, and Flathub Flatpak.
+- **Desktop and iOS Shells**: Native Linux (GTK4/Libadwaita), Windows (WinUI 3), and iOS (SwiftUI) applications.
 
 ---
 
-## 📄 License
+## License
 
 Dual-licensed under either of:
 - **MIT License** ([LICENSE-MIT](LICENSE) or http://opensource.org/licenses/MIT)

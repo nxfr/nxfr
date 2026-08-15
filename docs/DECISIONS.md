@@ -138,9 +138,9 @@ purely pragmatic.
 
 | Algorithm | rustls | BoringSSL/Android | SChannel/Windows | FIPS |
 |-----------|--------|-------------------|-------------------|------|
-| ECDSA P-256 | ✅ Full | ✅ Full | ✅ Full | ✅ Yes |
-| Ed25519 | ✅ Full | ✅ Full | ❌ Limited/None | ❌ No |
-| RSA-2048 | ✅ Full | ✅ Full | ✅ Full | ✅ Yes |
+| ECDSA P-256 | Full | Full | Full | Yes |
+| Ed25519 | Full | Full | Limited/None | No |
+| RSA-2048 | Full | Full | Full | Yes |
 
 **Alternatives Considered:**
 - **Ed25519:** Rejected due to the SChannel

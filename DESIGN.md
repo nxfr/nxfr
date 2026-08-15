@@ -1,22 +1,21 @@
-# NXFR Design System — Instrument Deck (v2.0)
+# NXFR Design System — Instrument Deck
 
-NXFR is a sovereign, privacy-first peer-to-peer file transfer protocol. The visual language reflects the **"Instrument Deck"**: cockpit avionics, precision data telemetry, mathematical trust, and cold cryptographic clarity.
-
----
-
-## 🧭 Identity Manifesto
-
-1. **Precision Over Playfulness**: No bubbly cards, pastel mascots, or floating cartoon shapes. Geometry is structural, angular, and functional.
-2. **Trust Made Visible**: Real cryptographic invariants (TLS 1.3, TOFU validation, SHA-256 integrity streams, ephemeral session IDs) are prominently displayed in monospace text.
-3. **Data in Monospace**: Device IDs, SAS codes, IP addresses, transfer throughput, and chunk manifests render strictly in tabular monospace type (`FontFamily.Monospace`).
-4. **Cyan as Signal, Never Decoration**: `SignalBeam` (`#00E5FF`) is strictly reserved for active transmission states (lit beams, streaming packets, energized breaker). Inactive surfaces and chrome remain calm slate.
-5. **The Core Motif — THE BEAM**: Two node glyphs connected by a directional transmission channel. Idle state features a slow laser sweep; active state streams real-time data packets.
+This document defines the visual design system, color tokens, typography hierarchy, and interactive component specifications for NXFR user interfaces.
 
 ---
 
-## 🎨 Color Palette Tokens (Instrument Deck)
+## Design Principles
 
-### Dark Mode (Cockpit Obsidian)
+1. **Structural Clarity**: Interfaces prioritize angular, high-contrast layouts over decorative cards.
+2. **Telemetry Visibility**: Protocol properties (TLS 1.3 encryption, socket parameters, chunk verification progress, node identifiers) are rendered in tabular monospace type.
+3. **Signal Cyan**: Cyan (`#00E5FF`) is used exclusively to denote active transmission and energized network states. Inactive surfaces remain neutral slate.
+4. **The Beam**: File transfers are visualized as a linear directional transmission wire between source and target nodes with real-time packet flow indicators.
+
+---
+
+## Color Tokens
+
+### Dark Mode (Default)
 | Token Name | Hex Code | Purpose |
 | :--- | :--- | :--- |
 | `DeckDark` | `#0B0F17` | Root background |
@@ -29,17 +28,17 @@ NXFR is a sovereign, privacy-first peer-to-peer file transfer protocol. The visu
 | `DeckTextSecondary` | `#94A3B8` | Telemetry label |
 | `DeckTextDim` | `#64748B` | Inactive label |
 
-### Signal Tokens (Functional Status)
+### Signal Tokens
 | Token Name | Hex Code | Purpose |
 | :--- | :--- | :--- |
 | `SignalBeam` | `#00E5FF` | Active transmission cyan |
 | `SignalBeamGlow` | `#3300E5FF` | 20% alpha outer beam glow |
 | `SignalStandby` | `#475569` | Dormant wire slate |
 | `SignalAlert` | `#FF3366` | Breaker trip / Error coral |
-| `SignalSuccess` | `#00E676` | Cryptographic verification green |
+| `SignalSuccess` | `#00E676` | Verification green |
 | `SignalWarning` | `#FFFFB300`| Action required amber |
 
-### Light Mode (Drafting Paper)
+### Light Mode
 | Token Name | Hex Code | Purpose |
 | :--- | :--- | :--- |
 | `DeckPaper` | `#F8FAFC` | Root background |
@@ -47,56 +46,54 @@ NXFR is a sovereign, privacy-first peer-to-peer file transfer protocol. The visu
 | `DeckPaperGridLine` | `#CBD5E1` | Grid border |
 | `DeckPaperTextPrimary`| `#0F172A` | Primary readout |
 
-### OLED Black Mode
-- Surfaces clamp to pure `#000000` with 1dp `DeckGridLineBright` outlines for maximum contrast and battery preservation on AMOLED panels.
+### OLED Mode
+Surfaces clamp to `#000000` with 1dp `DeckGridLineBright` outlines for battery preservation on AMOLED panels.
 
 ---
 
-## 🔤 Typography & Font Hierarchy
+## Typography
 
-- **UI Typeface**: `Inter` (Display, Headlines, Titles, Labels)
-- **Data / Telemetry Typeface**: `FontFamily.Monospace` (Tabular digits, node IDs, SAS auth codes, socket parameters, transfer statistics)
-- **Section Headers**: Tracked out uppercase (`letter-spacing: 1.5sp`, `font-size: 11sp`, `font-weight: Bold`, `color: DeckTextSecondary`).
+- **Interface Typeface**: `Inter` (Display, Headlines, Titles, Body)
+- **Telemetry Typeface**: `FontFamily.Monospace` (Node IDs, SAS authentication codes, socket parameters, transfer statistics)
+- **Section Labels**: Tracked uppercase (`letter-spacing: 1.5sp`, `font-size: 11sp`, `font-weight: Bold`, `color: DeckTextSecondary`)
 
 ---
 
-## 🎛️ Physical Component Signatures
+## Component Specifications
 
 ### 1. Telemetry Ribbon (`TelemetryRibbon.kt`)
-- Fixed top status strip displaying protocol invariants:
-  - `● TLS 1.3 ENCRYPTED`
-  - `TCP 17394 [LISTEN]` vs `[STANDBY]`
-  - `TOFU: N PAIRED` (real-time query)
+Fixed status bar displaying active protocol state:
+- `● TLS 1.3 ENCRYPTED`
+- `TCP 17394 [LISTEN]` vs `[STANDBY]`
+- `TOFU: N PAIRED`
 
 ### 2. Station Identity Bar (`IdentityDeckBar.kt`)
-- Angular monogram badge `[N]`, station call-sign, `#shortId`, active IP tag in monospace, and Station Telemetry details sheet.
+Header bar showing local station monogram `[N]`, device name, short ID, and active IP address.
 
 ### 3. The Beam Visualizer (`BeamVisualizer.kt`)
-- Dual node boxes (`NODE: LOCAL` $\leftrightarrow$ `NODE: BROADCAST`).
-- Idle state: dormant wire with 2.4s laser scan sweep.
-- Active state: energized laser cyan beam streaming real-time data packets.
+Dual node boxes (`NODE: LOCAL` $\leftrightarrow$ `NODE: BROADCAST`):
+- Idle state: dormant wire with subtle scan sweep.
+- Active state: cyan beam streaming packet indicators proportional to throughput.
 
 ### 4. Visibility Breaker Switch (`BreakerSwitch.kt`)
-- Industrial mechanical switch using `Modifier.toggleable` (role = `Role.Switch`, $\ge 48\text{dp}$ touch target, direct haptics). Controls native socket listeners and persists `visible_enabled`.
+Mechanical switch controlling socket listeners and beacon broadcasts (`Modifier.toggleable`, `Role.Switch`, minimum 48dp touch target).
 
 ### 5. Attach Chip Rail & Staged Filmstrip (`AttachChipRail.kt`, `StagedFilmstrip.kt`)
-- Horizontal rail of 7 angular chips (`[+ FILE]`, `[📷 MEDIA]`, `[📝 TEXT]`, `[📋 PASTE]`, `[📁 FOLDER]`, `[📦 APP]`, `[👤 CONTACT]`).
-- Horizontal filmstrip with angular `[×]` remove buttons, monospace byte pills, and top status banner (`STAGED: N ITEMS · X.X MB`).
+Horizontal selector for staging items (Files, Media, Text, Paste, Folders, Apps, Contacts) paired with a filmstrip showing item names, sizes, and remove actions.
 
 ### 6. Packet-Stream Console (`PacketStreamVisualizer.kt`, `TerminalStatsBlock.kt`)
-- Active Beam transmission with throughput-scaled packet velocity and a 16-block chunk matrix (`CHUNKS: [■■■■■■■■■■□□□□□□] 62%`).
-- Recessed console well with strict monospace readouts for stream direction, payload bytes, current/peak speed, ETA, socket, and SHA-256 integrity streaming.
+Monospace status console showing transfer direction, payload size, speed, ETA, and 16-block chunk progress matrix (`[■■■■■■■■■■□□□□□□]`).
 
-### 7. Cryptographic Consent Manifest (`ConsentDialog.kt`)
-- Verification sheet with security stamp seals (`[TLS 1.3 MUTUAL AUTH]`, `[TOFU: PAIRED]`), sender telemetry, large SAS auth digits (`● 123 456 ●`), and tabular payload ledgers.
+### 7. Consent Dialog (`ConsentDialog.kt`)
+Verification dialog displaying sender details, security stamps (`[TLS 1.3 MUTUAL AUTH]`, `[TOFU: PAIRED]`), SAS digits, and payload manifest.
 
 ### 8. Settings Ledger (`SettingsScreen.kt`)
-- High-security archival ledger with 0.5dp hairline dividers, security stamp seals (`[SEALED: TLS 1.3]`, `[TRUSTED: N]`, `[VERIFIED]`), and monospace socket telemetry parameters.
+Structured settings screen with hairline dividers, security stamps, and socket parameters.
 
 ---
 
-## ♿ Accessibility & Motion Contract
+## Accessibility and Motion
 
-1. **System Animation Scaling**: Respects `LocalAnimationsEnabled` and Android's `ANIMATOR_DURATION_SCALE`. When animations are OFF, sweeps and pulses snap instantly to static states.
+1. **Animation Scaling**: Respects `LocalAnimationsEnabled` and system `ANIMATOR_DURATION_SCALE`. When animations are disabled, visualizers render in static states.
 2. **Touch Targets**: All clickable and toggleable surfaces maintain $\ge 48\text{dp}$ touch target boundaries.
-3. **Screen Reader Semantics**: All interactive controls declare explicit `Role.Button`, `Role.Switch`, or `contentDescription` attributes.
+3. **Screen Reader Support**: All interactive controls declare explicit semantic roles (`Role.Button`, `Role.Switch`) and content descriptions.
