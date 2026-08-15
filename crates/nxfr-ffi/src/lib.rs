@@ -70,7 +70,9 @@ pub extern "C" fn nxfr_set_receive_dir(path: *const c_char) -> *mut c_char {
         if let Err(e) = std::fs::create_dir_all(&p) {
             return json_err(&format!("create receive dir: {e}"));
         }
-        *receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
+        *receive_dir_override()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(p);
         log::info!("[nxfr-ffi] receive_dir set to: {dir}");
         json_ok(serde_json::json!({"receive_dir": dir}))
     })
@@ -467,7 +469,10 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
             session_id,
             pending_offer: Arc::new(std::sync::Mutex::new(None)),
         };
-        sessions_map().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, session);
+        sessions_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle, session);
 
         json_ok(serde_json::json!({
             "handle": handle,
@@ -605,16 +610,19 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
         };
 
         let handle = alloc_handle();
-        listeners_map().lock().unwrap_or_else(|e| e.into_inner()).insert(
-            handle,
-            Listener {
-                pending_rx: Arc::new(tokio::sync::Mutex::new(pending_rx)),
-                identity,
-                port: actual_port,
-                cancel_token,
-                accept_task,
-            },
-        );
+        listeners_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                handle,
+                Listener {
+                    pending_rx: Arc::new(tokio::sync::Mutex::new(pending_rx)),
+                    identity,
+                    port: actual_port,
+                    cancel_token,
+                    accept_task,
+                },
+            );
 
         json_ok(serde_json::json!({
             "listener": handle,
@@ -743,13 +751,14 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                         ..
                     }) = codec::decode_control(&payload)
                     {
-                        *offer_clone.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingOffer {
-                            transfer_id,
-                            manifest,
-                            display_name: display_name.clone(),
-                            total_size,
-                            total_files,
-                        });
+                        *offer_clone.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(PendingOffer {
+                                transfer_id,
+                                manifest,
+                                display_name: display_name.clone(),
+                                total_size,
+                                total_files,
+                            });
                         let _ = event_tx_clone
                             .send(FfiEvent::Offer {
                                 display_name,
@@ -781,7 +790,10 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             session_id,
             pending_offer,
         };
-        sessions_map().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, session);
+        sessions_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle, session);
 
         json_ok(serde_json::json!({
             "handle": handle,
@@ -848,10 +860,7 @@ fn scan_send_path(
         for entry in std::fs::read_dir(current)? {
             let entry = entry?;
             let path = entry.path();
-            let rel_path = path
-                .strip_prefix(root)?
-                .to_string_lossy()
-                .to_string();
+            let rel_path = path.strip_prefix(root)?.to_string_lossy().to_string();
 
             if path.is_dir() {
                 entries.push(LocalSendEntry {
@@ -938,7 +947,11 @@ async fn do_send_file(
     let p = Path::new(file_path);
     let (display_name, send_entries) = scan_send_path(p)?;
 
-    let total_size: u64 = send_entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
+    let total_size: u64 = send_entries
+        .iter()
+        .filter(|e| !e.is_dir)
+        .map(|e| e.size)
+        .sum();
     let total_files: u32 = send_entries.iter().filter(|e| !e.is_dir).count() as u32;
     let transfer_id = rand_transfer_id();
 
@@ -1043,11 +1056,7 @@ async fn do_send_file(
         let msg = codec::decode_control(&payload)?;
         match msg {
             ControlMessage::FileMetadataAck { accepted: true, .. } => {}
-            _ => {
-                return Err(
-                    format!("file metadata rejected for {}", entry.relative_path).into(),
-                )
-            }
+            _ => return Err(format!("file metadata rejected for {}", entry.relative_path).into()),
         }
 
         // Stream chunks (1 MiB, 8 in-flight window — per PROTOCOL §9.2.13).
@@ -1185,9 +1194,7 @@ pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
                     "error": msg,
                 })),
             },
-            Err(mpsc::error::TryRecvError::Empty) => {
-                json_ok(serde_json::json!({"event": "none"}))
-            }
+            Err(mpsc::error::TryRecvError::Empty) => json_ok(serde_json::json!({"event": "none"})),
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 json_ok(serde_json::json!({"event": "disconnected"}))
             }
@@ -1207,7 +1214,11 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
                 Some(s) => s,
                 None => return json_err("invalid session handle"),
             };
-            let offer = session.pending_offer.lock().unwrap_or_else(|e| e.into_inner()).take();
+            let offer = session
+                .pending_offer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
             (
                 session.conn.clone(),
                 session.event_tx.clone(),
@@ -1276,7 +1287,10 @@ async fn do_receive_file(
     .await?;
 
     let receive_dir = {
-        let ovr = receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let ovr = receive_dir_override()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         match ovr {
             Some(p) => p,
             None => {
@@ -1726,7 +1740,11 @@ pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -
 #[no_mangle]
 pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
-        if let Some(listener) = listeners_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle) {
+        if let Some(listener) = listeners_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&handle)
+        {
             log::info!(
                 "[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}",
                 handle,
@@ -1739,7 +1757,10 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
             return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
         }
 
-        let session = sessions_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
+        let session = sessions_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&handle);
         if let Some(session) = session {
             log::info!(
                 "[nxfr-ffi] nxfr_close: Sending SessionClose and dropping session {}",
@@ -1947,12 +1968,20 @@ pub extern "C" fn nxfr_web_start(
             Err(e) => return json_err(&e),
         };
 
-        let receive_dir = match receive_dir_override().lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        let receive_dir = match receive_dir_override()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
             Some(d) => d,
             None => PathBuf::from(dir).join("inbox"),
         };
 
-        if let Some(existing) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(existing) = web_server_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             existing.stop();
         }
 
@@ -2026,7 +2055,11 @@ pub extern "C" fn nxfr_web_share_start(
             Err(e) => return json_err(&e),
         };
 
-        if let Some(existing) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(existing) = web_server_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             existing.stop();
         }
 
@@ -2069,7 +2102,11 @@ pub extern "C" fn nxfr_web_share_start(
 #[no_mangle]
 pub extern "C" fn nxfr_web_stop() -> *mut c_char {
     ffi_guard(|| {
-        if let Some(server) = web_server_lock().lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(server) = web_server_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             server.stop();
             log::info!("[nxfr-ffi] Web server stopped.");
         }

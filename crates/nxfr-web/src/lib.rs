@@ -909,7 +909,8 @@ impl WebServer {
                 return Self::send_response(stream, "200 OK", "application/json", body).await;
             } else {
                 let body = b"{\"error\": \"Invalid PIN\"}";
-                return Self::send_response(stream, "403 Forbidden", "application/json", body).await;
+                return Self::send_response(stream, "403 Forbidden", "application/json", body)
+                    .await;
             }
         }
 
@@ -1177,7 +1178,8 @@ impl WebServer {
                                                 }
                                             }
                                         } else if let Some(fn_idx) = lower.find("filename=") {
-                                            let rest = h_line[fn_idx + 9..].trim().trim_matches('"');
+                                            let rest =
+                                                h_line[fn_idx + 9..].trim().trim_matches('"');
                                             if !rest.is_empty() {
                                                 original_filename = Some(rest.to_string());
                                             }
@@ -1233,7 +1235,8 @@ impl WebServer {
                 file.flush().await?;
                 drop(file);
 
-                let raw_name = original_filename.unwrap_or_else(|| format!("upload_{}.bin", hex::encode(&rand_bytes[..4])));
+                let raw_name = original_filename
+                    .unwrap_or_else(|| format!("upload_{}.bin", hex::encode(&rand_bytes[..4])));
                 let clean_name = sanitize_filename(&raw_name);
 
                 let mut final_path = inbox_dir.join(&clean_name);
@@ -1500,7 +1503,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_web_upload_saves_original_filename() {
-        let temp_dir = std::env::temp_dir().join(format!("nxfr_web_upload_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("nxfr_web_upload_test_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let identity = nxfr_crypto::identity::generate_identity().unwrap();
@@ -1535,7 +1539,8 @@ mod tests {
                 _message: &[u8],
                 _cert: &rustls_pki_types::CertificateDer<'_>,
                 _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
                 Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
             }
             fn verify_tls13_signature(
@@ -1543,7 +1548,8 @@ mod tests {
                 _message: &[u8],
                 _cert: &rustls_pki_types::CertificateDer<'_>,
                 _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
                 Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
             }
             fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
@@ -1562,7 +1568,9 @@ mod tests {
         client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
         let connector = TlsConnector::from(Arc::new(client_config));
 
-        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
         let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
         let mut tls_stream = connector.connect(domain, stream).await.unwrap();
 
@@ -1570,7 +1578,9 @@ mod tests {
         let file_content = b"Hello, NXFR Web Upload test payload!";
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"vacation_photo.jpg\"\r\n");
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"vacation_photo.jpg\"\r\n",
+        );
         body.extend_from_slice(b"Content-Type: image/jpeg\r\n\r\n");
         body.extend_from_slice(file_content);
         body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
@@ -1583,7 +1593,10 @@ mod tests {
              Content-Length: {}\r\n\
              Connection: close\r\n\
              \r\n",
-            server_port, token, boundary, body.len()
+            server_port,
+            token,
+            boundary,
+            body.len()
         );
 
         tls_stream.write_all(request.as_bytes()).await.unwrap();
@@ -1596,7 +1609,10 @@ mod tests {
         assert!(resp_str.starts_with("HTTP/1.1 200 OK"));
 
         let saved_file = temp_dir.join("web-inbox").join("vacation_photo.jpg");
-        assert!(saved_file.exists(), "Uploaded file vacation_photo.jpg should exist in web-inbox");
+        assert!(
+            saved_file.exists(),
+            "Uploaded file vacation_photo.jpg should exist in web-inbox"
+        );
         let saved_content = std::fs::read(&saved_file).unwrap();
         assert_eq!(saved_content, file_content);
 
@@ -1652,7 +1668,8 @@ mod tests {
                 _message: &[u8],
                 _cert: &rustls_pki_types::CertificateDer<'_>,
                 _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
                 Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
             }
             fn verify_tls13_signature(
@@ -1660,7 +1677,8 @@ mod tests {
                 _message: &[u8],
                 _cert: &rustls_pki_types::CertificateDer<'_>,
                 _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
                 Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
             }
             fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
@@ -1680,7 +1698,9 @@ mod tests {
         let connector = TlsConnector::from(Arc::new(client_config));
 
         // 1. Test wrong PIN -> 403
-        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
         let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
         let mut tls = connector.connect(domain.clone(), stream).await.unwrap();
         let req_wrong = format!(
@@ -1693,7 +1713,9 @@ mod tests {
         assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 403"));
 
         // 2. Test correct PIN -> 200
-        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
         let mut tls = connector.connect(domain.clone(), stream).await.unwrap();
         let req_correct = format!(
             "GET /auth HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
@@ -1705,7 +1727,9 @@ mod tests {
         assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 200"));
 
         // 3. Test download with correct PIN -> 200
-        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
         let mut tls = connector.connect(domain, stream).await.unwrap();
         let req_dl = format!(
             "GET /dl/0 HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
