@@ -1,20 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- NXFR adaptive icon foreground: stylized "N" mark -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- N mark: left vertical stroke -->
+    <!-- Left Bracket -->
+    <path
+        android:strokeColor="#F8FAFC"
+        android:strokeWidth="6"
+        android:strokeLineCap="square"
+        android:strokeLineJoin="miter"
+        android:strokeMiterLimit="4"
+        android:pathData="M47.5,35 L40.5,35 L31.5,44 L31.5,64 L40.5,73 L47.5,73" />
+    <!-- Right Bracket -->
+    <path
+        android:strokeColor="#F8FAFC"
+        android:strokeWidth="6"
+        android:strokeLineCap="square"
+        android:strokeLineJoin="miter"
+        android:strokeMiterLimit="4"
+        android:pathData="M60.5,35 L67.5,35 L76.5,44 L76.5,64 L67.5,73 L60.5,73" />
+    <!-- Left Beam Dashes -->
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M36.5,51 H40.75 V57 H36.5 Z" />
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M42.5,51 H46.75 V57 H42.5 Z" />
+    <!-- Central Packet -->
     <path
         android:fillColor="#00E5FF"
-        android:pathData="M34,32 L42,32 L42,76 L34,76 Z" />
-    <!-- N mark: diagonal stroke -->
+        android:pathData="M48.75,48.75 H59.25 V59.25 H48.75 Z" />
+    <!-- Right Beam Dashes -->
     <path
-        android:fillColor="#00E5FF"
-        android:pathData="M42,32 L74,76 L66,76 L34,32 Z" />
-    <!-- N mark: right vertical stroke -->
+        android:fillColor="#F8FAFC"
+        android:pathData="M61.25,51 H65.5 V57 H61.25 Z" />
     <path
-        android:fillColor="#00E5FF"
-        android:pathData="M66,32 L74,32 L74,76 L66,76 Z" />
+        android:fillColor="#F8FAFC"
+        android:pathData="M67.25,51 H71.5 V57 H67.25 Z" />
 </vector>

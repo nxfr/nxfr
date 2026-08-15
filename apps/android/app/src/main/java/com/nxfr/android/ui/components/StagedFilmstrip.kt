@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.nxfr.android.ui.icons.NxfrIcons
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -123,12 +124,12 @@ private fun StagedItemCard(
 ) {
     val deck = MaterialTheme.deckColors
     val icon = when (item.type) {
-        StagedType.FILE -> Icons.AutoMirrored.Outlined.InsertDriveFile
-        StagedType.MEDIA -> Icons.Outlined.PhotoLibrary
+        StagedType.FILE -> NxfrIcons.File
+        StagedType.MEDIA -> NxfrIcons.Media
         StagedType.TEXT -> Icons.Outlined.TextFields
-        StagedType.FOLDER -> Icons.Outlined.Folder
-        StagedType.APP -> Icons.Outlined.Apps
-        StagedType.CONTACT -> Icons.Outlined.Contacts
+        StagedType.FOLDER -> NxfrIcons.Folder
+        StagedType.APP -> NxfrIcons.App
+        StagedType.CONTACT -> NxfrIcons.Contact
     }
 
     Box(

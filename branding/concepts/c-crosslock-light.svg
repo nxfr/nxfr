@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Concept C: "Crosslock" — Light variant -->
+  <rect width="512" height="512" fill="#F8FAFC"/>
+  <polyline points="152,128 328,256 152,384"
+    fill="none" stroke="#0B0F17" stroke-width="32"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+  <polyline points="360,128 184,256 360,384"
+    fill="none" stroke="#00E5FF" stroke-width="32"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

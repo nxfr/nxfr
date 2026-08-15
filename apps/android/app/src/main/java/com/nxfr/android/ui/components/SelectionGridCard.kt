@@ -6,7 +6,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -16,6 +17,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.nxfr.android.ui.icons.NxfrIcons
 
 data class TileActionItem(
     val id: String,
@@ -39,13 +41,13 @@ fun SelectionGridCard(
     val haptic = LocalHapticFeedback.current
 
     val tiles = listOf(
-        TileActionItem("file", "File", Icons.Outlined.InsertDriveFile, onOpenFilePicker),
-        TileActionItem("media", "Media", Icons.Outlined.PhotoLibrary, onOpenMediaPicker),
+        TileActionItem("file", "File", NxfrIcons.File, onOpenFilePicker),
+        TileActionItem("media", "Media", NxfrIcons.Media, onOpenMediaPicker),
         TileActionItem("text", "Text", Icons.Outlined.TextFields, onOpenTextComposer),
         TileActionItem("paste", "Paste", Icons.Outlined.ContentPaste, onPasteClipboard),
-        TileActionItem("folder", "Folder", Icons.Outlined.Folder, onOpenFolderPicker),
-        TileActionItem("app", "App", Icons.Outlined.Apps, onOpenAppPicker),
-        TileActionItem("contacts", "Contacts", Icons.Outlined.Contacts, onOpenContactsPicker)
+        TileActionItem("folder", "Folder", NxfrIcons.Folder, onOpenFolderPicker),
+        TileActionItem("app", "App", NxfrIcons.App, onOpenAppPicker),
+        TileActionItem("contacts", "Contacts", NxfrIcons.Contact, onOpenContactsPicker)
     )
 
     ElevatedCard(

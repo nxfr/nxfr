@@ -48,6 +48,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+/**
+ * Stages files for web sharing, then hosts them via the Rust TLS server.
+ *
+ * Large files (content URIs from the picker) are copied to a cache directory
+ * in a background coroutine using a 64 KB buffer so memory stays flat.
+ * A progress bar is shown while staging is in progress.
+ */
 @Composable
 fun WebShareScreen(
     stagedItems: List<StagedItem>,
@@ -73,43 +80,18 @@ fun WebShareScreen(
 
     var nativeError by remember { mutableStateOf<String?>(null) }
 
-    val manifestJsonStr = remember(items) {
-        val stagingDir = File(context.cacheDir, "web-share-staging").apply { mkdirs() }
-        val manifestArray = JSONArray()
-        for ((index, item) in items.withIndex()) {
-            val localPath = if (item.localFile != null && item.localFile.exists()) {
-                item.localFile.absolutePath
-            } else {
-                val dest = File(stagingDir, item.displayName)
-                try {
-                    item.uri?.let { uri ->
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            dest.outputStream().use { output -> input.copyTo(output) }
-                        }
-                    }
-                    dest.absolutePath
-                } catch (e: Exception) {
-                    item.uri?.path ?: ""
-                }
-            }
-            val obj = JSONObject().apply {
-                put("id", index)
-                put("name", item.displayName)
-                put("size", item.sizeBytes)
-                put("mime", item.mimeType ?: "application/octet-stream")
-                put("path", localPath)
-            }
-            manifestArray.put(obj)
-        }
-        manifestArray.toString()
-    }
+    // ── Staging state (background copy of content URIs → cache) ────
+    var stagingProgress by remember { mutableFloatStateOf(0f) }
+    var stagingLabel by remember { mutableStateOf("") }
+    var manifestJsonStr by remember { mutableStateOf<String?>(null) }
 
     fun startServerWithPin(pin: String?) {
+        val manifest = manifestJsonStr ?: return
         val storeDir = NxfrService.getIdentityDir(context)
         try {
             NxfrService.NxfrBridge.nxfr_web_stop()
             val pinParam = pin ?: ""
-            val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, pinParam, manifestJsonStr)
+            val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, pinParam, manifest)
             val res = JSONObject(jsonStr)
 
             if (res.optString("status") == "started") {
@@ -147,10 +129,78 @@ fun WebShareScreen(
         }
     }
 
-    // Start web share server on compose, stop on dispose
-    DisposableEffect(Unit) {
-        startServerWithPin(if (isPinProtected) pinCode else null)
+    // Stage files in a background coroutine, then start the server.
+    // Content-URI files are streamed to cache in 64 KB chunks so memory
+    // stays under ~1 MB regardless of file size.
+    LaunchedEffect(items) {
+        withContext(Dispatchers.IO) {
+            val stagingDir = File(context.cacheDir, "web-share-staging").apply { mkdirs() }
+            val manifestArray = JSONArray()
+            val totalBytes = items.sumOf { it.sizeBytes }
+            var copiedSoFar = 0L
 
+            for ((index, item) in items.withIndex()) {
+                val shortName = if (item.displayName.length > 24) {
+                    item.displayName.take(21) + "…"
+                } else {
+                    item.displayName
+                }
+                stagingLabel = "Preparing ${index + 1}/${items.size}: $shortName"
+
+                val localPath = if (item.localFile != null && item.localFile.exists()) {
+                    // File already on disk — no copy needed.
+                    copiedSoFar += item.sizeBytes
+                    if (totalBytes > 0) stagingProgress = copiedSoFar.toFloat() / totalBytes
+                    item.localFile.absolutePath
+                } else {
+                    // Content URI — stream to cache in 64 KB chunks.
+                    val dest = File(stagingDir, item.displayName)
+                    try {
+                        item.uri?.let { uri ->
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                dest.outputStream().use { output ->
+                                    val buf = ByteArray(65536)
+                                    var n: Int
+                                    while (input.read(buf).also { n = it } >= 0) {
+                                        output.write(buf, 0, n)
+                                        copiedSoFar += n
+                                        if (totalBytes > 0) {
+                                            stagingProgress = copiedSoFar.toFloat() / totalBytes
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        dest.absolutePath
+                    } catch (e: Exception) {
+                        Log.e("WebShareScreen", "Failed to stage ${item.displayName}: ${e.message}", e)
+                        copiedSoFar += item.sizeBytes
+                        if (totalBytes > 0) stagingProgress = copiedSoFar.toFloat() / totalBytes
+                        item.uri?.path ?: ""
+                    }
+                }
+                val obj = JSONObject().apply {
+                    put("id", index)
+                    put("name", item.displayName)
+                    put("size", item.sizeBytes)
+                    put("mime", item.mimeType ?: "application/octet-stream")
+                    put("path", localPath)
+                }
+                manifestArray.put(obj)
+            }
+
+            val json = manifestArray.toString()
+            manifestJsonStr = json
+            stagingLabel = ""
+            stagingProgress = 1f
+        }
+
+        // Back on the main dispatcher — start the server now that files are staged.
+        startServerWithPin(if (isPinProtected) pinCode else null)
+    }
+
+    // Clean up on dispose
+    DisposableEffect(Unit) {
         onDispose {
             try {
                 NxfrService.NxfrBridge.nxfr_web_stop()
@@ -169,8 +219,9 @@ fun WebShareScreen(
         return
     }
 
-    // 10-minute timer
-    LaunchedEffect(Unit) {
+    // 10-minute timer (only ticks once the server is running)
+    LaunchedEffect(manifestJsonStr) {
+        if (manifestJsonStr == null) return@LaunchedEffect
         while (secondsRemaining > 0) {
             delay(1000)
             secondsRemaining--
@@ -178,6 +229,63 @@ fun WebShareScreen(
         onStop()
     }
 
+    // ── Staging progress screen ─────────────────────────────────
+    if (manifestJsonStr == null) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            CircularProgressIndicator(
+                progress = { stagingProgress.coerceIn(0f, 1f) },
+                modifier = Modifier.size(64.dp),
+                strokeWidth = 5.dp,
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                text = stagingLabel.ifEmpty { "Preparing files…" },
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            LinearProgressIndicator(
+                progress = { stagingProgress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(6.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "${(stagingProgress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            OutlinedButton(onClick = onStop) {
+                Text("Cancel")
+            }
+        }
+        return
+    }
+
+    // ── Main share UI (server running) ──────────────────────────
     val scrollState = rememberScrollState()
 
     Column(

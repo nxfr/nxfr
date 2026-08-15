@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nxfr.android.ui.icons.NxfrIcons
 import com.nxfr.android.ui.theme.deckColors
 
 @Composable
@@ -44,13 +45,13 @@ fun AttachChipRail(
     val scrollState = rememberScrollState()
 
     val chips = listOf(
-        AttachChipData("FILE", Icons.AutoMirrored.Outlined.InsertDriveFile, onOpenFilePicker),
-        AttachChipData("MEDIA", Icons.Outlined.PhotoLibrary, onOpenMediaPicker),
+        AttachChipData("FILE", NxfrIcons.File, onOpenFilePicker),
+        AttachChipData("MEDIA", NxfrIcons.Media, onOpenMediaPicker),
         AttachChipData("TEXT", Icons.Outlined.TextFields, onOpenTextComposer),
         AttachChipData("PASTE", Icons.Outlined.ContentPaste, onPasteClipboard),
-        AttachChipData("FOLDER", Icons.Outlined.Folder, onOpenFolderPicker),
-        AttachChipData("APP", Icons.Outlined.Apps, onOpenAppPicker),
-        AttachChipData("CONTACT", Icons.Outlined.Contacts, onOpenContactsPicker)
+        AttachChipData("FOLDER", NxfrIcons.Folder, onOpenFolderPicker),
+        AttachChipData("APP", NxfrIcons.App, onOpenAppPicker),
+        AttachChipData("CONTACT", NxfrIcons.Contact, onOpenContactsPicker)
     )
 
     Row(

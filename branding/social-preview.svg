@@ -1,110 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640">
-  <!--
-    NXFR Protocol — GitHub Social Preview Banner
-    Dimensions: 1280×640 (GitHub recommended)
-    Background: Deep Slate with subtle geometric grid + network node decoration
-  -->
-
-  <!-- ═══ Background ═══ -->
-  <rect width="1280" height="640" fill="#0F172A"/>
-
-  <!-- Subtle geometric grid -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <!-- NXFR Protocol — GitHub Social Preview (Bracket-Beam Production Mark) -->
+  <rect width="1280" height="640" fill="#0B0F17"/>
+  
   <defs>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#1E293B" stroke-width="0.5"/>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#111827" stroke-width="1"/>
     </pattern>
   </defs>
-  <rect width="1280" height="640" fill="url(#grid)" opacity="0.5"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
 
-  <!-- Decorative network topology nodes and links -->
-  <g opacity="0.07" fill="#00E5FF" stroke="#00E5FF">
-    <!-- Nodes -->
-    <circle cx="70" cy="90" r="4"/>
-    <circle cx="200" cy="560" r="5"/>
-    <circle cx="380" cy="60" r="3"/>
-    <circle cx="420" cy="580" r="4"/>
-    <circle cx="880" cy="70" r="3"/>
-    <circle cx="1050" cy="560" r="4"/>
-    <circle cx="1180" cy="120" r="5"/>
-    <circle cx="1220" cy="480" r="3"/>
-    <!-- Links -->
-    <line x1="70" y1="90" x2="200" y2="560" stroke-width="1" fill="none"/>
-    <line x1="70" y1="90" x2="380" y2="60" stroke-width="1" fill="none"/>
-    <line x1="200" y1="560" x2="420" y2="580" stroke-width="1" fill="none"/>
-    <line x1="880" y1="70" x2="1180" y2="120" stroke-width="1" fill="none"/>
-    <line x1="1180" y1="120" x2="1220" y2="480" stroke-width="1" fill="none"/>
-    <line x1="1050" y1="560" x2="1220" y2="480" stroke-width="1" fill="none"/>
-    <line x1="880" y1="70" x2="1050" y2="560" stroke-width="1" fill="none"/>
+  <!-- Left Header Panel -->
+  <g transform="translate(100, 130)">
+    <!-- Icon Mark (150x150 at x=0, y=10) -->
+    <g transform="translate(0, 10) scale(0.29296875)">
+      <polyline points="204,104 148,104 76,176 76,336 148,408 204,408"
+        fill="none" stroke="#F8FAFC" stroke-width="48"
+        stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+      <polyline points="308,104 364,104 436,176 436,336 364,408 308,408"
+        fill="none" stroke="#F8FAFC" stroke-width="48"
+        stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+      <rect x="116" y="232" width="34" height="48" fill="#F8FAFC"/>
+      <rect x="164" y="232" width="34" height="48" fill="#F8FAFC"/>
+      <rect x="214" y="214" width="84" height="84" fill="#00E5FF"/>
+      <rect x="314" y="232" width="34" height="48" fill="#F8FAFC"/>
+      <rect x="362" y="232" width="34" height="48" fill="#F8FAFC"/>
+    </g>
+
+    <!-- Wordmark & Tagline -->
+    <text x="190" y="75" font-family="'Inter', -apple-system, sans-serif" font-weight="800" font-size="76" letter-spacing="6" fill="#F8FAFC">NXFR</text>
+    <text x="194" y="120" font-family="'JetBrains Mono', monospace" font-weight="600" font-size="18" letter-spacing="2" fill="#00E5FF">PEER-TO-PEER LAN PROTOCOL</text>
+    <text x="194" y="160" font-family="'Inter', -apple-system, sans-serif" font-weight="400" font-size="20" fill="#94A3B8">No cloud. No accounts. Just math.</text>
   </g>
 
-  <!-- ═══ Logo mark (scaled to ~300px) ═══ -->
-  <g transform="translate(100, 170) scale(3)">
-    <!-- Left device bar -->
-    <rect x="16" y="18" width="14" height="64" fill="#00E5FF"/>
-    <!-- Right device bar -->
-    <rect x="70" y="18" width="14" height="64" fill="#00E5FF"/>
-    <!-- Diagonal transfer arrow -->
-    <polygon points="23,8 30,18 84,82 77,92 70,82 16,18" fill="#00E5FF"/>
+  <!-- Technical Spec Strip -->
+  <g transform="translate(100, 420)">
+    <rect width="1080" height="88" rx="4" fill="#0F172A" stroke="#1E293B" stroke-width="1.5"/>
+    
+    <text x="40" y="36" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748B">PORT</text>
+    <text x="40" y="62" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="700" fill="#00E5FF">TCP 17394</text>
+
+    <text x="220" y="36" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748B">CIPHER</text>
+    <text x="220" y="62" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="700" fill="#F8FAFC">TLS 1.3 / X25519</text>
+
+    <text x="450" y="36" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748B">OFF-GRID</text>
+    <text x="450" y="62" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="700" fill="#F8FAFC">DESERT MODE (WFD)</text>
+
+    <text x="730" y="36" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748B">ENGINE</text>
+    <text x="730" y="62" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="700" fill="#00E5FF">RUST + TOKIO</text>
+
+    <text x="940" y="36" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748B">LICENSE</text>
+    <text x="940" y="62" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="700" fill="#F8FAFC">APACHE 2.0</text>
   </g>
-
-  <!-- ═══ Title: NXFR ═══ -->
-  <g fill="#FFFFFF">
-    <!-- N -->
-    <polygon points="520,190 540,190 540,290 520,290"/>
-    <polygon points="575,190 595,190 595,290 575,290"/>
-    <polygon points="520,190 540,190 595,290 575,290"/>
-    <!-- X -->
-    <polygon points="615,190 638,190 690,290 667,290"/>
-    <polygon points="667,190 690,190 638,290 615,290"/>
-    <!-- F -->
-    <polygon points="710,190 730,190 730,290 710,290"/>
-    <polygon points="730,190 770,190 770,210 730,210"/>
-    <polygon points="730,230 762,230 762,250 730,250"/>
-    <!-- R -->
-    <polygon points="790,190 810,190 810,290 790,290"/>
-    <polygon points="810,190 850,190 850,210 810,210"/>
-    <polygon points="850,190 860,190 860,240 850,240"/>
-    <polygon points="810,230 850,230 850,250 810,250"/>
-    <polygon points="828,250 848,250 860,290 840,290"/>
-  </g>
-
-  <!-- ═══ Subtitle ═══ -->
-  <text x="525" y="352"
-        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif"
-        font-weight="400"
-        font-size="26"
-        fill="#94A3B8">Open, secure, cross-platform LAN file transfer.</text>
-
-  <!-- ═══ Badge Pills ═══ -->
-  <g transform="translate(525, 400)">
-    <!-- TLS 1.3 -->
-    <rect x="0" y="0" width="108" height="38" rx="19" fill="none" stroke="#00E5FF" stroke-width="1.5"/>
-    <text x="54" y="25" text-anchor="middle"
-          font-family="system-ui, -apple-system, sans-serif"
-          font-weight="600" font-size="15" fill="#00E5FF">TLS 1.3</text>
-
-    <!-- No Cloud -->
-    <rect x="128" y="0" width="114" height="38" rx="19" fill="none" stroke="#00E5FF" stroke-width="1.5"/>
-    <text x="185" y="25" text-anchor="middle"
-          font-family="system-ui, -apple-system, sans-serif"
-          font-weight="600" font-size="15" fill="#00E5FF">No Cloud</text>
-
-    <!-- Resumable -->
-    <rect x="262" y="0" width="130" height="38" rx="19" fill="none" stroke="#00E5FF" stroke-width="1.5"/>
-    <text x="327" y="25" text-anchor="middle"
-          font-family="system-ui, -apple-system, sans-serif"
-          font-weight="600" font-size="15" fill="#00E5FF">Resumable</text>
-
-    <!-- Rust -->
-    <rect x="412" y="0" width="82" height="38" rx="19" fill="none" stroke="#00E5FF" stroke-width="1.5"/>
-    <text x="453" y="25" text-anchor="middle"
-          font-family="system-ui, -apple-system, sans-serif"
-          font-weight="600" font-size="15" fill="#00E5FF">Rust</text>
-  </g>
-
-  <!-- ═══ Bottom URL ═══ -->
-  <text x="640" y="590" text-anchor="middle"
-        font-family="system-ui, -apple-system, sans-serif"
-        font-weight="500" font-size="18" fill="#475569"
-        letter-spacing="2">github.com/nxfr/nxfr</text>
 </svg>

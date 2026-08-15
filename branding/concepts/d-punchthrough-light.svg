@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Concept D: "Punch-Through" — Light variant -->
+  <rect width="512" height="512" fill="#F8FAFC"/>
+  <rect x="148" y="148" width="216" height="216"
+    fill="none" stroke="#0B0F17" stroke-width="24" rx="2"/>
+  <line x1="100" y1="412" x2="412" y2="100"
+    stroke="#00E5FF" stroke-width="24" stroke-linecap="square"/>
+</svg>

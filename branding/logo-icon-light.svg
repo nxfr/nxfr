@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- NXFR Protocol — Bracket-Beam Production Mark (Light) -->
+  <rect width="512" height="512" fill="#F8FAFC"/>
+  <!-- Left Bracket (Peer 1) -->
+  <polyline points="204,104 148,104 76,176 76,336 148,408 204,408"
+    fill="none" stroke="#0B0F17" stroke-width="48"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Right Bracket (Peer 2) -->
+  <polyline points="308,104 364,104 436,176 436,336 364,408 308,408"
+    fill="none" stroke="#0B0F17" stroke-width="48"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Beam Dashes -->
+  <rect x="116" y="232" width="34" height="48" fill="#0B0F17"/>
+  <rect x="164" y="232" width="34" height="48" fill="#0B0F17"/>
+  <!-- Packet in Flight (Accessible Cyan for Light Surface) -->
+  <rect x="214" y="214" width="84" height="84" fill="#00838F"/>
+  <!-- Right Beam Dashes -->
+  <rect x="314" y="232" width="34" height="48" fill="#0B0F17"/>
+  <rect x="362" y="232" width="34" height="48" fill="#0B0F17"/>
+</svg>

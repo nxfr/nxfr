@@ -6,9 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.WifiTethering
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +20,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nxfr.android.ui.icons.NxfrIcons
 import com.nxfr.android.ui.theme.deckColors
 
 @Composable
@@ -44,7 +42,7 @@ fun ActionRail(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         ActionDeckChip(
-            icon = Icons.Outlined.Link,
+            icon = NxfrIcons.WebLink,
             label = "WEB LINK",
             enabled = isPowered,
             onClick = {
@@ -55,7 +53,7 @@ fun ActionRail(
         )
 
         ActionDeckChip(
-            icon = Icons.Outlined.QrCodeScanner,
+            icon = NxfrIcons.QrScan,
             label = "SCAN QR",
             enabled = true,
             onClick = {
@@ -66,7 +64,7 @@ fun ActionRail(
         )
 
         ActionDeckChip(
-            icon = Icons.Outlined.BugReport,
+            icon = NxfrIcons.Diagnostics,
             label = "DIAGNOSTICS",
             enabled = true,
             onClick = {

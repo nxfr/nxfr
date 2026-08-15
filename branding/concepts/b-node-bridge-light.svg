@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Concept B: "Node Bridge" — Light variant -->
+  <rect width="512" height="512" fill="#F8FAFC"/>
+  <rect x="96" y="212" width="88" height="88"
+    fill="none" stroke="#0B0F17" stroke-width="16" rx="2"/>
+  <rect x="328" y="212" width="88" height="88"
+    fill="none" stroke="#0B0F17" stroke-width="16" rx="2"/>
+  <rect x="184" y="244" width="144" height="24" fill="#00E5FF"/>
+</svg>

@@ -43,6 +43,7 @@ import com.nxfr.android.staging.ContactsVCardExporter
 import com.nxfr.android.staging.StagedItem
 import com.nxfr.android.staging.StagedType
 import com.nxfr.android.staging.StagingRepository
+import com.nxfr.android.ui.icons.NxfrIcons
 import com.nxfr.android.ui.components.AttachChipRail
 import com.nxfr.android.ui.components.DeviceDeckCard
 import com.nxfr.android.ui.components.StagedFilmstrip
@@ -506,7 +507,7 @@ fun SendScreen(
                         },
                         modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = "Scan QR", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
+                        Icon(NxfrIcons.QrScan, contentDescription = "Scan QR", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
                     }
 
                     IconButton(
@@ -520,7 +521,7 @@ fun SendScreen(
                         onClick = { showTroubleshootSheet = true },
                         modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.Outlined.Lan, contentDescription = "Diagnostics", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
+                        Icon(NxfrIcons.Diagnostics, contentDescription = "Diagnostics", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
                     }
                 }
             }

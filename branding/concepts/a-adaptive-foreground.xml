@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Bracket Beam — 72dp safe zone centered in 108dp viewport.
+         Left bracket: arms at (38,27)/(38,81), tip at (18,54)
+         Right bracket: arms at (70,27)/(70,81), tip at (90,54)
+         Packet: 10x10 square centered at (54,54) -->
+
+    <!-- Left bracket (peer 1) -->
+    <path
+        android:pathData="M38,27 L18,54 L38,81"
+        android:strokeColor="#F8FAFC"
+        android:strokeWidth="7"
+        android:strokeLineCap="square"
+        android:strokeLineJoin="miter"
+        android:fillColor="@android:color/transparent"/>
+
+    <!-- Right bracket (peer 2) -->
+    <path
+        android:pathData="M70,27 L90,54 L70,81"
+        android:strokeColor="#F8FAFC"
+        android:strokeWidth="7"
+        android:strokeLineCap="square"
+        android:strokeLineJoin="miter"
+        android:fillColor="@android:color/transparent"/>
+
+    <!-- Packet in transit -->
+    <path
+        android:pathData="M49,49 L59,49 L59,59 L49,59 Z"
+        android:fillColor="#00E5FF"/>
+
+</vector>

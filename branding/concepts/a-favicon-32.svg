@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Bracket Beam favicon — 32px -->
+  <rect width="32" height="32" fill="#0B0F17"/>
+  <polyline points="10,6 2,16 10,26"
+    fill="none" stroke="#F8FAFC" stroke-width="3"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+  <polyline points="22,6 30,16 22,26"
+    fill="none" stroke="#F8FAFC" stroke-width="3"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+  <rect x="14" y="14" width="4" height="4" fill="#00E5FF"/>
+</svg>

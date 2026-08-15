@@ -1,23 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <!--
-    NXFR Protocol — Logo Icon Mark
-
-    Concept: A bold geometric "N" formed by two vertical bars (representing
-    two devices/nodes on a LAN) connected by a diagonal stroke with arrow
-    tips extending beyond the bars — representing bidirectional peer-to-peer
-    data transfer. The arrow tip at top-left points upward (source device),
-    the tip at bottom-right points downward (destination device).
-
-    Colors: Electric Cyan (#00E5FF) — pops on both light and dark backgrounds.
-    Replace fill values with "currentColor" for automatic theme adaptation.
-  -->
-
-  <!-- Left device bar -->
-  <rect x="16" y="18" width="14" height="64" fill="#00E5FF"/>
-
-  <!-- Right device bar -->
-  <rect x="70" y="18" width="14" height="64" fill="#00E5FF"/>
-
-  <!-- Diagonal transfer arrow with bidirectional tips -->
-  <polygon points="23,8 30,18 84,82 77,92 70,82 16,18" fill="#00E5FF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- NXFR Protocol — Bracket-Beam Production Mark (Dark) -->
+  <rect width="512" height="512" fill="#0B0F17"/>
+  <!-- Left Bracket (Peer 1) -->
+  <polyline points="204,104 148,104 76,176 76,336 148,408 204,408"
+    fill="none" stroke="#F8FAFC" stroke-width="48"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Right Bracket (Peer 2) -->
+  <polyline points="308,104 364,104 436,176 436,336 364,408 308,408"
+    fill="none" stroke="#F8FAFC" stroke-width="48"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Beam Dashes -->
+  <rect x="116" y="232" width="34" height="48" fill="#F8FAFC"/>
+  <rect x="164" y="232" width="34" height="48" fill="#F8FAFC"/>
+  <!-- Packet in Flight (Sole Signal Cyan Element) -->
+  <rect x="214" y="214" width="84" height="84" fill="#00E5FF"/>
+  <!-- Right Beam Dashes -->
+  <rect x="314" y="232" width="34" height="48" fill="#F8FAFC"/>
+  <rect x="362" y="232" width="34" height="48" fill="#F8FAFC"/>
 </svg>

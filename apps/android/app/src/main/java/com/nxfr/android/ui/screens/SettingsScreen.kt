@@ -38,6 +38,7 @@ import com.nxfr.android.R
 import com.nxfr.android.prefs.NxfrPreferences
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.ui.dialogs.ColorPickerDialog
+import com.nxfr.android.ui.icons.NxfrIcons
 import com.nxfr.android.ui.sheets.TroubleshootSheet
 import com.nxfr.android.ui.theme.ThemePreference
 import com.nxfr.android.ui.theme.deckColors
@@ -388,7 +389,7 @@ fun SettingsScreen(
             subtitle = saveFolderPath ?: "Downloads/NXFR (Default)",
             onClick = { folderPicker.launch(null) }
         ) {
-            Icon(Icons.Outlined.Folder, contentDescription = "Pick folder", tint = deck.signalBeam)
+            Icon(NxfrIcons.Folder, contentDescription = "Pick folder", tint = deck.signalBeam)
         }
 
         // ── 4. SEND SECTION ──────────────────────────────────────────────────
@@ -573,7 +574,7 @@ fun SettingsScreen(
             subtitle = "Inspect socket bindings, discovery beacons, and power policies",
             onClick = { showTroubleshootSheet = true }
         ) {
-            Icon(Icons.Outlined.Lan, contentDescription = "Diagnostics", tint = deck.signalBeam)
+            Icon(NxfrIcons.Diagnostics, contentDescription = "Diagnostics", tint = deck.signalBeam)
         }
 
         LedgerRow(
@@ -583,7 +584,7 @@ fun SettingsScreen(
                 DebugBundleExporter.exportDebugBundle(context)
             }
         ) {
-            Icon(Icons.Outlined.FileDownload, contentDescription = "Export bundle", tint = deck.signalBeam)
+            Icon(NxfrIcons.Receive, contentDescription = "Export bundle", tint = deck.signalBeam)
         }
 
         // ── 8. ABOUT & PROTOCOL ──────────────────────────────────────────────

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Concept C: "Crosslock"
+       Two thick chevrons crossing through each other.
+       TX (structure) meets RX (active) — the handshake as interlocking geometry.
+       Cyan chevron is drawn on top, visually cutting through structure. -->
+  <rect width="512" height="512" fill="#0B0F17"/>
+  <!-- TX chevron (right-pointing, structure) -->
+  <polyline points="152,128 328,256 152,384"
+    fill="none" stroke="#F8FAFC" stroke-width="32"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+  <!-- RX chevron (left-pointing, active) -->
+  <polyline points="360,128 184,256 360,384"
+    fill="none" stroke="#00E5FF" stroke-width="32"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

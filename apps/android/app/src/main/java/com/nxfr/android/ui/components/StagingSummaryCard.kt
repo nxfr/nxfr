@@ -19,47 +19,57 @@ import androidx.compose.ui.unit.dp
 import com.nxfr.android.staging.StagedItem
 import com.nxfr.android.staging.StagedType
 import com.nxfr.android.staging.StagingRepository
+import com.nxfr.android.ui.icons.NxfrIcons
 
 @Composable
 fun StagingSummaryCard(
     onEditStaging: () -> Unit,
     onAddMore: () -> Unit,
+    onClearStaging: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val stagedItems by StagingRepository.stagedItems.collectAsState()
-    val totalFiles = StagingRepository.calculateTotalFiles()
-    val totalSize = StagingRepository.calculateTotalSize()
 
     if (stagedItems.isEmpty()) return
+
+    val totalBytes = stagedItems.sumOf { it.sizeBytes }
+    val formattedSize = StagingRepository.formatBytes(totalBytes)
 
     ElevatedCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.primaryContainer
         ),
         shape = MaterialTheme.shapes.medium
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column {
                     Text(
-                        text = "Staged: $totalFiles item${if (totalFiles != 1) "s" else ""} • ${StagingRepository.formatBytes(totalSize)}",
+                        text = "Staged for Transfer",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                    Text(
+                        text = "${stagedItems.size} item(s) \u2022 $formattedSize",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
                 }
-                IconButton(onClick = { StagingRepository.clear() }) {
+
+                IconButton(onClick = onClearStaging) {
                     Icon(Icons.Default.Close, contentDescription = "Clear all", tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Thumbnail / Icon Row
             LazyRow(
@@ -72,12 +82,12 @@ fun StagingSummaryCard(
                         label = { Text(item.displayName, maxLines = 1) },
                         leadingIcon = {
                             val icon = when (item.type) {
-                                StagedType.FILE -> Icons.Outlined.InsertDriveFile
-                                StagedType.MEDIA -> Icons.Outlined.Image
+                                StagedType.FILE -> NxfrIcons.File
+                                StagedType.MEDIA -> NxfrIcons.Media
                                 StagedType.TEXT -> Icons.Outlined.TextFields
-                                StagedType.FOLDER -> Icons.Outlined.Folder
-                                StagedType.APP -> Icons.Outlined.Apps
-                                StagedType.CONTACT -> Icons.Outlined.Contacts
+                                StagedType.FOLDER -> NxfrIcons.Folder
+                                StagedType.APP -> NxfrIcons.App
+                                StagedType.CONTACT -> NxfrIcons.Contact
                             }
                             Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
                         }

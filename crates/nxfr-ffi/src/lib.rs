@@ -1030,7 +1030,8 @@ async fn do_send_file(
     let mut cumulative_sent: u64 = 0;
 
     for entry in send_entries.iter().filter(|e| !e.is_dir) {
-        let file_data = tokio::fs::read(&entry.full_path).await?;
+        let mut file = tokio::fs::File::open(&entry.full_path).await?;
+        let file_size = entry.size as usize;
         let stream_id = entry.file_id;
 
         // Send FileMetadata.
@@ -1058,14 +1059,14 @@ async fn do_send_file(
             _ => return Err(format!("file metadata rejected for {}", entry.relative_path).into()),
         }
 
-        // Stream chunks (1 MiB, 8 in-flight window — per PROTOCOL §9.2.13).
+        // Stream chunks from disk (1 MiB read buffer, 8 in-flight window).
         let chunk_size = 1024 * 1024usize;
         let max_in_flight = 8usize;
         let mut offset: usize = 0;
         let mut in_flight: usize = 0;
-        let total = file_data.len();
+        let mut read_buf = vec![0u8; chunk_size];
 
-        while offset < total {
+        while offset < file_size {
             while in_flight >= max_in_flight {
                 let (_, pl) = conn.recv_frame().await?;
                 if let Ok(ControlMessage::ChunkAck { length, .. }) = codec::decode_control(&pl) {
@@ -1081,21 +1082,25 @@ async fn do_send_file(
                 }
             }
 
-            let end = std::cmp::min(offset + chunk_size, total);
-            let chunk = &file_data[offset..end];
-            let is_last = end == total;
-            let chunk_hash: [u8; 32] = Sha256::digest(chunk).into();
+            // Read one chunk from disk.
+            let want = std::cmp::min(chunk_size, file_size - offset);
+            let buf = &mut read_buf[..want];
+            use tokio::io::AsyncReadExt;
+            file.read_exact(buf).await?;
 
-            let mut payload = Vec::with_capacity(8 + 32 + chunk.len());
+            let is_last = offset + want == file_size;
+            let chunk_hash: [u8; 32] = Sha256::digest(&*buf).into();
+
+            let mut payload = Vec::with_capacity(8 + 32 + want);
             payload.extend_from_slice(&(offset as u64).to_be_bytes());
             payload.extend_from_slice(&chunk_hash);
-            payload.extend_from_slice(chunk);
+            payload.extend_from_slice(buf);
 
             let flags = if is_last { 0x0001u16 } else { 0u16 };
             conn.send_chunk(session_id, stream_id, flags, payload)
                 .await?;
             in_flight += 1;
-            offset = end;
+            offset += want;
         }
 
         while in_flight > 0 {
@@ -1363,7 +1368,9 @@ async fn do_receive_file(
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let mut file_data = Vec::with_capacity(expected_size as usize);
+        // Write chunks to a temp file on disk instead of accumulating in memory.
+        let tmp_path = final_path.with_extension("nxfr_tmp");
+        let mut tmp_file = std::fs::File::create(&tmp_path)?;
         let mut hasher = Sha256::new();
         let mut file_received_bytes: u64 = 0;
 
@@ -1375,6 +1382,7 @@ async fn do_receive_file(
                 match msg {
                     ControlMessage::TransferComplete { .. } => break,
                     ControlMessage::TransferCancel { .. } => {
+                        let _ = std::fs::remove_file(&tmp_path);
                         return Err("transfer cancelled by peer".into());
                     }
                     _ => continue,
@@ -1387,6 +1395,7 @@ async fn do_receive_file(
 
             // Parse chunk: [offset:8][hash:32][data:...]
             if payload.len() < 41 {
+                let _ = std::fs::remove_file(&tmp_path);
                 return Err("chunk too small".into());
             }
             let chunk_offset = u64::from_be_bytes(payload[0..8].try_into().unwrap());
@@ -1396,10 +1405,12 @@ async fn do_receive_file(
             // Verify per-chunk hash.
             let computed = Sha256::digest(chunk_data);
             if computed.as_slice() != chunk_hash {
+                let _ = std::fs::remove_file(&tmp_path);
                 return Err(format!("chunk hash mismatch at offset {chunk_offset}").into());
             }
 
-            file_data.extend_from_slice(chunk_data);
+            use std::io::Write;
+            tmp_file.write_all(chunk_data)?;
             hasher.update(chunk_data);
             file_received_bytes += chunk_data.len() as u64;
             cumulative_received += chunk_data.len() as u64;
@@ -1430,9 +1441,13 @@ async fn do_receive_file(
             }
         }
 
+        // Flush and close temp file before verifying hash.
+        drop(tmp_file);
+
         // Verify per-file SHA-256
         let final_hash: [u8; 32] = hasher.finalize().into();
         if final_hash != expected_hash {
+            let _ = std::fs::remove_file(&tmp_path);
             return Err(format!(
                 "file hash mismatch for {}: expected {}, got {}",
                 relative_path,
@@ -1442,8 +1457,8 @@ async fn do_receive_file(
             .into());
         }
 
-        // Write file
-        std::fs::write(&final_path, &file_data)?;
+        // Rename temp file to final destination.
+        std::fs::rename(&tmp_path, &final_path)?;
         if first_received_path.is_none() {
             first_received_path = Some(final_path.to_string_lossy().to_string());
         }

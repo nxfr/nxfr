@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <!-- NXFR Favicon — bold N on dark rounded background -->
-  <rect width="100" height="100" rx="20" fill="#0F172A"/>
-  <rect x="18" y="18" width="18" height="64" fill="#00E5FF"/>
-  <rect x="64" y="18" width="18" height="64" fill="#00E5FF"/>
-  <polygon points="18,18 36,18 82,82 64,82" fill="#00E5FF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" fill="#0B0F17"/>
+  <!-- Left Bracket -->
+  <polyline points="12,6 9,6 4,11 4,21 9,26 12,26"
+    fill="none" stroke="#F8FAFC" stroke-width="3"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Right Bracket -->
+  <polyline points="20,6 23,6 28,11 28,21 23,26 20,26"
+    fill="none" stroke="#F8FAFC" stroke-width="3"
+    stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <!-- Beam Dashes -->
+  <rect x="7" y="14.5" width="2" height="3" fill="#F8FAFC"/>
+  <rect x="10" y="14.5" width="2" height="3" fill="#F8FAFC"/>
+  <!-- Packet -->
+  <rect x="13" y="13" width="6" height="6" fill="#00E5FF"/>
+  <!-- Right Dashes -->
+  <rect x="20" y="14.5" width="2" height="3" fill="#F8FAFC"/>
+  <rect x="23" y="14.5" width="2" height="3" fill="#F8FAFC"/>
 </svg>
