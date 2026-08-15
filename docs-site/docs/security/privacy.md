@@ -31,6 +31,6 @@ advertised_id = first_16_hex_chars( SHA-256(device_id || "YYYY-MM-DD") )
 
 ## No PII in Discovery
 
-Unlike older iterations of peer-to-peer protocols that leaked partial phone numbers or email hashes during discovery, NXFR never includes any Personally Identifiable Information (PII) in the mDNS phase. The device name is only visible when the user chooses to be discoverable, and the `device_id` is tied to an ephemeral cryptographic keypair, not real-world identity.
+Unlike older iterations of peer-to-peer protocols that leaked partial phone numbers or email hashes during discovery, NXFR never includes any Personally Identifiable Information (PII) during discovery. The device name is only visible when the user chooses to be discoverable, and the `device_id` is tied to an ephemeral cryptographic keypair, not real-world identity.
 
 Furthermore, NXFR operates purely peer-to-peer over the LAN and performs **no cloud telemetry** or tracking whatsoever.

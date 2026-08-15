@@ -1,6 +1,6 @@
 # NXFR Android Application
 
-The official Android reference implementation of the **Nearby Xfer Protocol (NXFR)**, featuring the **Instrument Deck** design system, a pure-Rust cryptographic core, and an uncompromising zero-cloud privacy architecture.
+The Android implementation of the **Nearby Xfer Protocol (NXFR)**, featuring the **Instrument Deck** interface, Rust cryptographic core, and local peer-to-peer architecture.
 
 ---
 

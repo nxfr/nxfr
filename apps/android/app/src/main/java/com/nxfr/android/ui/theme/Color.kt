@@ -6,8 +6,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 
-// ── Instrument Deck Color Palette (Direction A) ───────────────────────
-val DeckDark = Color(0xFF0B0F17)              // Root background (Cockpit Obsidian)
+// ── Instrument Deck Color Palette ──────────────────────────────────────
+val DeckDark = Color(0xFF0B0F17)              // Root background (Dark)
 val DeckSurface = Color(0xFF131B26)           // Structural panel surface
 val DeckSurfaceVariant = Color(0xFF1A2332)    // Elevated modules & cards
 val DeckSurfaceContainer = Color(0xFF0F151F)  // Recessed panel wells
@@ -18,15 +18,15 @@ val DeckTextPrimary = Color(0xFFF1F5F9)       // High-contrast readout text
 val DeckTextSecondary = Color(0xFF94A3B8)     // Secondary telemetry labels
 val DeckTextDim = Color(0xFF64748B)           // Inactive / prompt text
 
-// ── Signal Tokens (Strictly functional, never decorative) ─────────────
+// ── Signal Tokens ─────────────────────────────────────────────────────
 val SignalBeam = Color(0xFF00E5FF)            // Active transmission cyan
 val SignalBeamGlow = Color(0x3300E5FF)        // 20% alpha outer beam glow
 val SignalStandby = Color(0xFF475569)         // Dormant wire slate
 val SignalAlert = Color(0xFFFF3366)           // Breaker trip / Error coral
-val SignalSuccess = Color(0xFF00E676)         // Cryptographic verification green
+val SignalSuccess = Color(0xFF00E676)         // Verification green
 val SignalWarning = Color(0xFFFFB300)         // Action required amber
 
-// ── Light Drafting-Paper Mode ─────────────────────────────────────────
+// ── Light Mode ────────────────────────────────────────────────────────
 val DeckPaper = Color(0xFFF8FAFC)
 val DeckPaperSurface = Color(0xFFFFFFFF)
 val DeckPaperSurfaceVariant = Color(0xFFF1F5F9)

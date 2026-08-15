@@ -410,8 +410,8 @@ if the native API hangs.
 
 ## 4. Windows Architecture
 
-The Windows implementation will follow in a future
-phase, designed to integrate deeply with the
+The Windows implementation is planned for a future
+release, designed to integrate deeply with the
 modern Windows shell and APIs.
 
 ### 4.1 Implementation Plan

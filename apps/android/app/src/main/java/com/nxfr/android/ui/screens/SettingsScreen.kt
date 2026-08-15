@@ -285,7 +285,7 @@ fun SettingsScreen(
         // ── 2. GENERAL SECTION ───────────────────────────────────────────────
         LedgerSectionHeader(title = "CONSOLE & PRESENTATION")
 
-        LedgerRow(title = "Interface Theme", subtitle = "Cockpit obsidian or light drafting paper") {
+        LedgerRow(title = "Interface Theme", subtitle = "Dark or light theme") {
             val themeMode by ThemePreference.themeMode.collectAsState()
             val themeOptions = listOf("Auto", "Dark", "Light")
             SingleChoiceSegmentedButtonRow(modifier = Modifier.width(200.dp)) {
