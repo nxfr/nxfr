@@ -264,6 +264,8 @@ fun NxfrNavHost(
                 senderName = offering.peerName,
                 fileCount = offering.totalFiles,
                 totalSizeFormatted = formatBytes(offering.totalSize),
+                deviceId = offering.deviceId,
+                sasCode = offering.sasCode,
                 onAccept = {
                     scope.launch {
                         try {

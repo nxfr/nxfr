@@ -34,6 +34,8 @@ fun ConsentDialog(
     fileCount: Int,
     totalSizeFormatted: String,
     fileNames: List<String> = emptyList(),
+    deviceId: String = "",
+    sasCode: String = "",
     onAccept: () -> Unit,
     onReject: () -> Unit,
     modifier: Modifier = Modifier
@@ -65,14 +67,27 @@ fun ConsentDialog(
         }
     }
 
-    val senderHash = Math.abs(senderName.hashCode())
-    val shortId = String.format(Locale.US, "%04x", senderHash % 0xFFFF)
-    val sasPart1 = (senderHash % 900) + 100
-    val sasPart2 = ((senderHash / 1000) % 900) + 100
-    val sasCode = "$sasPart1 $sasPart2"
+    // Use real device_id from TLS cert-derived identity, not senderName hash.
+    val shortId = if (deviceId.length >= 8) deviceId.take(8) else deviceId.ifEmpty {
+        String.format(Locale.US, "%04x", Math.abs(senderName.hashCode()) % 0xFFFF)
+    }
+    // Format the real 6-digit SAS code from TLS keying material as "XXX XXX".
+    val displaySas = if (sasCode.length == 6) {
+        "${sasCode.substring(0, 3)} ${sasCode.substring(3)}"
+    } else if (sasCode.isNotEmpty()) {
+        sasCode
+    } else {
+        "--- ---" // No SAS available (pairing not initiated).
+    }
+
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { false } // Prevent dismiss by swipe/back; only buttons close it.
+    )
 
     ModalBottomSheet(
-        onDismissRequest = onReject,
+        onDismissRequest = { /* no-op: only Accept/Reject buttons close this dialog */ },
+        sheetState = sheetState,
         containerColor = deck.surface,
         shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
         dragHandle = {
@@ -147,7 +162,7 @@ fun ConsentDialog(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "● $sasCode ●",
+                        text = "● $displaySas ●",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Black,

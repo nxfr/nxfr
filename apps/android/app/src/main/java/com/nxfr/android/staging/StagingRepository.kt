@@ -2,6 +2,7 @@ package com.nxfr.android.staging
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,8 @@ import java.io.File
 import java.util.UUID
 
 object StagingRepository {
+    private const val TAG = "StagingRepository"
+
     private val _stagedItems = MutableStateFlow<List<StagedItem>>(emptyList())
     val stagedItems: StateFlow<List<StagedItem>> = _stagedItems.asStateFlow()
 
@@ -65,6 +68,9 @@ object StagingRepository {
 
     suspend fun prepareStagingDirectory(context: Context): File = withContext(Dispatchers.IO) {
         val items = _stagedItems.value
+        if (items.isEmpty()) {
+            throw IllegalStateException("No items selected for transfer")
+        }
         val ts = System.currentTimeMillis()
         val stagingDir = File(context.cacheDir, "staging_$ts")
         stagingDir.mkdirs()
@@ -77,10 +83,20 @@ object StagingRepository {
                     item.localFile.copyTo(dest, overwrite = true)
                 }
                 item.uri != null -> {
-                    context.contentResolver.openInputStream(item.uri)?.use { input ->
-                        dest.outputStream().use { output ->
-                            input.copyTo(output)
+                    try {
+                        context.contentResolver.openInputStream(item.uri)?.use { input ->
+                            dest.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
                         }
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "Permission denied for ${item.displayName}: ${e.message}")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Permission denied for ${item.displayName}", Toast.LENGTH_SHORT).show()
+                        }
+                        // Single file — nothing to return.
+                        stagingDir.deleteRecursively()
+                        throw IllegalStateException("Permission denied for ${item.displayName}")
                     }
                 }
             }
@@ -98,23 +114,46 @@ object StagingRepository {
                     }
                 }
                 item.isFolder && item.uri != null -> {
-                    val folderDir = File(stagingDir, item.displayName)
-                    folderDir.mkdirs()
-                    val treeDoc = DocumentFile.fromTreeUri(context, item.uri)
-                    if (treeDoc != null && treeDoc.isDirectory) {
-                        copyDocumentTree(context, treeDoc, folderDir)
+                    try {
+                        val folderDir = File(stagingDir, item.displayName)
+                        folderDir.mkdirs()
+                        val treeDoc = DocumentFile.fromTreeUri(context, item.uri)
+                        if (treeDoc != null && treeDoc.isDirectory) {
+                            copyDocumentTree(context, treeDoc, folderDir)
+                        }
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "Permission denied for folder ${item.displayName}: ${e.message}")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Permission denied for ${item.displayName}", Toast.LENGTH_SHORT).show()
+                        }
+                        // Skip this folder, continue with remaining items.
                     }
                 }
                 item.uri != null -> {
-                    val dest = File(stagingDir, item.displayName)
-                    context.contentResolver.openInputStream(item.uri)?.use { input ->
-                        dest.outputStream().use { output ->
-                            input.copyTo(output)
+                    try {
+                        val dest = File(stagingDir, item.displayName)
+                        context.contentResolver.openInputStream(item.uri)?.use { input ->
+                            dest.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
                         }
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "Permission denied for ${item.displayName}: ${e.message}")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Permission denied for ${item.displayName}", Toast.LENGTH_SHORT).show()
+                        }
+                        // Skip this file, continue with remaining items.
                     }
                 }
             }
         }
+
+        val stagedFiles = stagingDir.listFiles()
+        if (stagedFiles == null || stagedFiles.isEmpty()) {
+            stagingDir.deleteRecursively()
+            throw IllegalStateException("No files could be read from selected items")
+        }
+
         stagingDir
     }
 
@@ -126,24 +165,22 @@ object StagingRepository {
                 childFile.mkdirs()
                 copyDocumentTree(context, child, childFile)
             } else if (child.isFile) {
-                context.contentResolver.openInputStream(child.uri)?.use { input ->
-                    childFile.outputStream().use { output ->
-                        input.copyTo(output)
+                try {
+                    context.contentResolver.openInputStream(child.uri)?.use { input ->
+                        childFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Permission denied for $name: ${e.message}")
+                    // Skip this child file, continue copying remaining tree.
                 }
             }
         }
     }
 
     fun cleanStagingCache(context: Context) {
-        try {
-            val cache = context.cacheDir
-            cache.listFiles()?.forEach { file ->
-                if (file.isDirectory && (file.name.startsWith("staging_") || file.name == "apps" || file.name == "contacts" || file.name == "text" || file.name == "media")) {
-                    file.deleteRecursively()
-                }
-            }
-        } catch (_: Throwable) {}
+        com.nxfr.android.storage.CacheCleaner.cleanAllStaleCacheSync(context)
     }
 
     fun formatBytes(bytes: Long): String {

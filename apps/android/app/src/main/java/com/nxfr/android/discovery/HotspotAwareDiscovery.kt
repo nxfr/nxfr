@@ -147,6 +147,11 @@ class HotspotAwareDiscovery(private val context: Context) {
         probeJob = scope.launch { runProbe() }
     }
 
+    /** Set the UDP beacon mode (ACTIVE: 1s, BACKGROUND: 5s, LOW_POWER: 30s). */
+    fun setBeaconMode(mode: UdpBeacon.BeaconMode) {
+        beacon.setBeaconMode(mode)
+    }
+
     /** Dismiss the hotspot banner. */
     fun dismissBanner() {
         _showHotspotBanner.value = false

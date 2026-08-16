@@ -15,6 +15,8 @@ class NxfrApp : Application() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        // Purge any orphaned staging/send cache files from previous runs
+        com.nxfr.android.storage.CacheCleaner.cleanAllStaleCacheSync(this)
     }
 
     private fun createNotificationChannels() {

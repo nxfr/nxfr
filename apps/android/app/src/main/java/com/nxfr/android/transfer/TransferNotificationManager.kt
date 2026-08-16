@@ -102,7 +102,7 @@ class TransferNotificationManager(private val context: Context) {
         val cancelIntent = Intent(context, NxfrService::class.java).apply {
             action = NxfrService.ACTION_CANCEL_TRANSFER
         }
-        val cancelPendingIntent = PendingIntent.getService(
+        val cancelPendingIntent = PendingIntent.getForegroundService(
             context,
             transferId + 10000,
             cancelIntent,

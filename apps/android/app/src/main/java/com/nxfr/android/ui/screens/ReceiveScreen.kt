@@ -50,6 +50,20 @@ fun ReceiveScreen(
     var showTroubleshootSheet by remember { mutableStateOf(false) }
     var showDesertSheet by remember { mutableStateOf(false) }
 
+    // Battery optimization onboarding — shown once on first launch if not exempt.
+    var showBatteryOnboarding by remember {
+        mutableStateOf(
+            !com.nxfr.android.battery.BatteryOptimizationHelper.hasShownOnboarding(context) &&
+            !com.nxfr.android.battery.BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+        )
+    }
+
+    if (showBatteryOnboarding) {
+        com.nxfr.android.battery.BatteryOnboardingDialog(
+            onDismiss = { showBatteryOnboarding = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -58,6 +72,11 @@ fun ReceiveScreen(
     ) {
         // 1. Top Telemetry Ribbon
         TelemetryRibbon(isListening = isListening)
+
+        // Battery warning banner (persistent, dismissible).
+        com.nxfr.android.battery.BatteryWarningBanner(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 

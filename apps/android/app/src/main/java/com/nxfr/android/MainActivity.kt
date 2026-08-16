@@ -74,6 +74,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        NxfrService.updateUiForeground(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        NxfrService.updateUiForeground(false)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleDeepLink(intent)

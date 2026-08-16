@@ -15,6 +15,7 @@ import com.nxfr.android.R
 import com.nxfr.android.discovery.HotspotAwareDiscovery
 import com.nxfr.android.discovery.NxfrP2pManager
 import com.nxfr.android.discovery.NxfrSoftApManager
+import com.nxfr.android.discovery.UdpBeacon
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,7 +35,9 @@ sealed class NxfrState {
         val displayName: String,
         val totalSize: Long,
         val totalFiles: Int,
-        val peerName: String
+        val peerName: String,
+        val deviceId: String = "",
+        val sasCode: String = ""
     ) : NxfrState()
     data class Transferring(
         val progress: Float,
@@ -129,6 +132,30 @@ class NxfrService : Service() {
         fun setDesertSessionActive(active: Boolean) {
             _desertSessionActive.value = active
             instance?.evaluateLifecycleContract()
+        }
+
+        private var _isUiForeground = false
+        val isUiForeground: Boolean get() = _isUiForeground
+
+        /** Set UDP beacon mode directly (e.g. from UI or screen transitions). */
+        fun setBeaconMode(mode: UdpBeacon.BeaconMode) {
+            _discovery?.setBeaconMode(mode)
+        }
+
+        /**
+         * Update UI foreground state to adjust beacon announcement intervals:
+         * - Foreground: ACTIVE (1s) for instant discovery
+         * - Background + Active transfer: BACKGROUND (5s)
+         * - Deep Background + Idle: LOW_POWER (30s)
+         */
+        fun updateUiForeground(isForeground: Boolean) {
+            _isUiForeground = isForeground
+            val mode = when {
+                isForeground -> UdpBeacon.BeaconMode.ACTIVE
+                instance?.activeSessionHandle != 0L -> UdpBeacon.BeaconMode.BACKGROUND
+                else -> UdpBeacon.BeaconMode.LOW_POWER
+            }
+            _discovery?.setBeaconMode(mode)
         }
 
         @Volatile var instance: NxfrService? = null
@@ -255,6 +282,7 @@ class NxfrService : Service() {
         external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String
         external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String): String
         external fun nxfr_web_stop(): String
+        external fun nxfr_web_status(): String
         external fun nxfr_web_fingerprint(storeDir: String): String
 
         // ── Transfer ───────────────────────────────────────
@@ -409,9 +437,24 @@ class NxfrService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Android 14+ (API 34) foreground service timeout.
+     * Called when the system determines the foreground service has been running too long.
+     * Gracefully shut down: flush state, release ports, stop discovery.
+     */
+    override fun onTimeout(startId: Int) {
+        Log.i(TAG, "onTimeout(startId=$startId): Foreground service timed out by system, shutting down gracefully.")
+        // Flush resume journal to disk so transfers can be resumed.
+        try { NxfrBridge.nxfr_web_stop() } catch (_: Throwable) {}
+        _discovery?.stopDiscovery()
+        stopSelf(startId)
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        Log.i(TAG, "onTaskRemoved: User swiped app away, evaluating lifecycle contract...")
+        Log.i(TAG, "onTaskRemoved: User swiped app away, stopping web server and evaluating lifecycle...")
+        // Stop web server before anything else — port must be released.
+        try { NxfrBridge.nxfr_web_stop() } catch (_: Throwable) {}
         evaluateLifecycleContract()
     }
 
@@ -422,6 +465,16 @@ class NxfrService : Service() {
         val desertActive = _desertSessionActive.value
 
         Log.i(TAG, "[evaluateLifecycleContract] visible=$isVisible listening=$listening activeSession=$hasActiveTransfer desert=$desertActive")
+
+        // Re-evaluate beacon mode based on current state.
+        // This ensures BACKGROUND → LOW_POWER transition fires when a transfer
+        // completes while the UI is backgrounded.
+        val beaconMode = when {
+            _isUiForeground -> UdpBeacon.BeaconMode.ACTIVE
+            hasActiveTransfer -> UdpBeacon.BeaconMode.BACKGROUND
+            else -> UdpBeacon.BeaconMode.LOW_POWER
+        }
+        _discovery?.setBeaconMode(beaconMode)
 
         if (!isVisible && !listening && !hasActiveTransfer && !desertActive) {
             Log.i(TAG, "[evaluateLifecycleContract] Visibility OFF, idle, zero active transfers, no desert session. Stopping foreground & service.")
@@ -476,6 +529,8 @@ class NxfrService : Service() {
         _softApManager?.teardown()
         _softApManager = null
         _desertSessionActive.value = false
+        // Stop web server — release port 17396 so it can be rebound on restart.
+        try { NxfrBridge.nxfr_web_stop() } catch (_: Throwable) {}
         super.onDestroy()
         serviceScope.cancel()
         if (activeSessionHandle != 0L) {
@@ -669,7 +724,8 @@ class NxfrService : Service() {
                         displayName = event.optString("display_name"),
                         totalSize = event.optLong("total_size"),
                         totalFiles = event.optInt("total_files"),
-                        peerName = activePeerName
+                        peerName = activePeerName,
+                        deviceId = event.optString("device_id")
                     )
 
                     val prefs = getSharedPreferences("nxfr_prefs", android.content.Context.MODE_PRIVATE)
@@ -723,6 +779,24 @@ class NxfrService : Service() {
                             peerName = activePeerName
                         )
                     }
+                }
+                "pair_request" -> {
+                    // Received a PairRequest from the remote peer with the real
+                    // cryptographic SAS code derived from TLS keying material.
+                    val sasCode = event.optString("sas_code")
+                    val peerDeviceId = event.optString("device_id")
+                    val peerNameFromEvent = event.optString("peer_name")
+                    if (peerNameFromEvent.isNotEmpty()) activePeerName = peerNameFromEvent
+
+                    // Update the current Offering state with the real SAS.
+                    val currentState = _nxfrState.value
+                    if (currentState is NxfrState.Offering) {
+                        _nxfrState.value = currentState.copy(
+                            sasCode = sasCode,
+                            deviceId = peerDeviceId.ifEmpty { currentState.deviceId }
+                        )
+                    }
+                    Log.i(TAG, "PairRequest received — SAS code set for consent dialog")
                 }
                 "progress" -> {
                     val sent = event.optLong("bytes_sent")

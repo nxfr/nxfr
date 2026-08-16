@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import com.nxfr.android.R
 import com.nxfr.android.discovery.DeviceUiModel
+import com.nxfr.android.discovery.UdpBeacon
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.service.NxfrState
 import com.nxfr.android.staging.ContactsVCardExporter
@@ -98,6 +99,16 @@ fun SendScreen(
 
     // Observe StagingRepository
     val stagedItems by StagingRepository.stagedItems.collectAsState()
+
+    // Ensure ACTIVE (1s) beacon interval while viewing the Send/DevicePicker screen
+    DisposableEffect(Unit) {
+        NxfrService.setBeaconMode(UdpBeacon.BeaconMode.ACTIVE)
+        onDispose {
+            if (!NxfrService.isUiForeground) {
+                NxfrService.setBeaconMode(UdpBeacon.BeaconMode.LOW_POWER)
+            }
+        }
+    }
 
     // Observe NxfrState for connect result.
     val nxfrState by NxfrService.nxfrState.collectAsState()
@@ -631,9 +642,12 @@ fun SendScreen(
                                         queuedDeviceIds + device.deviceId
                                     }
                                 } else {
-                                    val addr = "${device.host}:${device.port}"
-                                    startSendFlow(context, coroutineScope, addr)
-                                    onDeviceTap(device)
+                                    if (stagedItems.isEmpty()) {
+                                        onDeviceTap(device)
+                                    } else {
+                                        val addr = "${device.host}:${device.port}"
+                                        startSendFlow(context, coroutineScope, addr)
+                                    }
                                 }
                             }
                         )
@@ -741,16 +755,26 @@ private fun startSendFlow(
     coroutineScope: kotlinx.coroutines.CoroutineScope,
     addr: String
 ) {
+    if (StagingRepository.stagedItems.value.isEmpty()) {
+        Toast.makeText(context, "Attach files or media before transmitting", Toast.LENGTH_SHORT).show()
+        return
+    }
     coroutineScope.launch(Dispatchers.IO) {
-        val stagingFolder = StagingRepository.prepareStagingDirectory(context)
-        withContext(Dispatchers.Main) {
-            val sendIntent = Intent(context, NxfrService::class.java).apply {
-                action = NxfrService.ACTION_SEND
-                putExtra(NxfrService.EXTRA_ADDR, addr)
-                putExtra(NxfrService.EXTRA_FILE_PATH, stagingFolder.absolutePath)
+        try {
+            val stagingFolder = StagingRepository.prepareStagingDirectory(context)
+            withContext(Dispatchers.Main) {
+                val sendIntent = Intent(context, NxfrService::class.java).apply {
+                    action = NxfrService.ACTION_SEND
+                    putExtra(NxfrService.EXTRA_ADDR, addr)
+                    putExtra(NxfrService.EXTRA_FILE_PATH, stagingFolder.absolutePath)
+                }
+                context.startService(sendIntent)
+                Toast.makeText(context, "Initiating transfer to $addr...", Toast.LENGTH_SHORT).show()
             }
-            context.startService(sendIntent)
-            Toast.makeText(context, "Initiating transfer to $addr...", Toast.LENGTH_SHORT).show()
+        } catch (e: Throwable) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Staging failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }

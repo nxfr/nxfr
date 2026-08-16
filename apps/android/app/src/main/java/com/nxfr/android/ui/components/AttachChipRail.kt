@@ -65,7 +65,7 @@ fun AttachChipRail(
         chips.forEach { chip ->
             Box(
                 modifier = Modifier
-                    .heightIn(min = 40.dp)
+                    .heightIn(min = 48.dp)
                     .background(deck.surface, RoundedCornerShape(2.dp))
                     .border(1.dp, deck.gridLineBright, RoundedCornerShape(2.dp))
                     .semantics { contentDescription = "Attach ${chip.label}" }

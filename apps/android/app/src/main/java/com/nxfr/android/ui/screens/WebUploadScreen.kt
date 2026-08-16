@@ -93,7 +93,7 @@ fun WebUploadScreen(
                 uploadPort = json.optInt("port", 17396)
                 uploadToken = json.optString("token", "")
                 isStarting = false
-                Log.i("WebUploadScreen", "Started on port $uploadPort, token $uploadToken")
+                Log.i("WebUploadScreen", "Started on port $uploadPort, token=****")
             }
         } catch (e: UnsatisfiedLinkError) {
             val msg = "NATIVE LIB OUTDATED — run rebuildNative + reinstall"
@@ -418,7 +418,7 @@ fun WebUploadScreen(
                                 FilledTonalButton(
                                     onClick = { openPublishedFile(context, item.publishedPath) },
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp)
+                                    modifier = Modifier.height(48.dp)
                                 ) {
                                     Text("Open", fontSize = 11.sp)
                                 }

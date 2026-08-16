@@ -19,9 +19,14 @@ import java.time.LocalDate
  * Tier 0 in the discovery ladder: fastest path, works on hotspots
  * where mDNS is blocked.
  *
- * Protocol: every 1 s, broadcast a small JSON datagram on port 17395
+ * Protocol: broadcast a small JSON datagram on port 17395
  * to all site-local directed broadcast addresses + multicast 224.0.0.251.
  * Peers do the same; we listen on 0.0.0.0:17395.
+ *
+ * BEACON INTERVAL STRATEGY:
+ *   - ACTIVE (device picker visible): 1s — discovery needs to feel instant
+ *   - BACKGROUND (service running, no UI): 5s — still discoverable, less aggressive
+ *   - LOW_POWER (deep background, no transfer): 30s — minimal keep-alive
  *
  * PRIVACY: The beacon broadcasts a rotating advertised_id (HKDF-derived,
  * changes daily) — NEVER the real device_id. The real identity is only
@@ -31,11 +36,25 @@ import java.time.LocalDate
  *   {"v":1,"advertised_id":"hex16","name":"...","plat":"android","tcp_port":17394}
  */
 class UdpBeacon(private val context: Context) {
+
+    /**
+     * Beacon broadcast frequency mode.
+     *
+     * Call [setBeaconMode] to switch between modes based on app lifecycle.
+     */
+    enum class BeaconMode(val intervalMs: Long) {
+        /** Device picker is visible — discovery must feel instant. */
+        ACTIVE(1_000L),
+        /** App backgrounded, service running, no active transfer. */
+        BACKGROUND(5_000L),
+        /** Deep background — minimal keep-alive, rely on mDNS for discovery. */
+        LOW_POWER(30_000L),
+    }
+
     companion object {
         private const val TAG = "UdpBeacon"
         const val BEACON_PORT = 17395
         const val TCP_PORT = 17394
-        private const val ANNOUNCE_INTERVAL_MS = 1000L
         private const val PEER_EXPIRY_MS = 4000L
         private const val MULTICAST_ADDR = "224.0.0.251"
     }
@@ -59,6 +78,27 @@ class UdpBeacon(private val context: Context) {
 
     /** Rotating advertised_id for privacy; computed on start(). */
     private var localAdvertisedId: String = ""
+
+    /** Current beacon broadcast mode. Defaults to ACTIVE for backward compatibility. */
+    @Volatile
+    private var currentMode: BeaconMode = BeaconMode.ACTIVE
+
+    /**
+     * Set the beacon broadcast frequency mode.
+     *
+     * Call this from [NxfrService] when:
+     * - App comes to foreground / device picker opens → [BeaconMode.ACTIVE]
+     * - App goes to background, service still running → [BeaconMode.BACKGROUND]
+     * - No UI, no active transfer for a while → [BeaconMode.LOW_POWER]
+     * - App re-opens → [BeaconMode.ACTIVE]
+     */
+    fun setBeaconMode(mode: BeaconMode) {
+        val previous = currentMode
+        currentMode = mode
+        if (previous != mode) {
+            Log.i(TAG, "Beacon mode: $previous → $mode (interval: ${mode.intervalMs}ms)")
+        }
+    }
 
     /** Start announcing + listening. */
     fun start() {
@@ -88,6 +128,9 @@ class UdpBeacon(private val context: Context) {
             } catch (e: Throwable) {
                 Log.e(TAG, "Beacon start failed (non-fatal): ${e.message}")
                 // Beacon silently off; NSD + probe still work.
+                // Release multicast lock if start failed partway through.
+                try { multicastLock?.release() } catch (_: Exception) {}
+                multicastLock = null
             }
         }
     }
@@ -148,7 +191,8 @@ class UdpBeacon(private val context: Context) {
                 if (e is CancellationException) throw e
                 Log.w(TAG, "Announce error: ${e.message}")
             }
-            delay(ANNOUNCE_INTERVAL_MS)
+            // Use the current mode's interval — reads are atomic (@Volatile).
+            delay(currentMode.intervalMs)
         }
     }
 

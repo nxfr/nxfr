@@ -219,14 +219,45 @@ fun WebShareScreen(
         return
     }
 
-    // 10-minute timer (only ticks once the server is running)
+    var activeTransfers by remember { mutableIntStateOf(0) }
+
+    // 10-minute silence timer (defers shutdown while active transfers are in flight)
     LaunchedEffect(manifestJsonStr) {
         if (manifestJsonStr == null) return@LaunchedEffect
-        while (secondsRemaining > 0) {
+        while (true) {
             delay(1000)
-            secondsRemaining--
+            try {
+                val statusJson = NxfrService.NxfrBridge.nxfr_web_status()
+                val obj = org.json.JSONObject(statusJson)
+                val isRunning = obj.optBoolean("running", true)
+                val active = obj.optInt("active_transfers", 0)
+                activeTransfers = active
+
+                if (!isRunning) {
+                    onStop()
+                    break
+                }
+
+                if (active > 0) {
+                    // Active transfer in flight — reset / defer silence countdown
+                    secondsRemaining = 600
+                } else {
+                    if (secondsRemaining > 0) {
+                        secondsRemaining--
+                    } else {
+                        onStop()
+                        break
+                    }
+                }
+            } catch (_: Throwable) {
+                if (secondsRemaining > 0) {
+                    secondsRemaining--
+                } else {
+                    onStop()
+                    break
+                }
+            }
         }
-        onStop()
     }
 
     // ── Staging progress screen ─────────────────────────────────
@@ -594,15 +625,25 @@ fun WebShareScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Expiry Countdown
-        val mins = secondsRemaining / 60
-        val secs = secondsRemaining % 60
-        Text(
-            text = String.format("Link expires in %02d:%02d", mins, secs),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.error,
-            fontWeight = FontWeight.Bold
-        )
+        // Expiry Countdown / Active Transfer Status
+        if (activeTransfers > 0) {
+            Text(
+                text = "TRANSFER ACTIVE — auto-stop deferred",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            )
+        } else {
+            val mins = secondsRemaining / 60
+            val secs = secondsRemaining % 60
+            Text(
+                text = String.format("Link expires in %02d:%02d of inactivity", mins, secs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         Spacer(modifier = Modifier.height(20.dp))
 
