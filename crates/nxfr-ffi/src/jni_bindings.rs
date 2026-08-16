@@ -448,10 +448,16 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(b) => b,
             Err(e) => return make_error_jstring(&mut env, &format!("convert_byte_array: {e}")),
         };
+        if exp_bytes.len() < 4 {
+            return make_error_jstring(
+                &mut env,
+                &format!("exporter_bytes too short: {} < 4", exp_bytes.len()),
+            );
+        }
         let c_id_a = std::ffi::CString::new(id_a).unwrap_or_default();
         let c_id_b = std::ffi::CString::new(id_b).unwrap_or_default();
         let ptr =
-            unsafe { super::nxfr_derive_sas(c_id_a.as_ptr(), c_id_b.as_ptr(), exp_bytes.as_ptr()) };
+            unsafe { super::nxfr_derive_sas(c_id_a.as_ptr(), c_id_b.as_ptr(), exp_bytes.as_ptr(), exp_bytes.len()) };
         c_result_to_jstring(&mut env, ptr)
     }));
     result.unwrap_or(std::ptr::null_mut())
@@ -529,6 +535,19 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
 ) -> jstring {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let ptr = super::nxfr_web_stop();
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_web_status(): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1status(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ptr = super::nxfr_web_status();
         c_result_to_jstring(&mut env, ptr)
     }));
     result.unwrap_or(std::ptr::null_mut())

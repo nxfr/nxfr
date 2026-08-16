@@ -127,6 +127,50 @@ impl AsyncWrite for TlsStream {
 
 impl Unpin for TlsStream {}
 
+impl TlsStream {
+    /// Extract TLS keying material for SAS derivation.
+    /// Uses RFC 5705 exporter with label "NXFR-SAS-v0".
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Result<(), String> {
+        match self {
+            TlsStream::Client(s) => {
+                let (_, conn) = s.get_ref();
+                conn.export_keying_material(output, label, context)
+                    .map(|_| ())
+                    .map_err(|e| format!("export_keying_material: {e}"))
+            }
+            TlsStream::Server(s) => {
+                let (_, conn) = s.get_ref();
+                conn.export_keying_material(output, label, context)
+                    .map(|_| ())
+                    .map_err(|e| format!("export_keying_material: {e}"))
+            }
+        }
+    }
+
+    /// Extract the peer's raw certificate DER bytes.
+    fn peer_cert_der(&self) -> Option<Vec<u8>> {
+        match self {
+            TlsStream::Client(s) => {
+                let (_, conn) = s.get_ref();
+                conn.peer_certificates()
+                    .and_then(|c| c.first())
+                    .map(|c| c.as_ref().to_vec())
+            }
+            TlsStream::Server(s) => {
+                let (_, conn) = s.get_ref();
+                conn.peer_certificates()
+                    .and_then(|c| c.first())
+                    .map(|c| c.as_ref().to_vec())
+            }
+        }
+    }
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────
 
 /// Event emitted by background transfer tasks, read by nxfr_pump.
@@ -136,6 +180,10 @@ enum FfiEvent {
         display_name: String,
         total_size: u64,
         total_files: u32,
+        peer_name: String,
+    },
+    PairRequest {
+        sas_code: String,
         peer_name: String,
     },
     Progress {
@@ -189,6 +237,7 @@ struct Session {
     local_device_id: [u8; 32],
     peer_device_id: [u8; 32],
     peer_name: String,
+    peer_cert_der: Vec<u8>,
     session_id: u32,
     pending_offer: Arc<std::sync::Mutex<Option<PendingOffer>>>,
 }
@@ -372,7 +421,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
         };
 
         let rt = get_runtime();
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32), String> = rt
+        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> = rt
             .block_on(async {
                 match tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     // Build TLS client config.
@@ -405,6 +454,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                     let peer_cert = peer_certs.first().ok_or("empty peer cert chain")?;
                     let peer_device_id = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
                         .map_err(|e| format!("peer device_id: {e}"))?;
+                    let peer_cert_der_bytes = peer_cert.as_ref().to_vec();
 
                     // Wrap in NxfrConnection.
                     let mut conn = NxfrConnection::new(TlsStream::Client(tls));
@@ -441,7 +491,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                         _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
                     };
 
-                    Ok((conn, peer_device_id, peer_name, session_id))
+                    Ok((conn, peer_device_id, peer_name, session_id, peer_cert_der_bytes))
                 })
                 .await
                 {
@@ -450,10 +500,30 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                 }
             });
 
-        let (conn, peer_device_id, peer_name, session_id) = match result {
+        let (conn, peer_device_id, peer_name, session_id, peer_cert_der) = match result {
             Ok(v) => v,
             Err(e) => return json_err(&e),
         };
+
+        // TOFU: verify peer identity against paired.db if previously seen.
+        {
+            let db_path = std::path::Path::new(dir).join("paired.db");
+            if let Ok(db) = nxfr_storage::db::PairedDeviceDb::open(&db_path) {
+                let peer_id_hex = hex::encode(peer_device_id);
+                let spki = nxfr_crypto::extract_spki(&peer_cert_der).unwrap_or_default();
+                match db.verify_identity(&peer_id_hex, &spki) {
+                    Ok(nxfr_storage::db::IdentityCheck::Changed) => {
+                        log::warn!("[nxfr-ffi] TOFU VIOLATION: peer {} changed SPKI!", peer_id_hex);
+                        return json_err("TOFU violation: peer identity changed since last pairing");
+                    }
+                    Ok(nxfr_storage::db::IdentityCheck::Matched) => {
+                        log::info!("[nxfr-ffi] TOFU OK: peer {} identity verified", peer_id_hex);
+                        let _ = db.update_last_seen(&peer_id_hex);
+                    }
+                    _ => {} // Unknown peer — not yet paired, no check needed.
+                }
+            }
+        }
 
         // Create session.
         let (event_tx, event_rx) = mpsc::channel(256);
@@ -465,6 +535,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
             local_device_id: identity.device_id,
             peer_device_id,
             peer_name: peer_name.clone(),
+            peer_cert_der,
             session_id,
             pending_offer: Arc::new(std::sync::Mutex::new(None)),
         };
@@ -562,8 +633,9 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
             let cancel_token = tokio_util::sync::CancellationToken::new();
             let cancel_clone = cancel_token.clone();
 
-            // Spawn accept loop.
+            // Spawn accept loop with bounded concurrent handshakes.
             let acceptor = TlsAcceptor::from(Arc::new(server_config));
+            let handshake_semaphore = Arc::new(tokio::sync::Semaphore::new(100));
             let accept_task = tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -576,9 +648,24 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
                                 Ok((tcp, addr)) => {
                                     let acc = acceptor.clone();
                                     let tx = pending_tx.clone();
+                                    let sem = handshake_semaphore.clone();
                                     tokio::spawn(async move {
-                                        match acc.accept(tcp).await {
-                                            Ok(tls) => {
+                                        // Bound concurrent handshakes.
+                                        let _permit = match sem.try_acquire() {
+                                            Ok(p) => p,
+                                            Err(_) => {
+                                                log::warn!("[nxfr-ffi] Too many pending TLS handshakes, dropping connection from {addr}");
+                                                return;
+                                            }
+                                        };
+                                        // Timeout slow handshakes (Slowloris defense).
+                                        match tokio::time::timeout(
+                                            std::time::Duration::from_secs(10),
+                                            acc.accept(tcp),
+                                        )
+                                        .await
+                                        {
+                                            Ok(Ok(tls)) => {
                                                 let _ = tx
                                                     .send(AcceptedConn {
                                                         stream: TlsStream::Server(tls),
@@ -586,15 +673,18 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
                                                     })
                                                     .await;
                                             }
-                                            Err(e) => {
+                                            Ok(Err(e)) => {
                                                 log::warn!("TLS accept from {addr}: {e}");
+                                            }
+                                            Err(_) => {
+                                                log::warn!("TLS handshake timeout (10s) from {addr}");
                                             }
                                         }
                                     });
                                 }
                                 Err(e) => {
-                                    log::error!("TCP accept failed: {e}");
-                                    break;
+                                    log::warn!("[nxfr-ffi] TCP accept error: {e}, backing off 50ms");
+                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                 }
                             }
                         }
@@ -658,18 +748,19 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
         };
 
         // Extract peer device_id and do HELLO exchange.
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32), String> = rt
+        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> = rt
             .block_on(async {
                 let AcceptedConn { stream, .. } = accepted;
 
                 // Extract peer device_id.
-                let peer_device_id = match &stream {
+                let (peer_device_id, peer_cert_der_bytes) = match &stream {
                     TlsStream::Server(s) => {
                         let (_, server_conn) = s.get_ref();
                         let peer_certs = server_conn.peer_certificates().ok_or("no peer certs")?;
                         let peer_cert = peer_certs.first().ok_or("empty peer cert")?;
-                        nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
-                            .map_err(|e| format!("peer device_id: {e}"))?
+                        let did = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
+                            .map_err(|e| format!("peer device_id: {e}"))?;
+                        (did, peer_cert.as_ref().to_vec())
                     }
                     TlsStream::Client(_) => return Err("expected server TLS".into()),
                 };
@@ -714,10 +805,10 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                     .await
                     .map_err(|e| format!("send HELLO_ACK: {e}"))?;
 
-                Ok((conn, peer_device_id, peer_name, session_id))
+                Ok((conn, peer_device_id, peer_name, session_id, peer_cert_der_bytes))
             });
 
-        let (conn, peer_device_id, peer_name, session_id) = match result {
+        let (conn, peer_device_id, peer_name, session_id, peer_cert_der) = match result {
             Ok(v) => v,
             Err(e) => return json_err(&e),
         };
@@ -733,39 +824,95 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
         let offer_clone = pending_offer.clone();
         let event_tx_clone = event_tx.clone();
         let peer_name_clone = peer_name.clone();
+        let local_id_clone = identity.device_id;
+        let peer_id_clone = peer_device_id;
         rt.spawn(async move {
-            let mut conn_guard = conn_clone.lock().await;
-            let conn = match conn_guard.as_mut() {
-                Some(c) => c,
-                None => return,
+            // Take the connection out of the Arc<Mutex<Option<_>>> so we don't
+            // hold the Mutex across recv_frame().await (which would deadlock
+            // with nxfr_close trying to acquire the same lock).
+            let mut conn = {
+                let mut guard = conn_clone.lock().await;
+                match guard.take() {
+                    Some(c) => c,
+                    None => return,
+                }
             };
-            match conn.recv_frame().await {
+            // Mutex is released here — nxfr_close can now acquire it.
+
+            let result = conn.recv_frame().await;
+
+            match result {
                 Ok((hdr, payload)) if hdr.kind == FrameKind::Control => {
-                    if let Ok(ControlMessage::TransferRequest {
-                        transfer_id,
-                        display_name,
-                        total_files,
-                        total_size,
-                        manifest,
-                        ..
-                    }) = codec::decode_control(&payload)
-                    {
-                        *offer_clone.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some(PendingOffer {
-                                transfer_id,
-                                manifest,
-                                display_name: display_name.clone(),
-                                total_size,
-                                total_files,
-                            });
-                        let _ = event_tx_clone
-                            .send(FfiEvent::Offer {
-                                display_name,
-                                total_size,
-                                total_files,
-                                peer_name: peer_name_clone,
-                            })
-                            .await;
+                    match codec::decode_control(&payload) {
+                        Ok(ControlMessage::TransferRequest {
+                            transfer_id,
+                            display_name,
+                            total_files,
+                            total_size,
+                            manifest,
+                            ..
+                        }) => {
+                            *offer_clone.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(PendingOffer {
+                                    transfer_id,
+                                    manifest,
+                                    display_name: display_name.clone(),
+                                    total_size,
+                                    total_files,
+                                });
+                            let _ = event_tx_clone
+                                .send(FfiEvent::Offer {
+                                    display_name,
+                                    total_size,
+                                    total_files,
+                                    peer_name: peer_name_clone.clone(),
+                                })
+                                .await;
+                        }
+                        Ok(ControlMessage::PairRequest { sas_method }) => {
+                            log::info!("[nxfr-ffi] Received PairRequest (method: {sas_method})");
+                            // Derive SAS on the receiver side using TLS exporter.
+                            let sas_code = {
+                                let mut sas_ctx = [0u8; 64];
+                                if local_id_clone < peer_id_clone {
+                                    sas_ctx[..32].copy_from_slice(&local_id_clone);
+                                    sas_ctx[32..].copy_from_slice(&peer_id_clone);
+                                } else {
+                                    sas_ctx[..32].copy_from_slice(&peer_id_clone);
+                                    sas_ctx[32..].copy_from_slice(&local_id_clone);
+                                }
+                                let mut exp = [0u8; 4];
+                                // We need the TLS stream to export keying material.
+                                // The connection is currently taken out of the Arc.
+                                // Use the conn variable we already have.
+                                match conn.get_ref().export_keying_material(
+                                    &mut exp,
+                                    b"NXFR-SAS-v0",
+                                    Some(&sas_ctx),
+                                ) {
+                                    Ok(()) => {
+                                        let (code, _) = nxfr_core::sas::derive_sas(
+                                            &local_id_clone,
+                                            &peer_id_clone,
+                                            &exp,
+                                        );
+                                        exp.zeroize();
+                                        code
+                                    }
+                                    Err(e) => {
+                                        log::error!("[nxfr-ffi] TLS exporter failed: {e}");
+                                        "000000".to_string()
+                                    }
+                                }
+                            };
+                            let _ = event_tx_clone
+                                .send(FfiEvent::PairRequest {
+                                    sas_code,
+                                    peer_name: peer_name_clone.clone(),
+                                })
+                                .await;
+                        }
+                        _ => {}
                     }
                 }
                 _ => {
@@ -776,7 +923,19 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                         .await;
                 }
             }
-            // Lock released here — connection available for confirm/receive.
+
+            // Put the connection back so confirm/receive can use it.
+            // Guard: if nxfr_close ran while we were awaiting, it set the
+            // Option to None and dropped the session. Don't re-insert into
+            // a dead session — just let the connection drop.
+            let mut guard = conn_clone.lock().await;
+            if std::sync::Arc::strong_count(&conn_clone) == 1 {
+                // nxfr_close already ran; drop the connection cleanly.
+                log::info!("[nxfr-ffi] Reader task: session was closed during recv, dropping connection");
+                drop(conn);
+            } else {
+                *guard = Some(conn);
+            }
         });
 
         let session = Session {
@@ -786,6 +945,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             local_device_id: identity.device_id,
             peer_device_id,
             peer_name: peer_name.clone(),
+            peer_cert_der: peer_cert_der.clone(),
             session_id,
             pending_offer,
         };
@@ -814,6 +974,24 @@ struct LocalSendEntry {
     is_dir: bool,
 }
 
+fn hash_file_stream(path: &Path) -> Result<(u64, [u8; 32]), std::io::Error> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    let size = metadata.len();
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let sha256: [u8; 32] = hasher.finalize().into();
+    Ok((size, sha256))
+}
+
 fn scan_send_path(
     base_path: &Path,
 ) -> Result<(String, Vec<LocalSendEntry>), Box<dyn std::error::Error + Send + Sync>> {
@@ -830,13 +1008,12 @@ fn scan_send_path(
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
-        let data = std::fs::read(base_path)?;
-        let sha256 = Sha256::digest(&data).into();
+        let (size, sha256) = hash_file_stream(base_path)?;
         entries.push(LocalSendEntry {
             file_id: next_id,
             relative_path: name.clone(),
             full_path: base_path.to_path_buf(),
-            size: data.len() as u64,
+            size,
             sha256,
             is_dir: false,
         });
@@ -873,13 +1050,12 @@ fn scan_send_path(
                 *next_id += 1;
                 walk_directory(root, &path, entries, next_id)?;
             } else if path.is_file() {
-                let data = std::fs::read(&path)?;
-                let sha256 = Sha256::digest(&data).into();
+                let (size, sha256) = hash_file_stream(&path)?;
                 entries.push(LocalSendEntry {
                     file_id: *next_id,
                     relative_path: rel_path,
                     full_path: path,
-                    size: data.len() as u64,
+                    size,
                     sha256,
                     is_dir: false,
                 });
@@ -1168,6 +1344,15 @@ pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
                     "display_name": display_name,
                     "total_size": total_size,
                     "total_files": total_files,
+                    "peer_name": peer_name,
+                    "device_id": hex::encode(session.peer_device_id),
+                })),
+                FfiEvent::PairRequest {
+                    sas_code,
+                    peer_name,
+                } => json_ok(serde_json::json!({
+                    "event": "pair_request",
+                    "sas_code": sas_code,
                     "peer_name": peer_name,
                     "device_id": hex::encode(session.peer_device_id),
                 })),
@@ -1526,11 +1711,27 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
             .await
             .map_err(|e| format!("send PairRequest: {e}"))?;
 
-            // Derive SAS from device IDs.
-            // Exporter bytes are zeroed for simplified derivation when TLS exporter
-            // is not directly exposed through NxfrConnection.
-            let exporter = [0u8; 4];
+            // Build SAS context: sorted device_ids (64 bytes).
+            let mut sas_context = [0u8; 64];
+            if local_id < peer_id {
+                sas_context[..32].copy_from_slice(&local_id);
+                sas_context[32..].copy_from_slice(&peer_id);
+            } else {
+                sas_context[..32].copy_from_slice(&peer_id);
+                sas_context[32..].copy_from_slice(&local_id);
+            }
+
+            // Extract TLS keying material for SAS derivation.
+            let tls_stream = conn.get_ref();
+            let mut exporter = [0u8; 4];
+            tls_stream.export_keying_material(
+                &mut exporter,
+                b"NXFR-SAS-v0",
+                Some(&sas_context),
+            )?;
+
             let (code, _) = nxfr_core::sas::derive_sas(&local_id, &peer_id, &exporter);
+            exporter.zeroize();
             Ok::<_, String>(code)
         }) {
             Ok(c) => c,
@@ -1554,7 +1755,7 @@ pub extern "C" fn nxfr_pair_confirm(
 ) -> *mut c_char {
     ffi_guard(|| {
         let rt = get_runtime();
-        let (conn_arc, session_id, peer_device_id, peer_name) = {
+        let (conn_arc, session_id, peer_device_id, peer_name, peer_cert_der) = {
             let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
@@ -1565,6 +1766,7 @@ pub extern "C" fn nxfr_pair_confirm(
                 session.session_id,
                 session.peer_device_id,
                 session.peer_name.clone(),
+                session.peer_cert_der.clone(),
             )
         };
 
@@ -1591,7 +1793,8 @@ pub extern "C" fn nxfr_pair_confirm(
                             let device = nxfr_storage::db::PairedDevice {
                                 device_id: hex::encode(peer_device_id),
                                 name: peer_name.clone(),
-                                public_key_spki: vec![], // SPKI extracted at connect time; placeholder for now
+                                public_key_spki: nxfr_crypto::extract_spki(&peer_cert_der)
+                                    .unwrap_or_default(),
                                 first_seen: now,
                                 last_seen: now,
                                 trust_level: "paired".to_string(),
@@ -1781,17 +1984,30 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
             );
             let rt = get_runtime();
             rt.block_on(async {
-                let mut conn_guard = session.conn.lock().await;
-                if let Some(conn) = conn_guard.as_mut() {
-                    let _ = conn
-                        .send_control(
-                            session.session_id,
-                            0,
-                            &ControlMessage::SessionClose { reason: None },
-                        )
-                        .await;
+                // Use a timeout on lock acquisition to avoid hanging if the
+                // reader task is slow to return the connection.
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    session.conn.lock(),
+                )
+                .await
+                {
+                    Ok(mut conn_guard) => {
+                        if let Some(conn) = conn_guard.as_mut() {
+                            let _ = conn
+                                .send_control(
+                                    session.session_id,
+                                    0,
+                                    &ControlMessage::SessionClose { reason: None },
+                                )
+                                .await;
+                        }
+                        *conn_guard = None;
+                    }
+                    Err(_) => {
+                        log::warn!("[nxfr-ffi] nxfr_close: timed out waiting for conn lock, dropping session");
+                    }
                 }
-                *conn_guard = None;
             });
         } else {
             log::info!(
@@ -1865,14 +2081,20 @@ pub extern "C" fn nxfr_advertised_id(
 
 /// Derive SAS code from two device IDs and TLS exporter material.
 ///
+/// **BREAKING CHANGE (v0.1.x → v0.2.0):** Added `exporter_len` parameter.
+/// Previous signature took only 3 arguments (`device_id_a_hex`, `device_id_b_hex`,
+/// `exporter_bytes`). Non-JNI C consumers of `libnxfr_ffi.so` must update their
+/// call sites to pass the buffer length.
+///
 /// # Safety
 /// `device_id_a_hex`, `device_id_b_hex` must be valid null-terminated UTF-8 C strings.
-/// `exporter_bytes` must point to exactly 4 bytes.
+/// `exporter_bytes` must point to at least `exporter_len` valid bytes.
 #[no_mangle]
 pub unsafe extern "C" fn nxfr_derive_sas(
     device_id_a_hex: *const c_char,
     device_id_b_hex: *const c_char,
     exporter_bytes: *const u8,
+    exporter_len: usize,
 ) -> *mut c_char {
     ffi_guard(|| {
         let id_a_hex = match cstr_to_str(device_id_a_hex) {
@@ -1885,6 +2107,12 @@ pub unsafe extern "C" fn nxfr_derive_sas(
         };
         if exporter_bytes.is_null() {
             return json_err("null exporter_bytes");
+        }
+        if exporter_len < 4 {
+            return json_err(&format!(
+                "exporter_bytes too short: {} < 4",
+                exporter_len
+            ));
         }
         let id_a = match hex::decode(id_a_hex) {
             Ok(b) if b.len() == 32 => {
@@ -1902,7 +2130,8 @@ pub unsafe extern "C" fn nxfr_derive_sas(
             }
             _ => return json_err("device_id_b must be 64 hex chars (32 bytes)"),
         };
-        let mut exp = unsafe { std::ptr::read(exporter_bytes.cast::<[u8; 4]>()) };
+        let slice = unsafe { std::slice::from_raw_parts(exporter_bytes, exporter_len) };
+        let mut exp = [slice[0], slice[1], slice[2], slice[3]];
         let (sas_code, _context) = nxfr_core::sas::derive_sas(&id_a, &id_b, &exp);
         exp.zeroize();
         json_ok(serde_json::json!({
@@ -2124,6 +2353,30 @@ pub extern "C" fn nxfr_web_stop() -> *mut c_char {
             log::info!("[nxfr-ffi] Web server stopped.");
         }
         json_ok(serde_json::json!({ "status": "stopped" }))
+    })
+}
+
+/// Query status of the running web server (active transfers, running state).
+#[no_mangle]
+pub extern "C" fn nxfr_web_status() -> *mut c_char {
+    ffi_guard(|| {
+        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        match &*guard {
+            Some(handle) => {
+                let active = handle.active_transfers_count();
+                let stopped = handle.is_stopped();
+                json_ok(serde_json::json!({
+                    "running": !stopped,
+                    "active_transfers": active,
+                    "port": handle.port,
+                }))
+            }
+            None => json_ok(serde_json::json!({
+                "running": false,
+                "active_transfers": 0,
+                "port": 0,
+            })),
+        }
     })
 }
 
@@ -2360,7 +2613,7 @@ mod tests {
         let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
         let exporter: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
         let result = parse_ffi_json(unsafe {
-            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exporter.as_ptr())
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exporter.as_ptr(), exporter.len())
         });
         assert!(result.get("error").is_none());
         assert_eq!(result["sas_code"].as_str().unwrap().len(), 6);
@@ -2371,7 +2624,7 @@ mod tests {
         let id_a = CString::new(format!("{:0>64}", "01")).unwrap();
         let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
         let result = parse_ffi_json(unsafe {
-            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), std::ptr::null())
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), std::ptr::null(), 0)
         });
         assert!(result["error"].as_str().unwrap().contains("null"));
     }
@@ -2382,12 +2635,49 @@ mod tests {
         let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
         let exp: [u8; 4] = [0xAB, 0xCD, 0xEF, 0x12];
         let r1 =
-            parse_ffi_json(unsafe { nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exp.as_ptr()) });
+            parse_ffi_json(unsafe { nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exp.as_ptr(), exp.len()) });
         let r2 =
-            parse_ffi_json(unsafe { nxfr_derive_sas(id_b.as_ptr(), id_a.as_ptr(), exp.as_ptr()) });
+            parse_ffi_json(unsafe { nxfr_derive_sas(id_b.as_ptr(), id_a.as_ptr(), exp.as_ptr(), exp.len()) });
         assert_eq!(
             r1["sas_code"].as_str().unwrap(),
             r2["sas_code"].as_str().unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_derive_sas_short_exporter_bytes() {
+        let id_a = CString::new(format!("{:0>64}", "01")).unwrap();
+        let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
+
+        // 0 bytes — must return error, not crash
+        let empty: [u8; 0] = [];
+        // Use a valid pointer even for empty (dangling is UB-adjacent)
+        let result = parse_ffi_json(unsafe {
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), empty.as_ptr(), empty.len())
+        });
+        assert!(
+            result.get("error").is_some(),
+            "0-byte exporter should return error, got: {result}"
+        );
+
+        // 1 byte
+        let one: [u8; 1] = [0x42];
+        let result = parse_ffi_json(unsafe {
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), one.as_ptr(), one.len())
+        });
+        assert!(
+            result.get("error").is_some(),
+            "1-byte exporter should return error, got: {result}"
+        );
+
+        // 3 bytes
+        let three: [u8; 3] = [0x01, 0x02, 0x03];
+        let result = parse_ffi_json(unsafe {
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), three.as_ptr(), three.len())
+        });
+        assert!(
+            result.get("error").is_some(),
+            "3-byte exporter should return error, got: {result}"
         );
     }
 
