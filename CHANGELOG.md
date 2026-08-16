@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5-alpha] - 2026-08-15
+
+### Security & Cryptography
+- **Strict TLS 1.3 Handshake Signature Verification**:
+  - Replaced no-op assertions in `NoServerVerifier` and `NoClientVerifier` with real cryptographic handshake signature verification (`rustls::crypto::verify_tls13_signature` and `verify_tls12_signature`) backed by `ring`'s verification algorithms.
+  - Ensures mutual key possession is cryptographically proven during the mTLS handshake while preserving application-layer TOFU certificate binding. Added full integration tests against key/cert mismatch attacks.
+- **Web Portal Cross-Site Scripting (XSS) Mitigation**:
+  - Refactored web portal manifest rendering from raw template string `innerHTML` interpolation to safe programmatic DOM element construction with `textContent` auto-escaping.
+  - Malicious filenames (e.g. `<img src=x onerror=alert(1)>.txt`) now render safely as literal text.
+- **Logcat Credential Redaction**: Redacted raw authentication tokens from application logcat output (`token=****`) across web sharing components.
+
+### Memory Safety & Concurrency
+- **JNI SAS Derivation Bounds Check**:
+  - Fixed out-of-bounds memory read in JNI SAS derivation (`nxfr_derive_sas`) by enforcing minimum byte length checks before accessing raw memory pointers.
+  - Added explicit `exporter_len: usize` to C-ABI export and added unit tests for 0-, 1-, and 3-byte inputs.
+- **FFI Session Close Deadlock Prevention**:
+  - Restructured reader tasks in `nxfr-ffi` to take ownership of the connection before awaiting `recv_frame()`, releasing the Tokio `Mutex` during framed network I/O.
+  - Added 3-second lock acquisition timeouts and `Arc::strong_count` session-liveness guards to prevent deadlocks and connection leaks when `nxfr_close` is invoked concurrently.
+
+### Network Resiliency & DoS Protection
+- **Slowloris & Connection Starvation Defense**:
+  - Implemented a 10-second timeout on TLS handshake completion across `nxfr-ffi` and `nxfr-daemon`.
+  - Added concurrency-bounding semaphores (100 permits in FFI listener, 200 in daemon) to protect against connection table exhaustion.
+- **File Descriptor Starvation Backoff**:
+  - Added 50ms exponential retry backoff on TCP `accept()` errors (e.g. `EMFILE`/`ENFILE`), eliminating CPU spin loops under file descriptor exhaustion.
+
+### Android Lifecycle & Battery
+- **Adaptive UDP Beacon Ladder**:
+  - Replaced static 1-second discovery beaconing with a state-aware frequency ladder: `ACTIVE` (1s, foreground & device picker), `BACKGROUND` (5s, active background transfer), and `LOW_POWER` (30s, deep idle background).
+  - Integrated dynamic mode transitions into `evaluateLifecycleContract`, `onStart`/`onStop` hooks, and screen composables.
+- **Web Server Lifecycle Teardown**:
+  - Guaranteed immediate web server shutdown and port `17396` release in `onTaskRemoved` (swipe-away) and `onDestroy`, eliminating `EADDRINUSE` conflicts on restart.
+- **Android 14+ Foreground Service Timeout**:
+  - Implemented `onTimeout(startId)` in `NxfrService` to gracefully flush state and release network resources on OS-enforced service timeouts.
+- **Android 12+ Notification Action Fix**:
+  - Switched notification cancel actions to `PendingIntent.getForegroundService()` to eliminate `IllegalStateException` crashes on API 31+.
+- **Storage Access Framework (SAF) Resiliency**:
+  - Wrapped content resolver stream operations in `SecurityException` guards in `StagingRepository`, ensuring revoked permissions on a single file skip gracefully with user toast notifications rather than aborting multi-file batches.
+- **Touch Target & Accessibility Compliance**:
+  - Expanded interactive UI elements (attach chip rail, web upload buttons) to meet the standard 48dp minimum accessible touch target.
+- **Consent Dialog Dismissal Lock**:
+  - Added `confirmValueChange = { false }` to the incoming transfer consent sheet to prevent accidental swipe or back-gesture dismissal.
+
+### Added
+- **Share-via-Link Inactivity Timeout & Active Transfer Deferral**:
+  - The 10-minute web share timer is now an **idle/silence timer**, not a hard stopwatch.
+  - Active transfers hold an `ActiveTransferGuard` tracking live byte streams. `last_activity` is bumped on every accepted request and every chunk transferred.
+  - Expiry loop defers shutdown while active transfers are in flight and drains gracefully before closing listeners.
+  - Configurable expiry via `start_share_with_expiry` and `NXFR_WEB_EXPIRY_SECS` environment variable.
+  - Exposed `nxfr_web_status()` FFI function returning live server state and active transfer counts.
+- **UI Telemetry for Active Web Transfers**: `WebShareScreen.kt` displays `"TRANSFER ACTIVE — auto-stop deferred"` in signal cyan during active downloads and resumes silence countdown upon completion.
+- **Automated Lifecycle Cache Cleaner**: Introduced `CacheCleaner.kt` with automatic recursive cache purging on app startup (`NxfrApp.onCreate`) and transfer completion/cancellation to prevent orphaned staging files (`staging_*`, `web-share-staging`, `send_*`, `apps/`, `debug_bundle_*`).
+
+### Fixed
+- **Large File Send OOM Crash**: Replaced in-memory `std::fs::read` in `scan_send_path` with `hash_file_stream`, streaming files in fixed 64 KB chunks to eliminate memory spikes and native OOM crashes on 1GB+ files.
+- **Empty Directory Transfer Race Condition**: Fixed race condition in `SendScreen.kt` where tapping a peer without staged items created an empty `staging_<timestamp>` directory, causing `"directory is empty"` errors.
+- **Desert Mode Send Robustness**: Prevented direct transfers from initiating without selected items and added defensive validation in `StagingRepository.prepareStagingDirectory`.
+
 ## [0.4.3-alpha] - 2026-08-15
 
 ### Fixed

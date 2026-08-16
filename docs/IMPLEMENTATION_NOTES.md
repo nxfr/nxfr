@@ -41,8 +41,9 @@ Technical decisions, rationale, and protocol interpretations across NXFR crates 
 - **Rule**: §9.2.3 requires `sas_bytes = TLS-Exporter("NXFR-SAS-v0", context, 4)` where `context = sort(device_id_a, device_id_b)` (64 bytes).
 - **Decision**: `connect_to_peer()` extracts exporter bytes using `export_keying_material(&mut [0u8; 4], b"NXFR-SAS-v0", Some(&sas_context))` before consuming the TLS stream.
 
-### 2.2 rustls Certificate Verification
-- **Decision**: `NoServerVerifier` and `NoClientVerifier` in `nxfr-transport::tls` accept peer certs and preserve the certificate chain for application-layer SPKI extraction (`Connection::peer_certificates()`). TOFU pinning occurs in `nxfr-storage`.
+### 2.2 rustls Certificate & Signature Verification
+- **Decision**: `NoServerVerifier` and `NoClientVerifier` in `nxfr-transport::tls` bypass X.509 PKI certificate chain validation because NXFR operates on a Trust On First Use (TOFU) model where public keys are pinned at the application layer (`nxfr-storage`).
+- **Signature Verification**: Crucially, custom verifiers MUST NOT bypass handshake signature verification. Both verifiers invoke `rustls::crypto::verify_tls13_signature` and `verify_tls12_signature` using Ring's algorithm provider. This cryptographically proves that the connecting peer possesses the private key corresponding to the presented certificate.
 
 ### 2.3 TLS 1.3 Protocol Enforcement
 - **Decision**: Both client and server configs pass `&[&rustls::version::TLS13]` to `with_protocol_versions()`. ALPN is set to `"nxfr/0"`.
@@ -52,6 +53,15 @@ Technical decisions, rationale, and protocol interpretations across NXFR crates 
 
 ### 2.5 Key Material Zeroization
 - **Decision**: Sensitive key material and exporter bytes (`[u8; 4]`) are zeroized via `zeroize::Zeroize` immediately after SAS derivation.
+
+### 2.6 C-ABI and JNI Memory Safety Invariants
+- **Decision**: All C-ABI functions in `nxfr-ffi` accepting byte buffers MUST receive explicit buffer length parameters (`exporter_len: usize`). Pointers must never be dereferenced or converted to fixed-size slices without length validation. In `jni_bindings.rs`, array lengths (`exp_bytes.len()`) are checked prior to passing raw pointers across the FFI boundary, preventing out-of-bounds reads and undefined behavior on malformed inputs.
+
+### 2.7 Async Concurrency & Mutex Acquisition in Session Reader Tasks
+- **Decision**: To prevent deadlocks between reader tasks and `nxfr_close`, the reader task takes ownership of the connection (`guard.take()`) and drops the Tokio `Mutex` before awaiting `recv_frame()`. Upon completion, the connection is restored only if the session remains active (`Arc::strong_count > 1`). `nxfr_close` uses bounded lock acquisition timeouts (3s) to guarantee prompt session teardown without hanging the JNI calling thread.
+
+### 2.8 Listener Concurrency, Timeouts, and Error Backoff
+- **Decision**: To mitigate Slowloris attacks, TLS handshake completion is wrapped in a 10-second timeout. In-flight handshakes and connections are bounded using Tokio `Semaphore` primitives (100 permits in FFI, 200 in daemon). On TCP `accept()` errors (e.g. `EMFILE`/`ENFILE`), listeners sleep for 50ms before retrying, preventing 100% CPU busy-spin loops under file descriptor starvation.
 
 ---
 
@@ -102,3 +112,37 @@ Technical decisions, rationale, and protocol interpretations across NXFR crates 
 
 ### 4.5 FFI Mutex Lock Poisoning Recovery
 - **Decision**: Rust JNI bridge uses `.lock().unwrap_or_else(|e| e.into_inner())` across session and listener maps to prevent permanent lock poisoning across FFI calls.
+
+### 4.6 Web Share Inactivity Timer and Stream Deferral (`nxfr-web`)
+- **Decision**: The 10-minute web share lifetime is implemented as a silence/idle timer rather than a flat countdown. `last_activity` is bumped on every accepted HTTP request and on every chunk transferred in `/dl/:id` and `/upload`.
+- **Active Streams**: An `ActiveTransferGuard` increments an atomic stream counter (`active_transfers`). As long as `active_transfers > 0`, the server defers expiry and drains live connections before shutting down listeners.
+- **FFI Status Query**: Exposed `nxfr_web_status()` returning `{"running": bool, "active_transfers": usize, "port": u16}` allowing `WebShareScreen.kt` to dynamically update UI telemetry.
+
+### 4.7 Zero-Copy Streaming Hasher for Large File Transfers (`nxfr-ffi`)
+- **Issue**: Calling `std::fs::read` on large files (e.g. 1.2 GB) in `scan_send_path` attempts to allocate single contiguous byte buffers in RAM, triggering native OOM crashes / `SIGABRT` on memory-constrained Android devices.
+- **Resolution**: Replaced whole-file memory buffering with `hash_file_stream`, which computes SHA-256 and file size in fixed 64 KB chunks, maintaining constant low memory overhead regardless of payload size.
+
+### 4.8 Staging & Temporary Cache Lifecycle (`CacheCleaner.kt`)
+- **Decision**: Temporary staging folders (`staging_*`, `web-share-staging`, `send_*`, `nxfr_paste`, `apps/`, `debug_bundle_*`) created in `context.cacheDir` are purged synchronously on `NxfrApp.onCreate` and asynchronously upon transfer completion or cancellation to prevent storage buildup.
+
+### 4.9 Empty Transfer Prevention in Direct & Desert Mode
+- **Decision**: `SendScreen.kt` and `StagingRepository.prepareStagingDirectory` strictly guard against empty item lists (`stagedItems.isEmpty()`), prompting the user to select files first rather than generating empty directories that fail native manifest validation.
+
+### 4.10 Adaptive UDP Beacon Power Ladder (`UdpBeacon.kt`)
+- **Issue**: A fixed 1-second beacon interval drains battery and keeps Wi-Fi radios awake unnecessarily when the application is backgrounded or idle.
+- **Decision**: Implemented a 3-tier state-aware frequency mode:
+  - `ACTIVE` (1,000ms): Foreground UI active or Device Picker open — fast discovery.
+  - `BACKGROUND` (5,000ms): App in background with an active transfer in flight.
+  - `LOW_POWER` (30,000ms): App in deep background with no active transfer — relies primarily on mDNS.
+- **Lifecycle Coupling**: `evaluateLifecycleContract()` automatically recalculates beacon mode whenever a transfer completes, errors, or is cancelled, ensuring the `BACKGROUND → LOW_POWER` transition fires immediately without waiting for activity lifecycle events.
+
+### 4.11 Android 14+ onTimeout & Android 12+ Notification Actions
+- **Decision**: `NxfrService` implements `onTimeout(startId)` for Android 14+ (API 34) compliance, gracefully flushing active state and unbinding sockets when OS runtime limits are reached.
+- **Notification PendingIntents**: Transfer notification actions use `PendingIntent.getForegroundService()` to prevent `IllegalStateException` crashes on Android 12+ (API 31+) when invoked while the app is backgrounded.
+
+### 4.12 Storage Access Framework (SAF) SecurityException Handling
+- **Decision**: All `contentResolver.openInputStream()` calls in `StagingRepository` and `copyDocumentTree` are wrapped in `SecurityException` guards. If permission is revoked for a specific URI, the file is logged, a warning toast is shown, and the batch transfer continues with the remaining valid files rather than failing the entire operation.
+
+### 4.13 Web Portal Security: DOM Construction and Credential Hygiene
+- **Decision**: In `nxfr-web`, manifest item rendering is implemented using safe DOM construction (`createElement` + `textContent`) rather than template string `innerHTML` interpolation to completely eliminate DOM-based XSS from untrusted filenames.
+- **Log Hygiene**: Authentication tokens are strictly redacted from logs (`token=****`) to prevent credential leakage into Android logcat or terminal consoles.

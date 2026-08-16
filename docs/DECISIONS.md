@@ -388,6 +388,77 @@ selection (`nxfr/0`), not fine-grained
 application-level feature flags.
 **References:** NXFR PROTOCOL.md §16.3
 
+### D-17: TLS Handshake Signature Verification in Custom TOFU Verifiers
+**Status:** Locked (v0.1)
+**Decision:** Custom TLS certificate verifiers
+(`NoServerVerifier`, `NoClientVerifier`) that bypass
+public CA chain validation MUST explicitly verify
+handshake signatures using standard cryptographic
+primitives (`rustls::crypto::verify_tls13_signature`).
+**Rationale:** Treating certificate chain validation
+and handshake signature verification as equivalent
+is a fatal security flaw. In a self-signed TOFU
+model, certificate chain validation is bypassed so
+that arbitrary self-signed keys can be pinned at the
+application layer. However, signature verification
+must be executed to cryptographically prove that the
+peer possesses the private key corresponding to the
+presented certificate. Without this, an adversary
+presenting an intercepted public certificate could
+complete the handshake without possessing the private
+key.
+**Alternatives Considered:**
+- **No-op assertion verifiers:** Rejected because
+returning an unconditional validation assertion
+bypasses proof of key possession.
+**References:** RFC 8446 §4.4.3, NXFR SECURITY.md §8.8
+
+### D-18: Adaptive Beacon Frequency Ladder for Mobile Discovery
+**Status:** Locked (v0.1)
+**Decision:** Implement a dynamic 3-state UDP beacon
+broadcasting interval for mobile devices:
+- `ACTIVE` (1,000ms): UI in foreground or Device
+  Picker actively displayed.
+- `BACKGROUND` (5,000ms): Foreground service running
+  with an active file transfer in progress.
+- `LOW_POWER` (30,000ms): Deep background idle state,
+  falling back on passive mDNS browsing.
+**Rationale:** A static 1-second beacon interval
+keeps the Wi-Fi radio awake continuously, leading to
+significant battery drain and OS-enforced background
+throttling. Stepping down broadcast intervals based on
+user context preserves snappy local discovery when the
+user is actively looking to connect while maintaining
+negligible battery impact when idle.
+**Alternatives Considered:**
+- **Static 1-second beacon:** Rejected due to high
+power consumption.
+- **Pure mDNS on mobile:** Rejected because local Wi-Fi
+hotspots frequently block multicast traffic, making
+direct UDP unicast/broadcast essential for Tier-0
+discovery.
+**References:** NXFR IMPLEMENTATION_NOTES.md §4.10
+
+### D-19: Listener Backoff & Concurrency Limits under Resource Starvation
+**Status:** Locked (v0.1)
+**Decision:** Bound concurrent TLS handshakes with
+counting semaphores, enforce a 10-second handshake
+timeout, and apply a 50ms sleep delay on all TCP
+`accept()` errors before retrying.
+**Rationale:** When a process reaches system resource
+limits (e.g. `EMFILE`/`ENFILE`), immediate unthrottled
+retry of `accept()` results in a tight busy-loop that
+burns 100% CPU. Similarly, Slowloris attacks that open
+thousands of unauthenticated TCP connections and stall
+the TLS handshake exhaust memory and file descriptors.
+Bounding concurrency and enforcing handshake timeouts
+mitigates resource exhaustion deterministically.
+**Alternatives Considered:**
+- **Fatal exit on accept error:** Rejected because
+transient file descriptor spikes should not crash
+the daemon or mobile background service.
+**References:** NXFR SECURITY.md §7.7, §7.8
+
 ---
 
 ## Open Questions

@@ -43,6 +43,15 @@ All protocol logic lives in Rust (`nxfr-ffi` crate). The Kotlin layer is a wrapp
 | `nxfr_close(handle)` | Send SessionClose, release resources |
 | `nxfr_pair_begin(handle)` | Send PairRequest, derive SAS code |
 | `nxfr_pair_confirm(handle, accepted)` | Confirm/reject pairing |
+| `nxfr_derive_sas(device_id_a, device_id_b, exporter_bytes, exporter_len)` | Derive 6-digit SAS code from TLS exporter bytes |
+| `nxfr_web_start(port, store_dir, pin)` | Start token/PIN-gated browser upload portal |
+| `nxfr_web_share_start(port, store_dir, pin, manifest)` | Start token/PIN-gated browser share server |
+| `nxfr_web_status()` | Query running status and active in-flight stream count |
+| `nxfr_web_stop()` | Gracefully stop active web server |
+| `nxfr_web_fingerprint(store_dir)` | Compute SPKI SHA-256 fingerprint for web cert pinning |
+| `nxfr_history_add(record, store_dir)` | Append record to persistent transfer history |
+| `nxfr_history_list(limit, store_dir)` | Retrieve ordered transfer history records |
+| `nxfr_history_clear(store_dir)` | Clear transfer history records |
 
 ## Event Flow
 
@@ -92,7 +101,7 @@ The Android client uses a multi-tier discovery strategy for local networks and h
 
 | Tier | Mechanism | Implementation | Latency | Hotspot-Safe |
 |------|-----------|----------------|---------|--------------|
-| 0 | **UDP Beacon** | `UdpBeacon.kt` — broadcasts on port 17395 every 1 s | ~1 s | Yes |
+| 0 | **UDP Beacon** | `UdpBeacon.kt` — state-aware adaptive broadcast on port 17395 (1s active / 5s background / 30s low power) | ~1 s | Yes |
 | 1 | **NSD (mDNS/DNS-SD)** | `NsdDiscovery.kt` — `android.net.nsd.NsdManager` | 2–5 s | No |
 | 2 | **TCP Subnet Probe** | `HotspotAwareDiscovery.kt` — scan /24 on port 17394 | 5–30 s | Yes |
 | 3 | **Manual Connect** | UI-driven IP:port → `nxfr_connect()` | User-initiated | Yes |

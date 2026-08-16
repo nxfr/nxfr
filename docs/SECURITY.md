@@ -383,10 +383,16 @@ Implementations SHOULD track connection attempts by IP address and `device_id`.
 - If a peer rapidly connects and disconnects, or repeatedly sends invalid frames, the implementation MUST apply exponential backoff.
 - Alternatively, temporarily block the peer entirely at the TCP layer.
 
-### 7.7 Slowloris Defenses
-Attackers may attempt to hold connections open indefinitely by sending data very slowly (Slowloris).
-- Implementations MUST implement strict timeouts for the initial HELLO exchange.
-- If a valid `HELLO` frame is not completely received and parsed within 5 seconds of the TLS handshake completing, the connection MUST be closed.
+### 7.7 Slowloris and Handshake Timeouts
+Attackers may attempt to hold connections open indefinitely by sending data very slowly (Slowloris) or stalling during the TLS handshake.
+- **Handshake Timeout**: Implementations MUST wrap the TLS handshake in a strict timeout of at most 10 seconds. If the TLS handshake does not complete within this window, the TCP stream MUST be immediately aborted.
+- **Bounded Handshake Concurrency**: Implementations MUST bound the number of concurrent in-flight TLS handshakes using a semaphore or connection pool (e.g. 100 concurrent handshakes) to prevent resource exhaustion of the crypto engine and socket descriptor table.
+- **HELLO Message Timeout**: If a valid `HELLO` frame is not completely received and parsed within 5 seconds of the TLS handshake completing, the connection MUST be closed.
+
+### 7.8 File Descriptor Starvation Backoff
+When the host process approaches system resource limits (e.g. `EMFILE` or `ENFILE` indicating too many open files), the TCP `accept()` loop will return immediate errors.
+- Implementations MUST NOT spin in a busy loop retrying `accept()` with zero delay.
+- On any `accept()` error, the listener MUST apply a backoff delay of at least 50ms before attempting the next accept call, preventing 100% CPU starvation.
 
 ---
 
@@ -430,6 +436,18 @@ The core of NXFR authentication is the `device_id`, which is defined as the SHA-
 - Implementations MUST extract this SPKI data directly from the verified TLS session state and compute the hash themselves.
 - They MUST NOT rely on the `device_id` field in the `HELLO` payload for authentication.
 - The `HELLO` payload value is only a claim; the TLS certificate provides the cryptographic proof.
+
+### 8.8 Cryptographic Handshake Signature Verification
+When implementing custom certificate verifiers to bypass public CA chain validation (enabling self-signed TOFU certificates), implementations MUST NOT treat certificate validation and handshake signature verification as identical.
+- **Mandatory Signature Check**: The TLS verifier MUST invoke standard cryptographic signature verification algorithms over the handshake messages (e.g. `rustls::crypto::verify_tls13_signature`).
+- **Possession Proof**: Signature verification mathematically proves that the connecting entity possesses the private key corresponding to the presented public certificate. Bypassing this step allows an attacker with a victim's public certificate to impersonate the victim without having their private key.
+
+### 8.9 Web Portal Security Invariants
+For browser-based direct link sharing (`nxfr-web`):
+- **Fragment Token Isolation**: Authentication tokens MUST be positioned in URL hash fragments (`/#t=<token>`) rather than path segments or query parameters to prevent token transmission over the wire or retention in intermediate proxy/server request logs.
+- **PIN Brute-Force Rate Limiting**: The portal MUST track failed authentication attempts per client IP. Upon reaching 5 consecutive failures, the IP MUST be locked out for at least 5 minutes.
+- **DOM-Based XSS Elimination**: Web interfaces displaying user-supplied metadata (e.g. filenames from manifests) MUST render content using safe DOM property assignment (`textContent`) or strict contextual HTML escaping, never unescaped `innerHTML`.
+- **Log Hygiene**: Implementation logging frameworks MUST explicitly redact authentication tokens (`token=****`) from all application logs and system logcat sinks.
 
 ---
 

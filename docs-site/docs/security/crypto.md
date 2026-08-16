@@ -23,6 +23,8 @@ Each device presents a self-signed X.509 certificate during the TLS handshake. C
 3. If paired, verify `peer_device_id` matches the pinned identity in the local database.
 4. If unpaired, accept the identity temporarily (TOFU) and offer pairing.
 
+Crucially, while CA certificate chain validation is bypassed in favor of SPKI pinning, **TLS handshake signature verification is strictly enforced**. Custom TLS verifiers must verify the cryptographic signature over the handshake messages (`verify_tls13_signature`), proving that the connecting peer possesses the private key corresponding to the presented certificate.
+
 If a device's long-term key changes (e.g., app reinstalled), the `device_id` changes. Implementations MUST detect this mismatch and drop connections to previously paired peers until they re-pair.
 
 ## Pairing & SAS Derivation
