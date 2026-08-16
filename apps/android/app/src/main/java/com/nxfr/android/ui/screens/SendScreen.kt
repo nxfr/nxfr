@@ -268,6 +268,9 @@ fun SendScreen(
                     val addr = scanRes.addr
                     startSendFlow(context, coroutineScope, addr)
                 }
+                is com.nxfr.android.transfer.QrScanResult.DesertTicket -> {
+                    Toast.makeText(context, "Desert Mode QR — use the Desert Mode sheet to scan this", Toast.LENGTH_LONG).show()
+                }
                 is com.nxfr.android.transfer.QrScanResult.WebUploadLink -> {
                     Toast.makeText(context, "That's a web-upload link — open it in a browser", Toast.LENGTH_LONG).show()
                 }

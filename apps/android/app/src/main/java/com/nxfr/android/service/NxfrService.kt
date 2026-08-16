@@ -15,6 +15,7 @@ import com.nxfr.android.R
 import com.nxfr.android.discovery.HotspotAwareDiscovery
 import com.nxfr.android.discovery.NxfrP2pManager
 import com.nxfr.android.discovery.NxfrSoftApManager
+import com.nxfr.android.discovery.DesertModeOrchestrator
 import com.nxfr.android.discovery.UdpBeacon
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,9 @@ class NxfrService : Service() {
 
         private var _softApManager: NxfrSoftApManager? = null
         val softApManager: NxfrSoftApManager? get() = _softApManager
+
+        private var _desertOrchestrator: DesertModeOrchestrator? = null
+        val desertOrchestrator: DesertModeOrchestrator? get() = _desertOrchestrator
 
         private val _desertSessionActive = MutableStateFlow(false)
         val desertSessionActive: StateFlow<Boolean> = _desertSessionActive.asStateFlow()
@@ -339,6 +343,7 @@ class NxfrService : Service() {
         // Initialize Desert Mode engines (P2P + SoftAP).
         _p2pManager = NxfrP2pManager().also { it.initialize(this) }
         _softApManager = NxfrSoftApManager().also { it.initialize(this) }
+        _desertOrchestrator = DesertModeOrchestrator(_p2pManager!!, _softApManager!!).also { it.initialize(this) }
 
         // Set receive directory to app-scoped storage.
         val inbox = getInboxDir(this)
@@ -524,6 +529,8 @@ class NxfrService : Service() {
         _isListening.value = false
         _discovery?.stopDiscovery()
         _discovery = null
+        _desertOrchestrator?.teardown()
+        _desertOrchestrator = null
         _p2pManager?.teardown()
         _p2pManager = null
         _softApManager?.teardown()
