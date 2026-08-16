@@ -29,11 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.nxfr.android.ui.theme.deckColors
 
 /**
- * Utility object for battery optimization status checks and OEM-specific guidance.
- *
- * Samsung, Xiaomi, Oppo, Vivo aggressively kill background services.
- * NxfrService will die in 2-5 minutes on these devices unless the user
- * manually exempts NXFR from battery optimization.
+ * Battery optimization checks and OEM exemption intents.
  */
 object BatteryOptimizationHelper {
 

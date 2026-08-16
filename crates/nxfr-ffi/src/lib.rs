@@ -325,7 +325,7 @@ fn ffi_guard<F: FnOnce() -> *mut c_char + panic::UnwindSafe>(f: F) -> *mut c_cha
     }
 }
 
-/// Load identity from a directory containing identity.der + identity.crt.
+// Load identity from a directory containing identity.der + identity.crt.
 fn load_identity(dir: &str) -> Result<FfiIdentity, String> {
     let dir_path = Path::new(dir);
     let key_der =
@@ -341,7 +341,7 @@ fn load_identity(dir: &str) -> Result<FfiIdentity, String> {
     })
 }
 
-/// Generate a random session_id using ring.
+// Generate a random session_id using ring.
 fn rand_session_id() -> u32 {
     let mut buf = [0u8; 4];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut buf)
@@ -349,7 +349,7 @@ fn rand_session_id() -> u32 {
     u32::from_be_bytes(buf)
 }
 
-/// Generate a random TransferId using ring.
+// Generate a random TransferId using ring.
 fn rand_transfer_id() -> TransferId {
     let mut buf = [0u8; 16];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut buf)

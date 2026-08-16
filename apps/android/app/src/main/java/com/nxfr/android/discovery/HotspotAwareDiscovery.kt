@@ -21,7 +21,7 @@ import java.net.Socket
  * Tier 0 — UDP BEACON (instant, works on hotspots, every 1s)
  * Tier 1 — NSD (mDNS/DNS-SD via NsdDiscovery)
  * Tier 2 — TCP PROBE FALLBACK (scan local /24 subnets on port 17394)
- * Tier 3 — MANUAL (handled by UI, not by this class)
+ * Tier 3 — MANUAL (handled by UI)
  */
 class HotspotAwareDiscovery(private val context: Context) {
     companion object {

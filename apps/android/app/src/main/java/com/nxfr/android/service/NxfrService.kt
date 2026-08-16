@@ -329,7 +329,7 @@ class NxfrService : Service() {
     private var activeSessionHandle: Long = 0
     @Volatile private var listening = false
     private var activePeerName: String = "Peer"
-    private val transferNotificationManager by lazy { com.nxfr.android.transfer.TransferNotificationManager(this) }
+    private val notifManager by lazy { com.nxfr.android.transfer.TransferNotificationManager(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -779,7 +779,7 @@ class NxfrService : Service() {
                         Log.i(TAG, "Auto-accepted transfer: $confirmJson")
                     } else {
                         Log.i(TAG, "Transfer offer pending manual approval.")
-                        transferNotificationManager.showIncomingOfferNotification(
+                        notifManager.showIncomingOfferNotification(
                             offerId = transferId,
                             fileName = event.optString("display_name"),
                             fileSize = event.optLong("total_size"),
@@ -816,7 +816,7 @@ class NxfrService : Service() {
                         fileName = fileName,
                         isSending = isSending
                     )
-                    transferNotificationManager.showTransferProgressNotification(
+                    notifManager.showTransferProgressNotification(
                         transferId = transferId,
                         isSending = isSending,
                         fileName = fileName,
@@ -843,7 +843,7 @@ class NxfrService : Service() {
                         }
                     }
 
-                    transferNotificationManager.showTransferCompleteNotification(
+                    notifManager.showTransferCompleteNotification(
                         transferId = transferId,
                         fileName = completedFileName,
                         fileSize = completedFileSize,
@@ -875,7 +875,7 @@ class NxfrService : Service() {
                 "error" -> {
                     if (handle != activeSessionHandle) {
                         Log.i(TAG, "Transfer cancelled locally, ignoring error.")
-                        transferNotificationManager.cancelNotification(transferId)
+                        notifManager.cancelNotification(transferId)
                         evaluateLifecycleContract()
                         return
                     }
@@ -903,7 +903,7 @@ class NxfrService : Service() {
                             "Rejected: unsafe filename"
                         else -> raw
                     }
-                    transferNotificationManager.showTransferFailedNotification(
+                    notifManager.showTransferFailedNotification(
                         transferId = transferId,
                         title = if (status == "rejected") "Transfer rejected" else "Transfer failed",
                         message = human
@@ -917,7 +917,7 @@ class NxfrService : Service() {
                 }
                 "disconnected" -> {
                     if (handle != activeSessionHandle) return
-                    transferNotificationManager.showTransferFailedNotification(
+                    notifManager.showTransferFailedNotification(
                         transferId = transferId,
                         title = "Transfer disconnected",
                         message = "Session disconnected unexpectedly"

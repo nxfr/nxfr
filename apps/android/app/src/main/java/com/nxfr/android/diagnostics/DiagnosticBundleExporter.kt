@@ -19,19 +19,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Exports a structured diagnostic bundle as a ZIP file.
- * 
- * Bundle structure:
- *   manifest.json           — bundle metadata
- *   system/device.json      — manufacturer, model, API level
- *   system/permissions.json — granted vs denied runtime permissions
- *   nxfr/config.json        — app settings (auto-accept, beacon mode)
- *   nxfr/identity.json      — public device_id ONLY, never private keys
- *   nxfr/paired_devices.json— paired device count + truncated IDs
- *   logs/logcat.log         — last 500 logcat lines filtered by app PID
- *
- * SANITIZATION: private keys, SAS codes, web tokens, full file paths,
- * and raw peer device IDs are NEVER included.
+ * Diagnostic bundle exporter (ZIP with sanitized system/app state).
  */
 object DiagnosticBundleExporter {
 

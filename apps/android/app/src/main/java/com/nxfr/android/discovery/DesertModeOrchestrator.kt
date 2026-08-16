@@ -14,15 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/**
- * Unified state for the three-tier Desert Mode discovery system.
- *
- * State machine:
- *   Idle -> Tier1Scanning(10s) -> [peers?] -> Tier1PeersFound -> Tier1Connecting -> Connected(tier=1)
- *                               -> [timeout] -> Tier2Hosting -> (show QR for other device)
- *                               -> [host failed] -> Tier3QrFallback
- *   Any state + user scans QR -> Tier2Joining -> Connected(tier=2)
- */
+// Desert mode state machine. Wraps P2P + SoftAP.
 sealed class DesertState {
     data object Idle : DesertState()
     data object LocationRequired : DesertState()  // Android < 13 needs GPS ON

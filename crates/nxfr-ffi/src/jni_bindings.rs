@@ -22,9 +22,7 @@ use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 use std::ffi::CStr;
 
-/// Prefix for all JNI symbols in this class.
-/// `com.nxfr.android.service.NxfrService$NxfrBridge` →
-/// `Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_`
+/// JNI symbol prefix: `com.nxfr.android.service.NxfrService$NxfrBridge`
 const _PREFIX: &str = "Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
