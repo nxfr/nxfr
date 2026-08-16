@@ -21,3 +21,7 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+nxfr-crypto = { workspace = true }

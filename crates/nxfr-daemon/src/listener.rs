@@ -6,58 +6,22 @@ use log::{error, info, warn};
 use nxfr_transport::tls;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio_rustls::TlsAcceptor;
 
 const LISTEN_PORT: u16 = 17394;
 
+/// Maximum number of concurrent TLS connections.
+const MAX_CONCURRENT_CONNECTIONS: usize = 200;
+
+/// Backoff delay after accept() errors to prevent CPU spin.
+const ACCEPT_ERROR_BACKOFF_MS: u64 = 50;
+
+/// TLS handshake timeout — drop connections that take too long.
+const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+
 pub async fn run_listener(state: Arc<DaemonState>) -> Result<(), Box<dyn std::error::Error>> {
-    let server_config =
-        tls::build_server_config(state.identity.private_key(), state.identity.certificate())?;
-    let acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-    let listener = TcpListener::bind(format!("0.0.0.0:{LISTEN_PORT}")).await?;
-    info!("TCP listener bound on 0.0.0.0:{LISTEN_PORT}");
-
-    // Also try IPv6 (non-fatal if it fails).
-    let listener6 = TcpListener::bind(format!("[::]:{LISTEN_PORT}")).await;
-    if listener6.is_ok() {
-        info!("TCP listener also bound on [::]:{LISTEN_PORT}");
-    }
-
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((tcp_stream, addr)) => {
-                        info!("Incoming TCP connection from {addr}");
-                        let acceptor = acceptor.clone();
-                        let state = Arc::clone(&state);
-                        tokio::spawn(async move {
-                            match acceptor.accept(tcp_stream).await {
-                                Ok(tls_stream) => {
-                                    if let Err(e) = handler::handle_incoming(state, tls_stream, addr).await {
-                                        warn!("Connection handler error for {addr}: {e}");
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("TLS handshake failed from {addr}: {e}");
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("TCP accept error: {e}");
-                    }
-                }
-            }
-            _ = state.shutdown.notified() => {
-                info!("Listener shutting down");
-                break;
-            }
-        }
-    }
-
-    Ok(())
+    run_listener_inner(state, format!("0.0.0.0:{LISTEN_PORT}"), true).await
 }
 
 /// Run the listener on a specific port (for testing).
@@ -65,12 +29,29 @@ pub async fn run_listener_on_port(
     state: Arc<DaemonState>,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    run_listener_inner(state, format!("127.0.0.1:{port}"), false).await
+}
+
+async fn run_listener_inner(
+    state: Arc<DaemonState>,
+    bind_addr: String,
+    try_ipv6: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let server_config =
         tls::build_server_config(state.identity.private_key(), state.identity.certificate())?;
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
-    info!("TCP listener bound on 127.0.0.1:{port}");
+    let listener = TcpListener::bind(&bind_addr).await?;
+    info!("TCP listener bound on {bind_addr}");
+
+    if try_ipv6 {
+        // Also try IPv6 (non-fatal if it fails).
+        let listener6 = TcpListener::bind(format!("[::]:{LISTEN_PORT}")).await;
+        if listener6.is_ok() {
+            info!("TCP listener also bound on [::]:{LISTEN_PORT}");
+        }
+    }
 
     loop {
         tokio::select! {
@@ -80,21 +61,40 @@ pub async fn run_listener_on_port(
                         info!("Incoming TCP connection from {addr}");
                         let acceptor = acceptor.clone();
                         let state = Arc::clone(&state);
+                        let sem = semaphore.clone();
                         tokio::spawn(async move {
-                            match acceptor.accept(tcp_stream).await {
-                                Ok(tls_stream) => {
+                            // Bound concurrent connections.
+                            let _permit = match sem.acquire().await {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    warn!("Connection semaphore closed, dropping {addr}");
+                                    return;
+                                }
+                            };
+                            // Timeout TLS handshakes to prevent Slowloris.
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(TLS_HANDSHAKE_TIMEOUT_SECS),
+                                acceptor.accept(tcp_stream),
+                            )
+                            .await
+                            {
+                                Ok(Ok(tls_stream)) => {
                                     if let Err(e) = handler::handle_incoming(state, tls_stream, addr).await {
                                         warn!("Connection handler error for {addr}: {e}");
                                     }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     warn!("TLS handshake failed from {addr}: {e}");
+                                }
+                                Err(_) => {
+                                    warn!("TLS handshake timeout ({TLS_HANDSHAKE_TIMEOUT_SECS}s) from {addr}");
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        error!("TCP accept error: {e}");
+                        warn!("TCP accept error: {e} — backing off {ACCEPT_ERROR_BACKOFF_MS}ms");
+                        tokio::time::sleep(std::time::Duration::from_millis(ACCEPT_ERROR_BACKOFF_MS)).await;
                     }
                 }
             }
