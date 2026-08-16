@@ -214,11 +214,16 @@ struct PendingOffer {
 }
 
 /// Identity loaded from disk (key + cert + device_id).
-#[derive(Clone)]
 struct FfiIdentity {
     device_id: [u8; 32],
     key_der: Vec<u8>,
     cert_der: Vec<u8>,
+}
+
+impl Drop for FfiIdentity {
+    fn drop(&mut self) {
+        self.key_der.zeroize();
+    }
 }
 
 impl FfiIdentity {
@@ -248,8 +253,9 @@ struct Session {
 
 struct Listener {
     pending_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcceptedConn>>>,
-    identity: FfiIdentity,
+    identity: Arc<FfiIdentity>,
     port: u16,
+    store_dir: String,
     cancel_token: tokio_util::sync::CancellationToken,
     accept_task: tokio::task::JoinHandle<()>,
 }
@@ -466,7 +472,14 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                 let hello = ControlMessage::Hello {
                     protocol_version: ProtocolVersion::V0_1,
                     device_id: DeviceId::from_bytes(identity.device_id),
-                    device_name: "NXFR-Android".to_string(),
+                    device_name: {
+                        let cfg_path = std::path::Path::new(dir).join("config.toml");
+                        nxfr_storage::config::NxfrConfig::load_from(&cfg_path)
+                            .ok()
+                            .map(|c| c.device_name)
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| "NXFR-Android".to_string())
+                    },
                     platform: Platform::Android,
                     capabilities: vec![],
                     is_paired: false,
@@ -719,8 +732,9 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
                 handle,
                 Listener {
                     pending_rx: Arc::new(tokio::sync::Mutex::new(pending_rx)),
-                    identity,
+                    identity: Arc::new(identity),
                     port: actual_port,
+                    store_dir: dir.to_string(),
                     cancel_token,
                     accept_task,
                 },
@@ -742,13 +756,13 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
         let rt = get_runtime();
 
         // Get listener state (clone Arc to release the std mutex before blocking).
-        let (rx_arc, identity) = {
+        let (rx_arc, identity, store_dir) = {
             let guard = listeners_map().lock().unwrap_or_else(|e| e.into_inner());
             let lis = match guard.get(&listener) {
                 Some(l) => l,
                 None => return json_err("invalid listener handle"),
             };
-            (lis.pending_rx.clone(), lis.identity.clone())
+            (lis.pending_rx.clone(), lis.identity.clone(), lis.store_dir.clone())
         };
 
         // Block until a TLS connection arrives.
@@ -807,7 +821,15 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             let ack = ControlMessage::HelloAck {
                 protocol_version: ProtocolVersion::V0_1,
                 device_id: DeviceId::from_bytes(identity.device_id),
-                device_name: "NXFR-Android".to_string(),
+                device_name: {
+                    let cfg_path = std::path::Path::new(&store_dir).join("config.toml");
+                    let name = nxfr_storage::config::NxfrConfig::load_from(&cfg_path)
+                        .ok()
+                        .map(|c| c.device_name)
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "NXFR-Android".to_string());
+                    name
+                },
                 platform: Platform::Android,
                 capabilities: vec![],
                 is_paired: false,
@@ -919,7 +941,12 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                                     }
                                     Err(e) => {
                                         log::error!("[nxfr-ffi] TLS exporter failed: {e}");
-                                        "000000".to_string()
+                                        let _ = event_tx_clone
+                                            .send(FfiEvent::Error {
+                                                msg: format!("SAS derivation failed: {e}"),
+                                            })
+                                            .await;
+                                        return;
                                     }
                                 }
                             };
@@ -1261,6 +1288,7 @@ async fn do_send_file(
         let mut offset: usize = 0;
         let mut in_flight: usize = 0;
         let mut read_buf = vec![0u8; chunk_size];
+        let mut streaming_hasher = Sha256::new();
 
         while offset < file_size {
             while in_flight >= max_in_flight {
@@ -1285,6 +1313,7 @@ async fn do_send_file(
             file.read_exact(buf).await?;
 
             let is_last = offset + want == file_size;
+            streaming_hasher.update(&*buf);
             let chunk_hash: [u8; 32] = Sha256::digest(&*buf).into();
 
             let mut payload = Vec::with_capacity(8 + 32 + want);
@@ -1297,6 +1326,16 @@ async fn do_send_file(
                 .await?;
             in_flight += 1;
             offset += want;
+        }
+
+        let streamed_sha256: [u8; 32] = streaming_hasher.finalize().into();
+        if streamed_sha256 != entry.sha256 {
+            log::warn!(
+                "[sender] TOCTOU warning: file '{}' changed on disk during transfer! Scan hash {} != streamed hash {}",
+                entry.relative_path,
+                hex::encode(entry.sha256),
+                hex::encode(streamed_sha256)
+            );
         }
 
         while in_flight > 0 {
@@ -1440,7 +1479,9 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
 
         if !accept {
             if let Some(offer) = pending_offer {
-                rt.block_on(async {
+                // Spawn fire-and-forget — don't block the JNI thread waiting
+                // for the conn lock (which the pump task may be holding).
+                rt.spawn(async move {
                     let mut conn_guard = conn_arc.lock().await;
                     if let Some(conn) = conn_guard.as_mut() {
                         let _ = conn
@@ -1511,11 +1552,11 @@ async fn do_receive_file(
     std::fs::create_dir_all(&receive_dir)?;
     let canonical_root = std::fs::canonicalize(&receive_dir)?;
 
-    // Pre-create any directories declared in manifest
+    // Pre-create any directories declared in manifest (jail-checked)
     for entry in &offer.manifest {
         if entry.entry_type == ManifestEntryType::Dir {
-            let clean_rel = entry.relative_path.replace("..", "_");
-            let dir_path = canonical_root.join(clean_rel);
+            let dir_path = nxfr_core::resolve_safe_path(&canonical_root, &entry.relative_path)
+                .map_err(|e| format!("unsafe directory path '{}': {e}", entry.relative_path))?;
             let _ = std::fs::create_dir_all(&dir_path);
         }
     }
@@ -1567,8 +1608,8 @@ async fn do_receive_file(
         )
         .await?;
 
-        let clean_rel = relative_path.replace("..", "_");
-        let final_path = canonical_root.join(&clean_rel);
+        let final_path = nxfr_core::resolve_safe_path(&canonical_root, &relative_path)
+            .map_err(|e| format!("unsafe file path '{}': {e}", relative_path))?;
         if let Some(parent) = final_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -1578,6 +1619,7 @@ async fn do_receive_file(
         let mut tmp_file = std::fs::File::create(&tmp_path)?;
         let mut hasher = Sha256::new();
         let mut file_received_bytes: u64 = 0;
+        let mut expected_offset: u64 = 0;
 
         loop {
             let (hdr, payload) = conn.recv_frame().await?;
@@ -1607,6 +1649,14 @@ async fn do_receive_file(
             let chunk_hash = &payload[8..40];
             let chunk_data = &payload[40..];
 
+            // Reject out-of-order or duplicate chunks.
+            if chunk_offset != expected_offset {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(format!(
+                    "chunk offset mismatch: expected {expected_offset}, got {chunk_offset}"
+                ).into());
+            }
+
             // Verify per-chunk hash.
             let computed = Sha256::digest(chunk_data);
             if computed.as_slice() != chunk_hash {
@@ -1618,6 +1668,7 @@ async fn do_receive_file(
             tmp_file.write_all(chunk_data)?;
             hasher.update(chunk_data);
             file_received_bytes += chunk_data.len() as u64;
+            expected_offset += chunk_data.len() as u64;
             cumulative_received += chunk_data.len() as u64;
 
             // Send ChunkAck.
@@ -1999,9 +2050,9 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
                 handle
             );
             let rt = get_runtime();
-            rt.block_on(async {
-                // Use a timeout on lock acquisition to avoid hanging if the
-                // reader task is slow to return the connection.
+            // Spawn best-effort SessionClose — don't block the JNI thread.
+            // Session is already removed from the map so handle is dead either way.
+            rt.spawn(async move {
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(3),
                     session.conn.lock(),

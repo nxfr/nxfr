@@ -177,9 +177,8 @@ async function unlockUploadWithPin() {
       pinInput.focus();
     }
   } catch (err) {
-    t = pinVal;
-    document.getElementById('pin-card').style.display = 'none';
-    document.getElementById('main-card').style.display = 'block';
+    pinErr.style.display = 'block';
+    pinErr.textContent = 'Network error \u2014 try again';
   } finally {
     btnUnlock.disabled = false;
     btnUnlock.textContent = 'Unlock Upload';
@@ -364,9 +363,8 @@ async function unlockWithPin() {
       pinInput.focus();
     }
   } catch (err) {
-    t = pinVal;
-    document.getElementById('pin-card').style.display = 'none';
-    document.getElementById('main-card').style.display = 'block';
+    pinErr.style.display = 'block';
+    pinErr.textContent = 'Network error \u2014 try again';
   } finally {
     btnUnlock.disabled = false;
     btnUnlock.textContent = 'Unlock Downloads';
@@ -990,6 +988,10 @@ impl WebServer {
             "HTTP/1.1 {}\r\n\
              Content-Type: {}\r\n\
              Content-Length: {}\r\n\
+             Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n\
+             Content-Security-Policy: default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             X-Frame-Options: DENY\r\n\
              Connection: close\r\n\
              \r\n",
             status,
@@ -1150,6 +1152,19 @@ impl WebServer {
                 let body = b"{\"status\": \"authenticated\"}";
                 return Self::send_response(stream, "200 OK", "application/json", body).await;
             } else {
+                // Record failure for rate limiting (same logic as /upload)
+                {
+                    let mut failed = self.failed_attempts.lock().await;
+                    let entry = failed.entry(ip).or_insert((0, Instant::now()));
+                    if entry.1.elapsed() > RATE_LIMIT_WINDOW {
+                        entry.0 = 1;
+                        entry.1 = Instant::now();
+                    } else {
+                        entry.0 += 1;
+                        entry.1 = Instant::now();
+                    }
+                }
+                log::warn!("[nxfr-web] [{}] 403 Forbidden: Invalid PIN on /auth", ip);
                 let body = b"{\"error\": \"Invalid PIN\"}";
                 return Self::send_response(stream, "403 Forbidden", "application/json", body)
                     .await;

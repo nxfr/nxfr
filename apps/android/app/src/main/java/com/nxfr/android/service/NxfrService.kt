@@ -382,7 +382,7 @@ class NxfrService : Service() {
         if (!loadResult.has("error") && loadResult.optString("device_id").isNotEmpty()) {
             val id = loadResult.getString("device_id")
             _deviceId.value = id
-            Log.i(TAG, "Loaded identity: device_id=$id")
+            Log.d(TAG, "Loaded identity: device_id=${id.take(8)}...")
             return
         }
 
@@ -395,7 +395,7 @@ class NxfrService : Service() {
         if (!genResult.has("error") && genResult.optString("device_id").isNotEmpty()) {
             val id = genResult.getString("device_id")
             _deviceId.value = id
-            Log.i(TAG, "Generated identity: device_id=$id")
+            Log.d(TAG, "Generated identity: device_id=${id.take(8)}...")
         } else {
             Log.e(TAG, "Failed to generate identity: $genJson")
         }
@@ -452,6 +452,17 @@ class NxfrService : Service() {
         // Flush resume journal to disk so transfers can be resumed.
         try { NxfrBridge.nxfr_web_stop() } catch (_: Throwable) {}
         _discovery?.stopDiscovery()
+        // Close active session and listener — release TLS connections and ports.
+        if (activeSessionHandle != 0L) {
+            try { NxfrBridge.nxfr_close(activeSessionHandle) } catch (_: Throwable) {}
+            activeSessionHandle = 0
+        }
+        if (listenerHandle != 0L) {
+            try { NxfrBridge.nxfr_close(listenerHandle) } catch (_: Throwable) {}
+            listenerHandle = 0
+        }
+        listening = false
+        _isListening.value = false
         stopSelf(startId)
     }
 
@@ -714,6 +725,7 @@ class NxfrService : Service() {
     /** Pump events from a session handle, updating state. */
     private suspend fun pumpLoop(handle: Long, isSending: Boolean) {
         val transferId = (handle and 0x7FFFFFFF).toInt()
+        var pollDelayMs = 50L
         while (isActive) {
             val eventJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_pump(handle)
@@ -722,6 +734,7 @@ class NxfrService : Service() {
             Log.d(TAG, "pumpLoop raw: $eventJson")
             when (event.optString("event")) {
                 "offer" -> {
+                    pollDelayMs = 50L
                     val peer = event.optString("peer_name")
                     if (peer.isNotEmpty()) activePeerName = peer
                     startForegroundForTransfer()
@@ -788,6 +801,7 @@ class NxfrService : Service() {
                     }
                 }
                 "pair_request" -> {
+                    pollDelayMs = 50L
                     // Received a PairRequest from the remote peer with the real
                     // cryptographic SAS code derived from TLS keying material.
                     val sasCode = event.optString("sas_code")
@@ -806,6 +820,7 @@ class NxfrService : Service() {
                     Log.i(TAG, "PairRequest received — SAS code set for consent dialog")
                 }
                 "progress" -> {
+                    pollDelayMs = 50L
                     val sent = event.optLong("bytes_sent")
                     val total = event.optLong("total_bytes")
                     val progress = if (total > 0) sent.toFloat() / total else 0f
@@ -928,7 +943,9 @@ class NxfrService : Service() {
                     return
                 }
                 "none" -> {
-                    delay(50) // Poll interval.
+                    delay(pollDelayMs)
+                    // Exponential backoff: 50 → 100 → 500 → 1000ms
+                    pollDelayMs = (pollDelayMs * 2).coerceAtMost(1000L)
                 }
             }
         }

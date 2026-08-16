@@ -34,7 +34,7 @@ object NxfrQrTicketParser {
                     val pw = params["pw"] ?: ""
                     val ip = params["ip"]
                     val port = params["port"]?.toIntOrNull() ?: 17394
-                    if (!ssid.isNullOrEmpty() && !ip.isNullOrEmpty()) {
+                    if (!ssid.isNullOrEmpty() && !ip.isNullOrEmpty() && isPrivateIp(ip)) {
                         return QrScanResult.DesertTicket(ssid, pw, ip, port)
                     }
                 }
@@ -61,5 +61,26 @@ object NxfrQrTicketParser {
             } catch (_: Throwable) {}
         }
         return QrScanResult.Invalid
+    }
+
+    /** Only accept RFC1918 private and link-local IPv4 addresses. */
+    private fun isPrivateIp(ip: String): Boolean {
+        val addr = try {
+            java.net.InetAddress.getByName(ip)
+        } catch (_: Throwable) {
+            return false
+        }
+        if (addr !is java.net.Inet4Address) return false
+        val bytes = addr.address
+        if (bytes.size != 4) return false
+        val b0 = bytes[0].toInt() and 0xFF
+        val b1 = bytes[1].toInt() and 0xFF
+        return when {
+            b0 == 10 -> true                           // 10.0.0.0/8
+            b0 == 172 && b1 in 16..31 -> true           // 172.16.0.0/12
+            b0 == 192 && b1 == 168 -> true              // 192.168.0.0/16
+            b0 == 169 && b1 == 254 -> true              // 169.254.0.0/16 (link-local)
+            else -> false
+        }
     }
 }
