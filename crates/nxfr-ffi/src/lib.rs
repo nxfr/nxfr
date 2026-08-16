@@ -421,8 +421,8 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
         };
 
         let rt = get_runtime();
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> = rt
-            .block_on(async {
+        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> =
+            rt.block_on(async {
                 match tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     // Build TLS client config.
                     let client_config = nxfr_transport::tls::build_client_config(
@@ -491,7 +491,13 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                         _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
                     };
 
-                    Ok((conn, peer_device_id, peer_name, session_id, peer_cert_der_bytes))
+                    Ok((
+                        conn,
+                        peer_device_id,
+                        peer_name,
+                        session_id,
+                        peer_cert_der_bytes,
+                    ))
                 })
                 .await
                 {
@@ -513,8 +519,13 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                 let spki = nxfr_crypto::extract_spki(&peer_cert_der).unwrap_or_default();
                 match db.verify_identity(&peer_id_hex, &spki) {
                     Ok(nxfr_storage::db::IdentityCheck::Changed) => {
-                        log::warn!("[nxfr-ffi] TOFU VIOLATION: peer {} changed SPKI!", peer_id_hex);
-                        return json_err("TOFU violation: peer identity changed since last pairing");
+                        log::warn!(
+                            "[nxfr-ffi] TOFU VIOLATION: peer {} changed SPKI!",
+                            peer_id_hex
+                        );
+                        return json_err(
+                            "TOFU violation: peer identity changed since last pairing",
+                        );
                     }
                     Ok(nxfr_storage::db::IdentityCheck::Matched) => {
                         log::info!("[nxfr-ffi] TOFU OK: peer {} identity verified", peer_id_hex);
@@ -748,8 +759,8 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
         };
 
         // Extract peer device_id and do HELLO exchange.
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> = rt
-            .block_on(async {
+        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> =
+            rt.block_on(async {
                 let AcceptedConn { stream, .. } = accepted;
 
                 // Extract peer device_id.
@@ -805,7 +816,13 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                     .await
                     .map_err(|e| format!("send HELLO_ACK: {e}"))?;
 
-                Ok((conn, peer_device_id, peer_name, session_id, peer_cert_der_bytes))
+                Ok((
+                    conn,
+                    peer_device_id,
+                    peer_name,
+                    session_id,
+                    peer_cert_der_bytes,
+                ))
             });
 
         let (conn, peer_device_id, peer_name, session_id, peer_cert_der) = match result {
@@ -931,7 +948,9 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             let mut guard = conn_clone.lock().await;
             if std::sync::Arc::strong_count(&conn_clone) == 1 {
                 // nxfr_close already ran; drop the connection cleanly.
-                log::info!("[nxfr-ffi] Reader task: session was closed during recv, dropping connection");
+                log::info!(
+                    "[nxfr-ffi] Reader task: session was closed during recv, dropping connection"
+                );
                 drop(conn);
             } else {
                 *guard = Some(conn);
@@ -1724,11 +1743,7 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
             // Extract TLS keying material for SAS derivation.
             let tls_stream = conn.get_ref();
             let mut exporter = [0u8; 4];
-            tls_stream.export_keying_material(
-                &mut exporter,
-                b"NXFR-SAS-v0",
-                Some(&sas_context),
-            )?;
+            tls_stream.export_keying_material(&mut exporter, b"NXFR-SAS-v0", Some(&sas_context))?;
 
             let (code, _) = nxfr_core::sas::derive_sas(&local_id, &peer_id, &exporter);
             exporter.zeroize();
@@ -2109,10 +2124,7 @@ pub unsafe extern "C" fn nxfr_derive_sas(
             return json_err("null exporter_bytes");
         }
         if exporter_len < 4 {
-            return json_err(&format!(
-                "exporter_bytes too short: {} < 4",
-                exporter_len
-            ));
+            return json_err(&format!("exporter_bytes too short: {} < 4", exporter_len));
         }
         let id_a = match hex::decode(id_a_hex) {
             Ok(b) if b.len() == 32 => {
@@ -2613,7 +2625,12 @@ mod tests {
         let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
         let exporter: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
         let result = parse_ffi_json(unsafe {
-            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exporter.as_ptr(), exporter.len())
+            nxfr_derive_sas(
+                id_a.as_ptr(),
+                id_b.as_ptr(),
+                exporter.as_ptr(),
+                exporter.len(),
+            )
         });
         assert!(result.get("error").is_none());
         assert_eq!(result["sas_code"].as_str().unwrap().len(), 6);
@@ -2634,10 +2651,12 @@ mod tests {
         let id_a = CString::new(format!("{:0>64}", "01")).unwrap();
         let id_b = CString::new(format!("{:0>64}", "02")).unwrap();
         let exp: [u8; 4] = [0xAB, 0xCD, 0xEF, 0x12];
-        let r1 =
-            parse_ffi_json(unsafe { nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exp.as_ptr(), exp.len()) });
-        let r2 =
-            parse_ffi_json(unsafe { nxfr_derive_sas(id_b.as_ptr(), id_a.as_ptr(), exp.as_ptr(), exp.len()) });
+        let r1 = parse_ffi_json(unsafe {
+            nxfr_derive_sas(id_a.as_ptr(), id_b.as_ptr(), exp.as_ptr(), exp.len())
+        });
+        let r2 = parse_ffi_json(unsafe {
+            nxfr_derive_sas(id_b.as_ptr(), id_a.as_ptr(), exp.as_ptr(), exp.len())
+        });
         assert_eq!(
             r1["sas_code"].as_str().unwrap(),
             r2["sas_code"].as_str().unwrap(),

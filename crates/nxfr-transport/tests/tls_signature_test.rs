@@ -12,17 +12,13 @@ async fn test_mtls_handshake_succeeds_with_valid_keys() {
     let server_id = nxfr_crypto::generate_identity().expect("server identity");
     let client_id = nxfr_crypto::generate_identity().expect("client identity");
 
-    let server_config = nxfr_transport::tls::build_server_config(
-        server_id.private_key(),
-        server_id.certificate(),
-    )
-    .expect("server config");
+    let server_config =
+        nxfr_transport::tls::build_server_config(server_id.private_key(), server_id.certificate())
+            .expect("server config");
 
-    let client_config = nxfr_transport::tls::build_client_config(
-        client_id.private_key(),
-        client_id.certificate(),
-    )
-    .expect("client config");
+    let client_config =
+        nxfr_transport::tls::build_client_config(client_id.private_key(), client_id.certificate())
+            .expect("client config");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -30,7 +26,10 @@ async fn test_mtls_handshake_succeeds_with_valid_keys() {
     let server_task = tokio::spawn(async move {
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
         let (tcp, _) = listener.accept().await.unwrap();
-        let mut tls = acceptor.accept(tcp).await.expect("server TLS handshake should succeed");
+        let mut tls = acceptor
+            .accept(tcp)
+            .await
+            .expect("server TLS handshake should succeed");
         let mut buf = [0u8; 5];
         let n = tls.read(&mut buf).await.unwrap();
         assert_eq!(&buf[..n], b"hello");
@@ -68,8 +67,8 @@ async fn test_mtls_handshake_rejects_mismatched_key() {
     // The client presents legit_client's CERTIFICATE but uses imposter's PRIVATE KEY.
     // This simulates an attacker who stole a cert but doesn't have the matching key.
     let result = nxfr_transport::tls::build_client_config(
-        imposter.private_key(),      // wrong key
-        legit_client.certificate(),  // stolen cert
+        imposter.private_key(),     // wrong key
+        legit_client.certificate(), // stolen cert
     );
 
     assert!(

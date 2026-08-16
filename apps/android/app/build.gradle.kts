@@ -164,5 +164,9 @@ tasks.register("verifyNativeFresh") {
 }
 
 tasks.named("preBuild") {
-    dependsOn("verifyNativeSymbols", "verifyNativeFresh")
+    // Only verify native libs when they exist (skip on CI without cargo-ndk).
+    val soFile = file("src/main/jniLibs/arm64-v8a/libnxfr_ffi.so")
+    if (soFile.exists()) {
+        dependsOn("verifyNativeSymbols", "verifyNativeFresh")
+    }
 }
