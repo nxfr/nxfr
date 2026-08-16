@@ -2,7 +2,7 @@
 
 use crate::handler;
 use crate::DaemonState;
-use log::{error, info, warn};
+use log::{info, warn};
 use nxfr_transport::tls;
 use std::sync::Arc;
 use tokio::net::TcpListener;

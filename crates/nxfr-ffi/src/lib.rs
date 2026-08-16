@@ -153,6 +153,7 @@ impl TlsStream {
     }
 
     /// Extract the peer's raw certificate DER bytes.
+    #[allow(dead_code)]
     fn peer_cert_der(&self) -> Option<Vec<u8>> {
         match self {
             TlsStream::Client(s) => {
@@ -172,6 +173,9 @@ impl TlsStream {
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
+
+/// Result of a connect/accept handshake: (connection, peer_device_id, peer_name, session_id, peer_cert_der)
+type ConnectResult = Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String>;
 
 /// Event emitted by background transfer tasks, read by nxfr_pump.
 #[derive(Debug)]
@@ -421,90 +425,88 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
         };
 
         let rt = get_runtime();
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> =
-            rt.block_on(async {
-                match tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                    // Build TLS client config.
-                    let client_config = nxfr_transport::tls::build_client_config(
-                        identity.private_key(),
-                        identity.certificate(),
-                    )
-                    .map_err(|e| format!("TLS config: {e}"))?;
+        let result: ConnectResult = rt.block_on(async {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                // Build TLS client config.
+                let client_config = nxfr_transport::tls::build_client_config(
+                    identity.private_key(),
+                    identity.certificate(),
+                )
+                .map_err(|e| format!("TLS config: {e}"))?;
 
-                    // TCP connect.
-                    let tcp = TcpStream::connect(addr_str)
-                        .await
-                        .map_err(|e| format!("TCP connect to {addr_str}: {e}"))?;
+                // TCP connect.
+                let tcp = TcpStream::connect(addr_str)
+                    .await
+                    .map_err(|e| format!("TCP connect to {addr_str}: {e}"))?;
 
-                    // TLS handshake.
-                    let connector = TlsConnector::from(Arc::new(client_config));
-                    let server_name = rustls_pki_types::ServerName::try_from("nxfr-node")
-                        .map_err(|e| format!("ServerName: {e}"))?
-                        .to_owned();
-                    let tls = connector
-                        .connect(server_name, tcp)
-                        .await
-                        .map_err(|e| format!("TLS handshake: {e}"))?;
+                // TLS handshake.
+                let connector = TlsConnector::from(Arc::new(client_config));
+                let server_name = rustls_pki_types::ServerName::try_from("nxfr-node")
+                    .map_err(|e| format!("ServerName: {e}"))?
+                    .to_owned();
+                let tls = connector
+                    .connect(server_name, tcp)
+                    .await
+                    .map_err(|e| format!("TLS handshake: {e}"))?;
 
-                    // Extract peer device_id from certificate.
-                    let (_, client_conn) = tls.get_ref();
-                    let peer_certs = client_conn
-                        .peer_certificates()
-                        .ok_or("no peer certificates")?;
-                    let peer_cert = peer_certs.first().ok_or("empty peer cert chain")?;
-                    let peer_device_id = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
-                        .map_err(|e| format!("peer device_id: {e}"))?;
-                    let peer_cert_der_bytes = peer_cert.as_ref().to_vec();
+                // Extract peer device_id from certificate.
+                let (_, client_conn) = tls.get_ref();
+                let peer_certs = client_conn
+                    .peer_certificates()
+                    .ok_or("no peer certificates")?;
+                let peer_cert = peer_certs.first().ok_or("empty peer cert chain")?;
+                let peer_device_id = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
+                    .map_err(|e| format!("peer device_id: {e}"))?;
+                let peer_cert_der_bytes = peer_cert.as_ref().to_vec();
 
-                    // Wrap in NxfrConnection.
-                    let mut conn = NxfrConnection::new(TlsStream::Client(tls));
+                // Wrap in NxfrConnection.
+                let mut conn = NxfrConnection::new(TlsStream::Client(tls));
 
-                    // Send HELLO.
-                    let hello = ControlMessage::Hello {
-                        protocol_version: ProtocolVersion::V0_1,
-                        device_id: DeviceId::from_bytes(identity.device_id),
-                        device_name: "NXFR-Android".to_string(),
-                        platform: Platform::Android,
-                        capabilities: vec![],
-                        is_paired: false,
-                    };
-                    conn.send_control(0, 0, &hello)
-                        .await
-                        .map_err(|e| format!("send HELLO: {e}"))?;
+                // Send HELLO.
+                let hello = ControlMessage::Hello {
+                    protocol_version: ProtocolVersion::V0_1,
+                    device_id: DeviceId::from_bytes(identity.device_id),
+                    device_name: "NXFR-Android".to_string(),
+                    platform: Platform::Android,
+                    capabilities: vec![],
+                    is_paired: false,
+                };
+                conn.send_control(0, 0, &hello)
+                    .await
+                    .map_err(|e| format!("send HELLO: {e}"))?;
 
-                    // Receive HELLO_ACK.
-                    let (hdr, payload) = conn
-                        .recv_frame()
-                        .await
-                        .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
-                    if hdr.kind != FrameKind::Control {
-                        return Err("expected CONTROL frame for HELLO_ACK".into());
-                    }
-                    let msg =
-                        codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
-                    let (peer_name, session_id) = match msg {
-                        ControlMessage::HelloAck {
-                            device_name,
-                            session_id,
-                            ..
-                        } => (device_name, session_id),
-                        _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
-                    };
-
-                    Ok((
-                        conn,
-                        peer_device_id,
-                        peer_name,
-                        session_id,
-                        peer_cert_der_bytes,
-                    ))
-                })
-                .await
-                {
-                    Ok(inner) => inner,
-                    Err(_elapsed) => Err("connect timeout (5s)".to_string()),
+                // Receive HELLO_ACK.
+                let (hdr, payload) = conn
+                    .recv_frame()
+                    .await
+                    .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
+                if hdr.kind != FrameKind::Control {
+                    return Err("expected CONTROL frame for HELLO_ACK".into());
                 }
-            });
+                let msg = codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
+                let (peer_name, session_id) = match msg {
+                    ControlMessage::HelloAck {
+                        device_name,
+                        session_id,
+                        ..
+                    } => (device_name, session_id),
+                    _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
+                };
+
+                Ok((
+                    conn,
+                    peer_device_id,
+                    peer_name,
+                    session_id,
+                    peer_cert_der_bytes,
+                ))
+            })
+            .await
+            {
+                Ok(inner) => inner,
+                Err(_elapsed) => Err("connect timeout (5s)".to_string()),
+            }
+        });
 
         let (conn, peer_device_id, peer_name, session_id, peer_cert_der) = match result {
             Ok(v) => v,
@@ -759,71 +761,70 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
         };
 
         // Extract peer device_id and do HELLO exchange.
-        let result: Result<(NxfrConnection<TlsStream>, [u8; 32], String, u32, Vec<u8>), String> =
-            rt.block_on(async {
-                let AcceptedConn { stream, .. } = accepted;
+        let result: ConnectResult = rt.block_on(async {
+            let AcceptedConn { stream, .. } = accepted;
 
-                // Extract peer device_id.
-                let (peer_device_id, peer_cert_der_bytes) = match &stream {
-                    TlsStream::Server(s) => {
-                        let (_, server_conn) = s.get_ref();
-                        let peer_certs = server_conn.peer_certificates().ok_or("no peer certs")?;
-                        let peer_cert = peer_certs.first().ok_or("empty peer cert")?;
-                        let did = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
-                            .map_err(|e| format!("peer device_id: {e}"))?;
-                        (did, peer_cert.as_ref().to_vec())
-                    }
-                    TlsStream::Client(_) => return Err("expected server TLS".into()),
-                };
-
-                let mut conn = NxfrConnection::new(stream);
-
-                // Receive HELLO.
-                let (hdr, payload) = conn
-                    .recv_frame()
-                    .await
-                    .map_err(|e| format!("recv HELLO: {e}"))?;
-                if hdr.kind != FrameKind::Control {
-                    return Err("expected CONTROL for HELLO".into());
+            // Extract peer device_id.
+            let (peer_device_id, peer_cert_der_bytes) = match &stream {
+                TlsStream::Server(s) => {
+                    let (_, server_conn) = s.get_ref();
+                    let peer_certs = server_conn.peer_certificates().ok_or("no peer certs")?;
+                    let peer_cert = peer_certs.first().ok_or("empty peer cert")?;
+                    let did = nxfr_crypto::device_id_from_cert(peer_cert.as_ref())
+                        .map_err(|e| format!("peer device_id: {e}"))?;
+                    (did, peer_cert.as_ref().to_vec())
                 }
-                let msg = codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
-                let peer_name = match &msg {
-                    ControlMessage::Hello {
-                        device_name,
-                        protocol_version,
-                        ..
-                    } => {
-                        if *protocol_version != ProtocolVersion::V0_1 {
-                            return Err("unsupported protocol version".into());
-                        }
-                        device_name.clone()
+                TlsStream::Client(_) => return Err("expected server TLS".into()),
+            };
+
+            let mut conn = NxfrConnection::new(stream);
+
+            // Receive HELLO.
+            let (hdr, payload) = conn
+                .recv_frame()
+                .await
+                .map_err(|e| format!("recv HELLO: {e}"))?;
+            if hdr.kind != FrameKind::Control {
+                return Err("expected CONTROL for HELLO".into());
+            }
+            let msg = codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
+            let peer_name = match &msg {
+                ControlMessage::Hello {
+                    device_name,
+                    protocol_version,
+                    ..
+                } => {
+                    if *protocol_version != ProtocolVersion::V0_1 {
+                        return Err("unsupported protocol version".into());
                     }
-                    _ => return Err(format!("expected HELLO, got {msg:?}")),
-                };
+                    device_name.clone()
+                }
+                _ => return Err(format!("expected HELLO, got {msg:?}")),
+            };
 
-                // Send HELLO_ACK.
-                let session_id = rand_session_id();
-                let ack = ControlMessage::HelloAck {
-                    protocol_version: ProtocolVersion::V0_1,
-                    device_id: DeviceId::from_bytes(identity.device_id),
-                    device_name: "NXFR-Android".to_string(),
-                    platform: Platform::Android,
-                    capabilities: vec![],
-                    is_paired: false,
-                    session_id,
-                };
-                conn.send_control(session_id, 0, &ack)
-                    .await
-                    .map_err(|e| format!("send HELLO_ACK: {e}"))?;
+            // Send HELLO_ACK.
+            let session_id = rand_session_id();
+            let ack = ControlMessage::HelloAck {
+                protocol_version: ProtocolVersion::V0_1,
+                device_id: DeviceId::from_bytes(identity.device_id),
+                device_name: "NXFR-Android".to_string(),
+                platform: Platform::Android,
+                capabilities: vec![],
+                is_paired: false,
+                session_id,
+            };
+            conn.send_control(session_id, 0, &ack)
+                .await
+                .map_err(|e| format!("send HELLO_ACK: {e}"))?;
 
-                Ok((
-                    conn,
-                    peer_device_id,
-                    peer_name,
-                    session_id,
-                    peer_cert_der_bytes,
-                ))
-            });
+            Ok((
+                conn,
+                peer_device_id,
+                peer_name,
+                session_id,
+                peer_cert_der_bytes,
+            ))
+        });
 
         let (conn, peer_device_id, peer_name, session_id, peer_cert_der) = match result {
             Ok(v) => v,
