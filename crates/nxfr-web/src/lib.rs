@@ -4,11 +4,12 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -19,7 +20,35 @@ const MAX_PORT_ATTEMPTS: u16 = 10;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const BLOCK_DURATION: Duration = Duration::from_secs(300);
-const EXPIRY_DURATION: Duration = Duration::from_secs(600); // 10 minutes
+const DEFAULT_EXPIRY_DURATION: Duration = Duration::from_secs(600); // 10 minutes
+
+pub fn get_default_expiry_duration() -> Duration {
+    if let Ok(secs_str) = std::env::var("NXFR_WEB_EXPIRY_SECS") {
+        if let Ok(secs) = secs_str.parse::<u64>() {
+            return Duration::from_secs(secs);
+        }
+    }
+    DEFAULT_EXPIRY_DURATION
+}
+
+/// RAII guard to track in-flight transfers and defer server inactivity shutdown.
+pub struct ActiveTransferGuard {
+    counter: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ActiveTransferGuard {
+    pub fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveTransferGuard {
+    fn drop(&mut self) {
+        self.counter
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// RAII guard to ensure uncommitted temporary upload files are cleaned up on error, abort, or disconnect.
 struct TmpFileGuard {
@@ -356,19 +385,49 @@ manifest.forEach(item => {
   const div = document.createElement('div');
   div.className = 'file-item';
   div.id = `item-${item.id}`;
-  div.innerHTML = `
-    <div class="file-row">
-      <div class="file-info">
-        <div class="file-name" title="${item.name}">${item.name}</div>
-        <div class="file-size">${fmtBytes(item.size)}</div>
-      </div>
-      <button class="btn" id="btn-${item.id}" onclick="downloadItem(${item.id})">Download</button>
-    </div>
-    <div class="pg-track" id="pg-track-${item.id}">
-      <div class="pg-bar" id="pg-bar-${item.id}"></div>
-    </div>
-    <div class="pg-status" id="pg-status-${item.id}"></div>
-  `;
+
+  const row = document.createElement('div');
+  row.className = 'file-row';
+
+  const info = document.createElement('div');
+  info.className = 'file-info';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'file-name';
+  nameEl.title = item.name;
+  nameEl.textContent = item.name;
+
+  const sizeEl = document.createElement('div');
+  sizeEl.className = 'file-size';
+  sizeEl.textContent = fmtBytes(item.size);
+
+  info.appendChild(nameEl);
+  info.appendChild(sizeEl);
+
+  const btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.id = `btn-${item.id}`;
+  btn.textContent = 'Download';
+  btn.onclick = () => downloadItem(item.id);
+
+  row.appendChild(info);
+  row.appendChild(btn);
+  div.appendChild(row);
+
+  const pgTrack = document.createElement('div');
+  pgTrack.className = 'pg-track';
+  pgTrack.id = `pg-track-${item.id}`;
+  const pgBar = document.createElement('div');
+  pgBar.className = 'pg-bar';
+  pgBar.id = `pg-bar-${item.id}`;
+  pgTrack.appendChild(pgBar);
+  div.appendChild(pgTrack);
+
+  const pgStatus = document.createElement('div');
+  pgStatus.className = 'pg-status';
+  pgStatus.id = `pg-status-${item.id}`;
+  div.appendChild(pgStatus);
+
   list.appendChild(div);
 });
 
@@ -475,11 +534,21 @@ pub struct WebServerHandle {
     pub token: String,
     pub port: u16,
     pub cancel: CancellationToken,
+    pub active_transfers: Arc<AtomicUsize>,
+    pub last_activity: Arc<RwLock<Instant>>,
 }
 
 impl WebServerHandle {
     pub fn stop(&self) {
         self.cancel.cancel();
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    pub fn active_transfers_count(&self) -> usize {
+        self.active_transfers.load(Ordering::SeqCst)
     }
 }
 
@@ -488,7 +557,9 @@ pub struct WebServer {
     pub port: u16,
     pub cancel: CancellationToken,
     pub pin: Option<String>,
-    pub expiry: Instant,
+    pub expiry_duration: Duration,
+    pub last_activity: Arc<RwLock<Instant>>,
+    pub active_transfers: Arc<AtomicUsize>,
     pub receive_dir: PathBuf,
     pub max_file_size: u64,
     pub fingerprint: String,
@@ -505,16 +576,39 @@ impl WebServer {
         fingerprint: String,
         share_manifest: Option<Vec<WebShareItem>>,
     ) -> (Self, CancellationToken) {
+        Self::new_with_expiry(
+            receive_dir,
+            port,
+            max_file_size,
+            pin,
+            fingerprint,
+            share_manifest,
+            get_default_expiry_duration(),
+        )
+    }
+
+    pub fn new_with_expiry(
+        receive_dir: PathBuf,
+        port: u16,
+        max_file_size: u64,
+        pin: Option<String>,
+        fingerprint: String,
+        share_manifest: Option<Vec<WebShareItem>>,
+        expiry_duration: Duration,
+    ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let token = generate_token();
-        let expiry = Instant::now() + EXPIRY_DURATION;
+        let last_activity = Arc::new(RwLock::new(Instant::now()));
+        let active_transfers = Arc::new(AtomicUsize::new(0));
         (
             Self {
                 token,
                 port,
                 cancel: cancel.clone(),
                 pin,
-                expiry,
+                expiry_duration,
+                last_activity,
+                active_transfers,
                 receive_dir,
                 max_file_size,
                 fingerprint,
@@ -525,12 +619,36 @@ impl WebServer {
         )
     }
 
+    pub async fn bump_activity(&self) {
+        let mut act = self.last_activity.write().await;
+        *act = Instant::now();
+    }
+
     pub async fn start(
         key_der: &[u8],
         cert_der: &[u8],
         receive_dir: PathBuf,
         preferred_port: u16,
         pin: Option<String>,
+    ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
+        Self::start_with_expiry(
+            key_der,
+            cert_der,
+            receive_dir,
+            preferred_port,
+            pin,
+            get_default_expiry_duration(),
+        )
+        .await
+    }
+
+    pub async fn start_with_expiry(
+        key_der: &[u8],
+        cert_der: &[u8],
+        receive_dir: PathBuf,
+        preferred_port: u16,
+        pin: Option<String>,
+        expiry_duration: Duration,
     ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
         let mut listener = None;
         let mut actual_port = preferred_port;
@@ -567,16 +685,21 @@ impl WebServer {
             .collect::<Vec<_>>()
             .join(":");
 
-        let (server, cancel) = Self::new(
+        let (server, cancel) = Self::new_with_expiry(
             receive_dir,
             actual_port,
             MAX_UPLOAD_LIMIT,
             pin,
             fp_formatted,
             None,
+            expiry_duration,
         );
         let token = server.token.clone();
-        let expiry = server.expiry;
+        let last_activity_clone = server.last_activity.clone();
+        let active_transfers_clone = server.active_transfers.clone();
+
+        let active_transfers_handle = server.active_transfers.clone();
+        let last_activity_handle = server.last_activity.clone();
 
         let tls_config = build_web_tls_config(key_der, cert_der)?;
         let acceptor = TlsAcceptor::from(tls_config);
@@ -592,16 +715,33 @@ impl WebServer {
             );
 
             loop {
+                let (time_to_wait, active_count) = {
+                    let last = *last_activity_clone.read().await;
+                    let elapsed = last.elapsed();
+                    let active = active_transfers_clone.load(Ordering::SeqCst);
+                    if active > 0 {
+                        (Duration::from_millis(250), active)
+                    } else if elapsed >= expiry_duration {
+                        (Duration::ZERO, 0)
+                    } else {
+                        (expiry_duration - elapsed, 0)
+                    }
+                };
+
+                if time_to_wait.is_zero() && active_count == 0 {
+                    log::info!(
+                        "[nxfr-web] Server inactivity expiry reached ({:?}). Stopping server listener.",
+                        expiry_duration
+                    );
+                    break;
+                }
+
                 tokio::select! {
                     _ = cancel_clone.cancelled() => {
                         log::info!("[nxfr-web] Server cancel token triggered. Stopping server.");
                         break;
                     }
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(expiry)) => {
-                        log::info!("[nxfr-web] Server 10-minute expiry reached. Stopping server.");
-                        cancel_clone.cancel();
-                        break;
-                    }
+                    _ = tokio::time::sleep(time_to_wait) => {}
                     res = listener.accept() => {
                         match res {
                             Ok((stream, addr)) => {
@@ -635,6 +775,19 @@ impl WebServer {
                     }
                 }
             }
+
+            // Stop accepting new connections. Drain in-flight transfers.
+            log::info!("[nxfr-web] Listener closed. Draining in-flight transfers...");
+            let drain_start = Instant::now();
+            while active_transfers_clone.load(Ordering::SeqCst) > 0 {
+                if drain_start.elapsed() > Duration::from_secs(300) {
+                    log::warn!("[nxfr-web] Drain timeout exceeded (300s). Forcing server stop.");
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            log::info!("[nxfr-web] In-flight transfers drained. Server shutdown complete.");
+            cancel_clone.cancel();
         });
 
         Ok(WebServerHandle {
@@ -642,6 +795,8 @@ impl WebServer {
             token,
             port: actual_port,
             cancel,
+            active_transfers: active_transfers_handle,
+            last_activity: last_activity_handle,
         })
     }
 
@@ -651,6 +806,25 @@ impl WebServer {
         preferred_port: u16,
         pin: Option<String>,
         share_manifest: Vec<WebShareItem>,
+    ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
+        Self::start_share_with_expiry(
+            key_der,
+            cert_der,
+            preferred_port,
+            pin,
+            share_manifest,
+            get_default_expiry_duration(),
+        )
+        .await
+    }
+
+    pub async fn start_share_with_expiry(
+        key_der: &[u8],
+        cert_der: &[u8],
+        preferred_port: u16,
+        pin: Option<String>,
+        share_manifest: Vec<WebShareItem>,
+        expiry_duration: Duration,
     ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
         let mut listener = None;
         let mut actual_port = preferred_port;
@@ -691,16 +865,21 @@ impl WebServer {
             .collect::<Vec<_>>()
             .join(":");
 
-        let (server, cancel) = Self::new(
+        let (server, cancel) = Self::new_with_expiry(
             PathBuf::new(),
             actual_port,
             MAX_UPLOAD_LIMIT,
             pin,
             fp_formatted,
             Some(share_manifest),
+            expiry_duration,
         );
         let token = server.token.clone();
-        let expiry = server.expiry;
+        let last_activity_clone = server.last_activity.clone();
+        let active_transfers_clone = server.active_transfers.clone();
+
+        let active_transfers_handle = server.active_transfers.clone();
+        let last_activity_handle = server.last_activity.clone();
 
         let tls_config = build_web_tls_config(key_der, cert_der)?;
         let acceptor = TlsAcceptor::from(tls_config);
@@ -716,16 +895,33 @@ impl WebServer {
             );
 
             loop {
+                let (time_to_wait, active_count) = {
+                    let last = *last_activity_clone.read().await;
+                    let elapsed = last.elapsed();
+                    let active = active_transfers_clone.load(Ordering::SeqCst);
+                    if active > 0 {
+                        (Duration::from_millis(250), active)
+                    } else if elapsed >= expiry_duration {
+                        (Duration::ZERO, 0)
+                    } else {
+                        (expiry_duration - elapsed, 0)
+                    }
+                };
+
+                if time_to_wait.is_zero() && active_count == 0 {
+                    log::info!(
+                        "[nxfr-web] Share server inactivity expiry reached ({:?}). Stopping server listener.",
+                        expiry_duration
+                    );
+                    break;
+                }
+
                 tokio::select! {
                     _ = cancel_clone.cancelled() => {
                         log::info!("[nxfr-web] Share server cancel token triggered. Stopping server.");
                         break;
                     }
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(expiry)) => {
-                        log::info!("[nxfr-web] Share server 10-minute expiry reached. Stopping server.");
-                        cancel_clone.cancel();
-                        break;
-                    }
+                    _ = tokio::time::sleep(time_to_wait) => {}
                     res = listener.accept() => {
                         match res {
                             Ok((stream, addr)) => {
@@ -759,6 +955,19 @@ impl WebServer {
                     }
                 }
             }
+
+            // Stop accepting new connections. Drain in-flight transfers.
+            log::info!("[nxfr-web] Listener closed. Draining in-flight transfers...");
+            let drain_start = Instant::now();
+            while active_transfers_clone.load(Ordering::SeqCst) > 0 {
+                if drain_start.elapsed() > Duration::from_secs(300) {
+                    log::warn!("[nxfr-web] Drain timeout exceeded (300s). Forcing server stop.");
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            log::info!("[nxfr-web] In-flight transfers drained. Server shutdown complete.");
+            cancel_clone.cancel();
         });
 
         Ok(WebServerHandle {
@@ -766,6 +975,8 @@ impl WebServer {
             token,
             port: actual_port,
             cancel,
+            active_transfers: active_transfers_handle,
+            last_activity: last_activity_handle,
         })
     }
 
@@ -799,13 +1010,15 @@ impl WebServer {
         stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
         ip: IpAddr,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if Instant::now() > self.expiry {
+        if self.cancel.is_cancelled() {
             log::warn!(
-                "[nxfr-web] [{}] Connection rejected: server session expired",
+                "[nxfr-web] [{}] Connection rejected: server is shutting down",
                 ip
             );
             return Ok(());
         }
+
+        self.bump_activity().await;
 
         // Rate limit / IP ban check
         {
@@ -1068,6 +1281,7 @@ impl WebServer {
 
             stream.write_all(header.as_bytes()).await?;
 
+            let _transfer_guard = ActiveTransferGuard::new(self.active_transfers.clone());
             let mut file_buf = [0u8; 65536];
             let mut total_sent: u64 = 0;
             loop {
@@ -1077,6 +1291,7 @@ impl WebServer {
                 }
                 stream.write_all(&file_buf[..n]).await?;
                 total_sent += n as u64;
+                self.bump_activity().await;
             }
             stream.flush().await?;
             let _ = stream.shutdown().await;
@@ -1274,6 +1489,7 @@ impl WebServer {
             let mut file = tokio::fs::File::create(&tmp_path).await?;
             let mut guard = TmpFileGuard::new(tmp_path.clone());
 
+            let _transfer_guard = ActiveTransferGuard::new(self.active_transfers.clone());
             let needle = format!("\r\n--{}", boundary_str).into_bytes();
             let needle_len = needle.len();
             let alt_needle = format!("--{}", boundary_str).into_bytes();
@@ -1311,6 +1527,7 @@ impl WebServer {
                         }
                         file.write_all(chunk_to_write).await?;
                         hasher.update(chunk_to_write);
+                        self.bump_activity().await;
                     }
                     break;
                 } else if total_written == 0 && buffer.starts_with(&alt_needle) {
@@ -1341,6 +1558,7 @@ impl WebServer {
                     }
                     file.write_all(chunk_to_write).await?;
                     hasher.update(chunk_to_write);
+                    self.bump_activity().await;
                     buffer.drain(..safe_len);
                 }
 
@@ -1356,6 +1574,7 @@ impl WebServer {
                     // guard automatically removes partial .tmp file
                     return Err("Client disconnected during upload".into());
                 }
+                self.bump_activity().await;
                 buffer.extend_from_slice(&read_buf[..n]);
             }
 
@@ -2478,6 +2697,164 @@ mod tests {
         assert_eq!(disk_sha256, expected_sha256);
 
         handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_web_share_idle_expiry_and_active_transfer_deferral() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nxfr_expiry_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("sample.bin");
+        let file_size: usize = 1024 * 1024; // 1 MB
+        let mut test_data = vec![0u8; file_size];
+        for (i, b) in test_data.iter_mut().enumerate() {
+            *b = (i % 256) as u8;
+        }
+        std::fs::write(&file_path, &test_data).unwrap();
+        let expected_sha256 = hex::encode(Sha256::digest(&test_data));
+
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "sample.bin".to_string(),
+            size: file_size as u64,
+            mime: "application/octet-stream".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+
+        // Start share server with a strict 2-second idle expiry
+        let expiry_duration = Duration::from_secs(2);
+        let handle = WebServer::start_share_with_expiry(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17520,
+            None,
+            manifest,
+            expiry_duration,
+        )
+        .await
+        .unwrap();
+
+        let server_port = handle.port;
+        let token = handle.token.clone();
+
+        #[derive(Debug)]
+        struct NoCertVerifier;
+        impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls_pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+                _server_name: &rustls_pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls_pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![
+                    rustls::SignatureScheme::ED25519,
+                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                    rustls::SignatureScheme::RSA_PSS_SHA256,
+                ]
+            }
+        }
+
+        let mut client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth();
+        client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_config));
+
+        // Connect and initiate a throttled stream that takes ~3.5s (surpassing the 2s expiry)
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("localhost")
+            .unwrap()
+            .to_owned();
+        let mut tls_stream = connector.connect(domain, stream).await.unwrap();
+
+        let request = format!(
+            "GET /dl/0 HTTP/1.1\r\n\
+             Host: localhost:{}\r\n\
+             Authorization: Bearer {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            server_port, token
+        );
+        tls_stream.write_all(request.as_bytes()).await.unwrap();
+        tls_stream.flush().await.unwrap();
+
+        let mut raw_resp = Vec::new();
+        let mut buf = [0u8; 16384];
+
+        // Read in small delayed chunks across ~3.5 seconds
+        while raw_resp.len() < file_size {
+            let n = tls_stream.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            raw_resp.extend_from_slice(&buf[..n]);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Read remaining bytes
+        let _ = tls_stream.read_to_end(&mut raw_resp).await;
+
+        // Locate HTTP header end (\r\n\r\n)
+        let header_end = raw_resp
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("Must receive valid HTTP response headers");
+        let body = &raw_resp[header_end + 4..];
+
+        assert_eq!(
+            body.len(),
+            file_size,
+            "Body length must match file size despite 2s server expiry"
+        );
+        let actual_sha256 = hex::encode(Sha256::digest(body));
+        assert_eq!(
+            actual_sha256, expected_sha256,
+            "SHA256 must match original data"
+        );
+
+        drop(tls_stream);
+
+        // Wait 3 seconds of silence (no requests, 0 active transfers)
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+
+        // Assert port is closed and new connections are refused
+        let connect_attempt = TcpStream::connect(("127.0.0.1", server_port)).await;
+        assert!(
+            connect_attempt.is_err(),
+            "Server port should be closed after 3s of inactivity"
+        );
+        assert!(handle.is_stopped(), "Server handle should be stopped");
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
