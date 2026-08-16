@@ -4,7 +4,7 @@
 
 Desert Mode enables high-speed, secure, off-grid peer-to-peer file transfers between Android devices in environments with **zero Wi-Fi infrastructure and zero cellular connectivity**. 
 
-The existing NXFR cryptographic transfer protocol (mTLS 1.3 + CBOR framing over TCP port 17394) runs **unmodified** across an ephemeral Wi-Fi Direct (P2P) or SoftAP subnet. **Zero changes to Rust cryptographic crates (`nxfr-crypto`, `nxfr-transport`, `nxfr-protocol`, `nxfr-ffi`) are required.**
+The existing NXFR cryptographic transfer protocol (mTLS 1.3 + CBOR framing over TCP port 17394) runs **unmodified** across an ephemeral Wi-Fi Direct (P2P) or SoftAP subnet. **Zero changes to Rust cryptographic crates (`nxfr-crypto`, `nxfr-transport`, `nxfr-core`, `nxfr-ffi`) are required.**
 
 ```
    ┌─────────────────────────────────────────────────────────────┐

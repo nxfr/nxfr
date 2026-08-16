@@ -1,7 +1,7 @@
 # NXFR Wire Format Specification
 
 **Status:** Draft
-**Date:** 2026-08-08
+**Date:** 2026-08-16
 **Companion to:** [PROTOCOL.md](PROTOCOL.md)
 
 This document defines the byte-level wire format of the NXFR protocol, provides
@@ -412,6 +412,8 @@ The following test vectors use these fixed inputs:
 All CBOR encodings and hex values below have been verified using the `cbor2` Python
 library and standard `sha256sum`. Implementations MUST reproduce these exact byte
 sequences for the given inputs.
+
+**Note:** The `protocol_version` tuple in production is now `[1, 0]` (v1.0), but these test vectors are preserved as-is with `[0, 1]` for backward compatibility testing. The actual hex bytes are verified test fixtures and have not been changed.
 
 ---
 
@@ -926,7 +928,7 @@ Frame 12: Bob → Alice  SESSION_CLOSE
 |-----------|-------|
 | [RFC 8949](https://datatracker.ietf.org/doc/html/rfc8949) | Concise Binary Object Representation (CBOR) |
 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final) | Secure Hash Standard (SHA-256) |
-| [PROTOCOL.md](PROTOCOL.md) | NXFR Protocol Specification v0.1 |
+| [PROTOCOL.md](PROTOCOL.md) | NXFR Protocol Specification v1.0 |
 
 ---
 

@@ -4,9 +4,9 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| v0.1    | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
 
-*Version 0.1 is the current development version.*
+Pre-1.0 alpha builds are no longer supported.
 
 ## Reporting Vulnerabilities
 
@@ -32,6 +32,8 @@ The following types of vulnerabilities are considered **in scope**:
 - Consent bypasses (e.g., forcing a file transfer without user approval)
 - Path traversal vulnerabilities
 - Information leaks
+- Web portal vulnerabilities (port 17396)
+- Desert Mode off-grid network interface bugs
 
 The following types of vulnerabilities are considered **out of scope**:
 

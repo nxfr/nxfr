@@ -81,7 +81,7 @@ channel-based message passing.
 for reading and writing file chunks efficiently,
 employing `tokio::fs` to minimize thread blocking.
 A dedicated thread pool handles CPU-intensive
-hashing (SHA-256 or BLAKE3).
+hashing (SHA-256).
   - **IPC:** Exposes an API via D-Bus (using
 `zbus`) or a Unix domain socket using JSON-RPC,
 allowing multiple clients (CLI, GUI, extensions)
@@ -232,6 +232,8 @@ systemd integration.
 client to the daemon.
 - **nxfr-common:** Shared types, errors, and
 utility functions used across the workspace.
+- **nxfr-ffi:** JNI bridge for Android. Exposes core protocol functions to Kotlin via C-ABI exports. Handles session lifecycle, SAS derivation, and transfer orchestration across the JNI boundary.
+- **nxfr-web:** Embedded HTTPS server for browser-based transfers. Runs on port 17396 with token and PIN authentication. Serves upload/download pages with streaming file I/O.
 
 ## 3. Android Architecture
 
@@ -279,15 +281,10 @@ architecture within a single APK:
 (type=dataSync) that hosts the core protocol
 engine. It manages the TCP sockets, TLS contexts,
 and orchestrates the Rust core library via JNI.
-- **ShareReceiverActivity:** An Activity
-registered as a Share Sheet target. It handles
-`ACTION_SEND` and `ACTION_SEND_MULTIPLE` intents
-from other apps, parsing URIs into file
-descriptors.
-- **DevicePickerActivity:** An Activity that
-displays mDNS-powered discovery results, allowing
-the user to select a target device for an outbound
-transfer.
+- **ShareReceiverActivity:** The share receiver is a separate exported Activity that handles `ACTION_SEND` intents and routes them into the main Compose navigation.
+- **MainActivity:** Device picking, transfer consent, and all other flows live inside `MainActivity` as Compose navigation routes. There's no `DevicePickerActivity`.
+- **DesertModeOrchestrator:** State machine managing three-tier off-grid discovery (Wi-Fi Direct P2P → SoftAP hotspot → QR code fallback). Wraps `NxfrP2pManager` and `NxfrSoftApManager`.
+- **NxfrWebServer:** Embedded HTTPS server on port 17396 for browser-based send and receive. Token-gated with optional PIN protection.
 - **TransferNotificationManager:** Manages rich
 system notifications, displaying progress bars,
 Accept/Reject action buttons for incoming

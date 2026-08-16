@@ -1,18 +1,21 @@
 # Contributing to NXFR
 
-Welcome to the NXFR project! We appreciate your interest in contributing. This guide outlines our development process, standards, and expectations to ensure a smooth collaboration.
+This guide outlines our development process, standards, and expectations to ensure a smooth collaboration.
 
 ## Dev Environment
 
 ### Prerequisites
 - Stable Rust toolchain (via [rustup](https://rustup.rs/)).
-- `cargo` (comes with rustup).
+- `cargo` (comes with rustup) and `cargo-ndk`.
+- Android SDK & NDK (26.1+).
+- JDK 17+.
 
 ### Setup
 1. Clone the repository: `git clone https://github.com/nxfr/nxfr.git`
 2. Change into the project directory: `cd nxfr`
 3. Build the entire workspace: `cargo build --workspace`
 4. Run all tests to ensure your environment is working: `cargo test --workspace`
+5. For Android: `cd apps/android && ./gradlew assembleDebug`
 
 ## Code Style
 
@@ -25,7 +28,7 @@ We maintain a strict code style and quality standard. Before submitting a PR, yo
 
 ## Testing
 
-The project currently has over 151 unit, integration, and E2E tests.
+The project has an extensive test suite covering unit, integration, and E2E tests.
 - All new features and bug fixes **must** include tests.
 - Fuzz targets are available in the repository. Please run them if you are modifying core parsing or cryptographic code.
 

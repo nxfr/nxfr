@@ -10,7 +10,7 @@ implementation guidelines.
 ## Locked Decisions
 
 ### D-01: Network Transport (TCP vs UDP/QUIC)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use TCP as the underlying network
 transport.
 **Rationale:** TCP provides reliable, ordered byte
@@ -41,7 +41,7 @@ a massive testing burden.
 **References:** RFC 793 (TCP)
 
 ### D-02: Security Layer (TLS 1.3 vs Noise Protocol)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use TLS 1.3 in mutual authentication
 (mTLS) mode.
 **Rationale:** TLS 1.3 is a mature, widely vetted
@@ -70,7 +70,7 @@ defaults.
 **References:** RFC 8446 (TLS 1.3)
 
 ### D-03: Discovery Mechanism (mDNS vs BLE)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use mDNS/DNS-SD for local network
 discovery.
 **Rationale:** mDNS (Multicast DNS) combined with
@@ -97,7 +97,7 @@ metadata capabilities of DNS-SD TXT records.
 **References:** RFC 6762 (mDNS), RFC 6763 (DNS-SD)
 
 ### D-04: Framing Format (Custom binary vs HTTP/2)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use a custom binary framing protocol
 with a fixed 28-byte header over TLS.
 **Rationale:** A custom binary frame minimizes
@@ -122,7 +122,7 @@ has a TCP/TLS connection.
 **References:** NXFR PROTOCOL.md §7
 
 ### D-05: Identity Keys (ECDSA P-256 vs Ed25519)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use ECDSA P-256 (secp256r1) for
 device identity keys.
 **Rationale:** While Ed25519 offers better
@@ -152,7 +152,7 @@ mobile devices compared to elliptic curves.
 **References:** FIPS 186-4
 
 ### D-06: Control Message Encoding (CBOR vs JSON/Protobuf)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use CBOR (Concise Binary Object
 Representation) for control payloads.
 **Rationale:** CBOR is a self-describing binary
@@ -176,7 +176,7 @@ requirements.
 **References:** RFC 8949 (CBOR)
 
 ### D-07: Chunk Integrity (SHA-256 per chunk vs whole file only)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Compute and send a SHA-256 hash for
 every data chunk, in addition to a whole-file
 hash.
@@ -201,7 +201,7 @@ negligible.
 **References:** FIPS 180-4
 
 ### D-08: Transfer Multiplexing (Single connection vs multiplexed session)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Multiplex multiple transfers and
 streams over a single TCP/TLS session.
 **Rationale:** Opening a new TCP connection and
@@ -224,7 +224,7 @@ transfers to the same device.
 **References:** HTTP/2 Multiplexing concepts
 
 ### D-09: Directory Structure Preservation (Relative paths vs TAR/ZIP)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Represent directories as a flat
 manifest of files with relative paths, rather than
 streaming an archive format.
@@ -247,7 +247,7 @@ central directory structure.
 **References:** NXFR PROTOCOL.md §14
 
 ### D-10: Trust On First Use (TOFU) Pairing (SAS code vs QR)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Use TOFU with a 6-digit Short
 Authentication String (SAS) derived via TLS key
 exporter.
@@ -271,7 +271,7 @@ clicking and reduced security.
 **References:** RFC 5869 (HKDF)
 
 ### D-11: Resume Strategy (Receiver-driven partial state)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** The receiver persists partial state;
 the sender queries it via RESUME_QUERY before
 sending data.
@@ -293,7 +293,7 @@ and resuming is a highly requested feature.
 **References:** NXFR PROTOCOL.md §13
 
 ### D-12: Privacy and Advertisement (Opt-in receiving)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Devices MUST NOT advertise
 themselves on mDNS unless the user explicitly
 enables receiving mode.
@@ -311,7 +311,7 @@ drain on mobile devices holding multicast locks.
 **References:** GDPR Privacy by Default principles
 
 ### D-13: Flow Control (Chunk ACKs)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Implement application-level flow
 control using an in-flight window of 8 chunks and
 explicit CHUNK_ACK messages.
@@ -331,7 +331,7 @@ app buffers aren't managed perfectly.
 **References:** NXFR PROTOCOL.md §9.2.13
 
 ### D-14: File Metadata (Pre-transfer manifest vs in-stream)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Send a complete manifest of all
 files in the TRANSFER_REQUEST before data transfer
 begins.
@@ -350,7 +350,7 @@ transfer upfront.
 **References:** NXFR PROTOCOL.md §9.2.8
 
 ### D-15: Path Sanitization (Strict allow-list)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Enforce a strict set of path
 validation rules (no `..`, no absolute paths, no
 symlinks, standard characters only) on the
@@ -370,7 +370,7 @@ perfectly, differing wildly across platforms.
 **References:** NXFR PROTOCOL.md §18
 
 ### D-16: Capabilities Negotiation (HELLO intersection)
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Negotiate protocol capabilities
 (e.g., compression, alternative hashes) via
 intersection of advertised string arrays in the
@@ -389,7 +389,7 @@ application-level feature flags.
 **References:** NXFR PROTOCOL.md §16.3
 
 ### D-17: TLS Handshake Signature Verification in Custom TOFU Verifiers
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Custom TLS certificate verifiers
 (`NoServerVerifier`, `NoClientVerifier`) that bypass
 public CA chain validation MUST explicitly verify
@@ -414,7 +414,7 @@ bypasses proof of key possession.
 **References:** RFC 8446 §4.4.3, NXFR SECURITY.md §8.8
 
 ### D-18: Adaptive Beacon Frequency Ladder for Mobile Discovery
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Implement a dynamic 3-state UDP beacon
 broadcasting interval for mobile devices:
 - `ACTIVE` (1,000ms): UI in foreground or Device
@@ -440,7 +440,7 @@ discovery.
 **References:** NXFR IMPLEMENTATION_NOTES.md §4.10
 
 ### D-19: Listener Backoff & Concurrency Limits under Resource Starvation
-**Status:** Locked (v0.1)
+**Status:** Locked (v1.0)
 **Decision:** Bound concurrent TLS handshakes with
 counting semaphores, enforce a 10-second handshake
 timeout, and apply a 50ms sleep delay on all TCP
@@ -499,6 +499,7 @@ minutes). Remind the user via persistent
 notification, and automatically drop the
 MulticastLock and stop the foreground service if
 no transfer occurs.
+**Resolution:** Resolved — adaptive 3-tier beacon power ladder (ACTIVE 1s / BACKGROUND 5s / LOW_POWER 30s)
 
 ### Q-04: Should we bundle a standalone mDNS implementation for Windows?
 **Impact if unresolved:** Windows native
@@ -522,6 +523,7 @@ repositories or build environments).
 "dir"` entry in the manifest. This allows explicit
 creation of empty directories on the receiver
 without associating any CHUNK frames.
+**Resolution:** Resolved — `type: "dir"` manifest entries
 
 ### Q-06: What is the optimal default chunk size for Wi-Fi 6 vs older networks?
 **Impact if unresolved:** A 1 MiB chunk size might
@@ -577,6 +579,7 @@ available disk space against the manifest's
 `total_size` before showing the consent UI. If
 space is insufficient, automatically send
 TRANSFER_REJECT with reason `disk_full`.
+**Resolution:** Resolved — manifest total size pre-check
 
 ### Q-11: Should the UI support "Auto-Accept" for specific paired devices?
 **Impact if unresolved:** Frequent transfers
@@ -588,6 +591,7 @@ policy in the paired device database. Allow users
 to configure "Always accept from this device" in
 the UI, bypassing the PENDING state and going
 straight to NEGOTIATING.
+**Resolution:** Resolved — `PairedDeviceDb` auto-accept policies
 
 ### Q-12: What happens if a file is modified on the sender during a transfer?
 **Impact if unresolved:** The chunk hashes will
@@ -642,3 +646,4 @@ pairing flow first.
 expires after 10 minutes. Transfers in this mode
 bypass pairing but always require explicit user
 consent for every file, mitigating spam.
+**Resolution:** Resolved — Web portal on port 17396

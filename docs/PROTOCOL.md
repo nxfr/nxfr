@@ -1,7 +1,7 @@
-# NXFR Protocol Specification v0.1
+# NXFR Protocol Specification v1.0
 
 **Status:** Draft
-**Date:** 2026-08-08
+**Date:** 2026-08-16
 **Authors:** NXFR Protocol Working Group
 
 ---
@@ -19,7 +19,7 @@ keys with Trust On First Use (TOFU) pairing, and exchange files through a multip
 framing layer carrying CBOR-encoded control messages and raw binary data chunks.
 
 This document is the normative specification. Implementations MUST conform to the
-requirements herein to claim NXFR v0.1 compliance.
+requirements herein to claim NXFR v1.0 compliance.
 
 ---
 
@@ -522,7 +522,7 @@ NXFR frame on the connection.
 ```cbor-diag
 {
   "type":             1,                    / uint, REQUIRED /
-  "protocol_version": [0, 1],              / array[uint, uint], REQUIRED. [major, minor] /
+  "protocol_version": [1, 0],              / array[uint, uint], REQUIRED. [major, minor] /
   "device_id":        h'<32 bytes>',       / bstr, REQUIRED. SHA-256 of SPKI DER /
   "device_name":      "My Laptop",         / tstr, REQUIRED. UTF-8, max 63 bytes /
   "platform":         "linux",             / tstr, REQUIRED. See §5.3 /
@@ -557,7 +557,7 @@ Sent by the responder in response to a valid HELLO.
 ```cbor-diag
 {
   "type":             2,                    / uint, REQUIRED /
-  "protocol_version": [0, 1],              / array[uint, uint], REQUIRED /
+  "protocol_version": [1, 0],              / array[uint, uint], REQUIRED /
   "device_id":        h'<32 bytes>',       / bstr, REQUIRED /
   "device_name":      "My Phone",          / tstr, REQUIRED /
   "platform":         "android",           / tstr, REQUIRED /
@@ -1481,7 +1481,7 @@ The protocol version consists of a major and minor number: `[major, minor]`.
 - **Minor increment:** Additive change only. New optional fields, new optional
   capabilities. Lower-minor implementations ignore unknown fields.
 
-The current version is `[0, 1]` (v0.1).
+The current version is `[1, 0]` (v1.0).
 
 ### 16.2 Frame Format Version
 
@@ -1710,4 +1710,4 @@ To support interoperability with devices without native NXFR software installed 
 
 ---
 
-*End of NXFR Protocol Specification v0.4*
+*End of NXFR Protocol Specification v1.0*

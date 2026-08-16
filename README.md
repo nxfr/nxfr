@@ -9,7 +9,7 @@
     <a href="https://github.com/nxfr/nxfr/actions"><img src="https://img.shields.io/github/actions/workflow/status/nxfr/nxfr/ci.yml?branch=main" alt="Build Status"></a>
     <a href="https://github.com/nxfr/nxfr/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
     <a href="https://github.com/nxfr/nxfr/stargazers"><img src="https://img.shields.io/github/stars/nxfr/nxfr?style=social" alt="GitHub stars"></a>
-    <a href="https://nxfr.github.io/nxfr/"><img src="https://img.shields.io/badge/spec-v0.4.2--alpha-00E5FF" alt="Protocol Spec"></a>
+    <a href="https://nxfr.github.io/nxfr/"><img src="https://img.shields.io/badge/spec-v1.0.0-00E5FF" alt="Protocol Spec"></a>
   </p>
 </div>
 
@@ -35,7 +35,7 @@ NXFR is a peer-to-peer file transfer protocol and client implementation built wi
 | Invariant | Specification | Description |
 | :--- | :--- | :--- |
 | **Transport** | TCP + mTLS 1.3 | Authenticated, encrypted socket pipeline on port `17394`. |
-| **Identity Keys** | Ed25519 / Curve25519 | Persistent node identities (`did:nxfr:<short_id>`). |
+| **Identity Keys** | ECDSA P-256 (secp256r1) | Persistent node identities (`did:nxfr:<short_id>`). |
 | **Trust Model** | TOFU + SAS | Trust-On-First-Use key pinning and Short Authentication String verification. |
 | **Discovery** | mDNS / DNS-SD (`_nxfr._tcp`) + UDP Beacon | Local discovery on `17394`/`17395` with daily-rotating ephemeral IDs. |
 | **Encoding** | CBOR (RFC 8949) | Compact binary object representation for transfer handshakes. |
@@ -127,7 +127,7 @@ nxfr send /path/to/payload.tar.gz --to <peer-name>
 
 ## Roadmap
 
-- **Off-Grid Connectivity (Desert Mode)**: Wi-Fi Direct and SoftAP hotspot transfers.
+- ~~Off-Grid Connectivity (Desert Mode)~~: Shipped in v1.0.0.
 - **Packaging and Distribution**: F-Droid, Google Play, RPM/DEB/APT repositories, and Flathub Flatpak.
 - **Desktop and iOS Shells**: Native Linux (GTK4/Libadwaita), Windows (WinUI 3), and iOS (SwiftUI) applications.
 

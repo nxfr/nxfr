@@ -1451,7 +1451,7 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "nxfr-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1467,14 +1467,14 @@ dependencies = [
 
 [[package]]
 name = "nxfr-common"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "thiserror 2.0.19",
 ]
 
 [[package]]
 name = "nxfr-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ciborium",
  "hex",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-crypto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hex",
  "nxfr-common",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-daemon"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1530,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-discovery"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-ffi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "android_logger",
  "chrono",
@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-loopback"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hex",
  "nxfr-common",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-storage"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-transport"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "nxfr-web"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

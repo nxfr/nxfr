@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-16
+
+### Added
+- Desert Mode three-tier auto-discovery orchestrator (Wi-Fi Direct → SoftAP → QR fallback)
+- `DesertModeOrchestrator` state machine with automatic tier escalation
+- QR code generation and scanning for SoftAP network credentials
+- `WifiNetworkSpecifier` integration for Android 10+ network joining (replaces deprecated `WifiManager.addNetwork`)
+
+### Fixed
+- Desert Mode QR scan crash (`SecurityException` on Android 10+) caused by missing `CHANGE_NETWORK_STATE` permission and legacy Wi-Fi join API
+- Added `removeCapability(NET_CAPABILITY_INTERNET)` to `NetworkRequest` for local-only SoftAP networks
+- Rust clippy warnings: unused imports in `nxfr-daemon`, type complexity in `nxfr-ffi`
+- Rust formatting violations in `nxfr-ffi` test code
+- CI: skip native library verification for Kotlin-only CI runs
+
+### Changed
+- Bumped Android `versionName` to `1.0.0` (versionCode 23)
+- Bumped Rust workspace version to `1.0.0`
+- Protocol version promoted to v1.0.0
+
 ## [0.4.5-alpha] - 2026-08-15
 
 ### Security & Cryptography
@@ -145,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Single-instance daemon guard via status socket.
 
 ### Security
-- Ed25519 identity keys with self-signed X.509 certificates.
+- ECDSA P-256 identity keys with self-signed X.509 certificates.
 - HKDF-SHA256 SAS derivation with sorted context binding.
 - CBOR nesting depth limit of 6 to prevent recursion attacks.
 - Zeroization of sensitive key material on drop.
