@@ -88,18 +88,28 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2
 h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .sub{color:#94A3B8;margin:0 0 20px;font-size:14px}
 input[type=file]{display:none}
-.drop{border:2px dashed #334155;border-radius:12px;padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s}
+.drop{border:2px dashed #334155;border-radius:12px;padding:36px 20px;text-align:center;cursor:pointer;transition:border-color .2s;word-break:break-all}
 .drop:hover,.drop.over{border-color:#00E5FF}
 .btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:12px 24px;font-weight:700;cursor:pointer;width:100%;margin-top:16px;font-size:16px;transition:background 0.2s}
 .btn:hover{background:#38BDF8}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-cancel{background:#EF4444;color:#FFF;margin-top:8px;padding:6px 14px;font-size:12px;width:auto;display:inline-block;border-radius:6px}
+.btn-cancel:hover{background:#DC2626}
 .progress{width:100%;height:8px;background:#334155;border-radius:4px;margin-top:12px;overflow:hidden}
 .bar{height:100%;background:#00E5FF;width:0%;transition:width .3s}
-.status{text-align:center;margin-top:8px;font-size:14px;color:#94A3B8}
+.status{text-align:center;margin-top:8px;font-size:13px;color:#94A3B8;font-family:monospace}
+.current-file{font-size:13px;font-weight:600;color:#38BDF8;margin-top:12px;text-align:center;word-break:break-all}
 .fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-bottom:16px;border:1px solid #1E293B}
 .pin-input{width:100%;box-sizing:border-box;background:#0F172A;border:2px solid #334155;border-radius:8px;color:#F8FAFC;font-size:24px;font-family:monospace;text-align:center;letter-spacing:6px;padding:12px;outline:none;transition:border-color 0.2s}
 .pin-input:focus{border-color:#00E5FF}
 .pin-err{color:#EF4444;font-size:13px;margin-top:10px;display:none;text-align:center;font-weight:600}
+.queue-box{margin-top:16px;border-top:1px solid #334155;padding-top:12px}
+.queue-header{font-size:12px;color:#94A3B8;margin-bottom:8px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.queue-list{display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto}
+.queue-item{display:flex;align-items:center;justify-content:space-between;background:#0F172A;padding:6px 10px;border-radius:6px;border:1px solid #334155;font-size:12px}
+.queue-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;color:#E2E8F0}
+.btn-remove{background:transparent;color:#EF4444;border:none;cursor:pointer;font-size:12px;font-weight:700;padding:2px 6px;border-radius:4px}
+.btn-remove:hover{background:#EF444422}
 </style></head><body>
 
 <div class="card" id="pin-card" style="display:none">
@@ -118,16 +128,26 @@ Connected Device Fingerprint:<br>
 
 <div class="card" id="main-card">
 <h1>NXFR Direct Upload</h1>
-<p class="sub">Select or drop a file to send to this device</p>
+<p class="sub">Select or drop files to send to this device</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
 <strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
 </div>
-<div class="drop" id="drop">Click or drag a file here</div>
-<input type="file" id="file">
+<div class="drop" id="drop">Click or drag files here</div>
+<input type="file" id="file" multiple>
+<div id="current-file" class="current-file" style="display:none"></div>
 <div class="progress" style="display:none" id="pg"><div class="bar" id="bar"></div></div>
 <p class="status" id="st"></p>
-<button class="btn" id="btn" disabled>Upload</button>
+<div style="text-align:center">
+<button type="button" class="btn btn-cancel" id="btn-cancel" style="display:none" onclick="cancelCurrentUpload()">Cancel Upload</button>
+</div>
+<div id="queue-box" class="queue-box" style="display:none">
+<div class="queue-header">
+<span>UPCOMING QUEUE (<span id="queue-count">0</span>)</span>
+<button type="button" style="background:transparent;color:#94A3B8;border:none;cursor:pointer;font-size:11px" onclick="clearQueue()">Clear All</button>
+</div>
+<div id="queue-list" class="queue-list"></div>
+</div>
 </div>
 <script>
 const hasPin = {{HAS_PIN}};
@@ -185,27 +205,159 @@ async function unlockUploadWithPin() {
   }
 }
 
+function fmtBytes(b){
+  if(!b||b<=0) return '0 B';
+  const u=['B','KB','MB','GB','TB'];
+  const i=Math.floor(Math.log(b)/Math.log(1024));
+  return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
+}
+function escapeHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 const drop=document.getElementById('drop'),fi=document.getElementById('file'),
-btn=document.getElementById('btn'),pg=document.getElementById('pg'),
-bar=document.getElementById('bar'),st=document.getElementById('st');
-let sel=null;
+pg=document.getElementById('pg'),bar=document.getElementById('bar'),st=document.getElementById('st'),
+curFileEl=document.getElementById('current-file'),cancelBtn=document.getElementById('btn-cancel');
+
+let uploadQueue = [];
+let isUploading = false;
+let currentXhr = null;
+let currentFile = null;
+
 drop.onclick=()=>fi.click();
-fi.onchange=e=>{sel=e.target.files[0];if(sel){drop.textContent=sel.name;btn.disabled=false;}};
+fi.onchange=e=>{if(e.target.files&&e.target.files.length){enqueueFiles(e.target.files);fi.value='';}};
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
-drop.addEventListener('drop',ev=>{ev.preventDefault();drop.classList.remove('over');if(ev.dataTransfer.files.length){sel=ev.dataTransfer.files[0];drop.textContent=sel.name;btn.disabled=false;}});
-btn.onclick=()=>{
-if(!sel)return;
-const fd=new FormData();fd.append('file',sel);
-const xhr=new XMLHttpRequest();
-xhr.open('POST','/upload' + (t ? '?t=' + encodeURIComponent(t) : ''));
-if(t) xhr.setRequestHeader('Authorization','Bearer '+t);
-xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);bar.style.width=p+'%';st.textContent=p+'%';}};
-pg.style.display='block';btn.disabled=true;
-xhr.onload=()=>{if(xhr.status===200){st.textContent='Upload complete ✓';bar.style.width='100%';bar.style.background='#22C55E';}else{st.textContent='Error: '+(xhr.responseText || 'Access denied');bar.style.background='#EF4444';btn.disabled=false;}};
-xhr.onerror=()=>{st.textContent='Network error';btn.disabled=false;};
-xhr.send(fd);
-};
+drop.addEventListener('drop',ev=>{
+  ev.preventDefault();
+  drop.classList.remove('over');
+  if(ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files.length){
+    enqueueFiles(ev.dataTransfer.files);
+  }
+});
+
+function enqueueFiles(files){
+  for(let i=0;i<files.length;i++){
+    uploadQueue.push(files[i]);
+  }
+  renderQueue();
+  if(!isUploading){
+    processQueue();
+  }
+}
+
+function removeFromQueue(index){
+  uploadQueue.splice(index,1);
+  renderQueue();
+}
+
+function clearQueue(){
+  uploadQueue = [];
+  renderQueue();
+}
+
+function renderQueue(){
+  const qBox = document.getElementById('queue-box');
+  const qList = document.getElementById('queue-list');
+  const qCount = document.getElementById('queue-count');
+  if(uploadQueue.length > 0){
+    qBox.style.display = 'block';
+    qCount.textContent = uploadQueue.length;
+    qList.innerHTML = uploadQueue.map((f, i) =>
+      `<div class="queue-item"><span class="queue-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${fmtBytes(f.size)})</span><button type="button" class="btn-remove" onclick="removeFromQueue(${i})">✕</button></div>`
+    ).join('');
+  } else {
+    qBox.style.display = 'none';
+    qList.innerHTML = '';
+  }
+}
+
+function cancelCurrentUpload(){
+  if(currentXhr){
+    currentXhr.abort();
+    currentXhr = null;
+  }
+  st.textContent = 'Upload cancelled';
+  bar.style.background = '#EF4444';
+  if(cancelBtn) cancelBtn.style.display = 'none';
+  setTimeout(()=>{
+    isUploading = false;
+    processQueue();
+  }, 400);
+}
+
+function processQueue(){
+  if(uploadQueue.length === 0){
+    isUploading = false;
+    currentXhr = null;
+    currentFile = null;
+    if(cancelBtn) cancelBtn.style.display = 'none';
+    if(curFileEl) curFileEl.style.display = 'none';
+    drop.textContent = 'Click or drag files here';
+    return;
+  }
+
+  isUploading = true;
+  currentFile = uploadQueue.shift();
+  renderQueue();
+
+  if(curFileEl){
+    curFileEl.style.display = 'block';
+    curFileEl.textContent = 'Uploading: ' + currentFile.name + ' (' + fmtBytes(currentFile.size) + ')';
+  }
+  drop.textContent = 'Uploading ' + currentFile.name + '...';
+
+  pg.style.display = 'block';
+  bar.style.width = '0%';
+  bar.style.background = '#00E5FF';
+  st.textContent = '0%';
+  if(cancelBtn) cancelBtn.style.display = 'inline-block';
+
+  const fd = new FormData();
+  fd.append('file', currentFile);
+
+  currentXhr = new XMLHttpRequest();
+  currentXhr.open('POST', '/upload' + (t ? '?t=' + encodeURIComponent(t) : ''));
+  if(t) currentXhr.setRequestHeader('Authorization', 'Bearer ' + t);
+
+  currentXhr.upload.onprogress = e => {
+    if(e.lengthComputable){
+      const p = Math.round(e.loaded / e.total * 100);
+      bar.style.width = p + '%';
+      st.textContent = p + '% · ' + fmtBytes(e.loaded) + ' / ' + fmtBytes(e.total);
+    }
+  };
+
+  currentXhr.onload = () => {
+    if(currentXhr.status === 200){
+      st.textContent = '✓ ' + currentFile.name + ' uploaded';
+      bar.style.width = '100%';
+      bar.style.background = '#22C55E';
+      if(cancelBtn) cancelBtn.style.display = 'none';
+      setTimeout(()=>{
+        processQueue();
+      }, 500);
+    } else {
+      st.textContent = 'Error: ' + (currentXhr.responseText || 'Access denied');
+      bar.style.background = '#EF4444';
+      if(cancelBtn) cancelBtn.style.display = 'none';
+      setTimeout(()=>{
+        processQueue();
+      }, 1200);
+    }
+  };
+
+  currentXhr.onerror = () => {
+    st.textContent = 'Network error';
+    bar.style.background = '#EF4444';
+    if(cancelBtn) cancelBtn.style.display = 'none';
+    setTimeout(()=>{
+      processQueue();
+    }, 1200);
+  };
+
+  currentXhr.send(fd);
+}
 </script></body></html>"#;
 
 pub fn build_web_tls_config(
@@ -278,6 +430,8 @@ h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .btn{background:#00E5FF;color:#0F172A;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap;transition:background 0.2s}
 .btn:hover{background:#38BDF8}
 .btn:disabled{opacity:0.6;cursor:not-allowed}
+.btn-cancel{background:#EF4444;color:#FFF}
+.btn-cancel:hover{background:#DC2626}
 .btn-success{background:#22C55E;color:#0F172A}
 .btn-all{background:#22C55E;color:#0F172A;width:100%;justify-content:center;padding:12px;font-size:15px;margin-bottom:16px}
 .btn-all:hover{background:#4ADE80}
@@ -301,22 +455,22 @@ Connected Device Fingerprint:<br>
 <input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off">
 <div id="pin-err" class="pin-err"></div>
 </div>
-<button class="btn btn-all" id="btn-unlock" onclick="unlockWithPin()" style="margin-bottom:0">Unlock Downloads</button>
+<button class="btn btn-all" id="btn-unlock" onclick="unlockShareWithPin()" style="margin-bottom:0">Unlock Downloads</button>
 </div>
 
 <div class="card" id="main-card">
 <h1>NXFR Direct Download</h1>
-<p class="sub">Download files shared directly from this device over TLS</p>
+<p class="sub">Download files shared directly from the peer device</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
 <strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
 </div>
-<button class="btn btn-all" id="btn-all" onclick="downloadAll()">Download All Files</button>
+<button class="btn btn-all" id="btn-all" onclick="downloadAll()">Download All Files ({{TOTAL_FILES}})</button>
 <div class="file-list" id="file-list"></div>
 </div>
 <script>
-const manifest = {{MANIFEST_JSON}};
 const hasPin = {{HAS_PIN}};
+const manifest = {{MANIFEST_JSON}};
 const hashToken = location.hash.replace(/^#t=/, '').replace(/^#/, '');
 const params = new URLSearchParams(location.search);
 let t = hashToken || params.get('t') || '';
@@ -326,13 +480,13 @@ if (hasPin && !t) {
   document.getElementById('main-card').style.display = 'none';
   const pi = document.getElementById('pin-input');
   setTimeout(() => pi.focus(), 100);
-  pi.addEventListener('keydown', e => { if (e.key === 'Enter') unlockWithPin(); });
+  pi.addEventListener('keydown', e => { if (e.key === 'Enter') unlockShareWithPin(); });
 } else {
   document.getElementById('pin-card').style.display = 'none';
   document.getElementById('main-card').style.display = 'block';
 }
 
-async function unlockWithPin() {
+async function unlockShareWithPin() {
   const pinInput = document.getElementById('pin-input');
   const pinVal = pinInput.value.trim();
   const pinErr = document.getElementById('pin-err');
@@ -372,11 +526,13 @@ async function unlockWithPin() {
 }
 
 function fmtBytes(b){
-  if(b<=0) return '0 B';
+  if(!b||b<=0) return '0 B';
   const u=['B','KB','MB','GB','TB'];
   const i=Math.floor(Math.log(b)/Math.log(1024));
   return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
 }
+
+const downloadControllers = {};
 
 const list = document.getElementById('file-list');
 manifest.forEach(item => {
@@ -438,10 +594,39 @@ async function downloadItem(id) {
   const pgBar = document.getElementById(`pg-bar-${id}`);
   const pgStatus = document.getElementById(`pg-status-${id}`);
 
-  if (btn) btn.disabled = true;
+  // If already downloading and clicked, cancel this download
+  if (downloadControllers[id]) {
+    downloadControllers[id].abort();
+    delete downloadControllers[id];
+    if (pgStatus) {
+      pgStatus.textContent = 'Download cancelled';
+      pgStatus.style.color = '#94A3B8';
+    }
+    if (pgBar) pgBar.style.background = '#334155';
+    if (btn) {
+      btn.textContent = 'Download';
+      btn.className = 'btn';
+      btn.disabled = false;
+    }
+    return;
+  }
+
+  const controller = new AbortController();
+  downloadControllers[id] = controller;
+
+  if (btn) {
+    btn.textContent = 'Cancel';
+    btn.className = 'btn btn-cancel';
+    btn.disabled = false;
+  }
   if (pgTrack) pgTrack.style.display = 'block';
+  if (pgBar) {
+    pgBar.style.width = '0%';
+    pgBar.style.background = '#00E5FF';
+  }
   if (pgStatus) {
     pgStatus.style.display = 'block';
+    pgStatus.style.color = '#94A3B8';
     pgStatus.textContent = 'Connecting...';
   }
 
@@ -450,7 +635,7 @@ async function downloadItem(id) {
   if (t) headers['Authorization'] = 'Bearer ' + t;
 
   try {
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { headers, signal: controller.signal });
     if (!response.ok) {
       const errText = await response.text().catch(() => 'Download failed');
       throw new Error(`HTTP ${response.status}: ${errText}`);
@@ -500,16 +685,33 @@ async function downloadItem(id) {
       btn.disabled = false;
     }
   } catch (err) {
-    if (pgStatus) {
-      pgStatus.style.display = 'block';
-      pgStatus.textContent = 'Error: ' + err.message;
-      pgStatus.style.color = '#EF4444';
+    if (err.name === 'AbortError') {
+      if (pgStatus) {
+        pgStatus.style.display = 'block';
+        pgStatus.textContent = 'Download cancelled';
+        pgStatus.style.color = '#94A3B8';
+      }
+      if (pgBar) pgBar.style.background = '#334155';
+      if (btn) {
+        btn.textContent = 'Download';
+        btn.className = 'btn';
+        btn.disabled = false;
+      }
+    } else {
+      if (pgStatus) {
+        pgStatus.style.display = 'block';
+        pgStatus.textContent = 'Error: ' + err.message;
+        pgStatus.style.color = '#EF4444';
+      }
+      if (pgBar) pgBar.style.background = '#EF4444';
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        btn.className = 'btn';
+      }
     }
-    if (pgBar) pgBar.style.background = '#EF4444';
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Retry';
-    }
+  } finally {
+    delete downloadControllers[id];
   }
 }
 

@@ -215,7 +215,7 @@ class NxfrService : Service() {
             filePaths: List<String>
         ) {
             try {
-                val storeDir = getIdentityDir(context)
+                val storeDir = instance?.identityDir() ?: context.filesDir.resolve("nxfr-identity").absolutePath
                 val json = org.json.JSONObject().apply {
                     put("id", 0)
                     put("ts_ms", System.currentTimeMillis())
@@ -239,6 +239,9 @@ class NxfrService : Service() {
             instance?.let { svc ->
                 Log.i("NxfrService", "Stopping listener and discovery...")
                 _discovery?.stopDiscovery()
+                _isListening.value = false
+                svc.listenerJob?.cancel()
+                svc.listenerJob = null
                 if (svc.listenerHandle != 0L) {
                     try { NxfrBridge.nxfr_close(svc.listenerHandle) } catch (e: Throwable) {
                         Log.e("NxfrService", "Failed to close listener: ${e.message}")
@@ -251,7 +254,6 @@ class NxfrService : Service() {
                     svc.listenerHandle = 0
                 }
                 svc.listening = false
-                _isListening.value = false
                 Log.i("NxfrService", "Listener stopped.")
                 svc.evaluateLifecycleContract()
             }
@@ -259,9 +261,7 @@ class NxfrService : Service() {
 
         fun startListening(context: android.content.Context) {
             instance?.let { svc ->
-                svc.serviceScope.launch {
-                    svc.startListening()
-                }
+                svc.startListening()
             }
         }
     }
@@ -325,6 +325,7 @@ class NxfrService : Service() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var listenerJob: Job? = null
     private var listenerHandle: Long = 0
     private var activeSessionHandle: Long = 0
     @Volatile private var listening = false
@@ -423,7 +424,7 @@ class NxfrService : Service() {
                 val prefs = getSharedPreferences("nxfr_prefs", MODE_PRIVATE)
                 val visibleOn = prefs.getBoolean("visible_enabled", false)
                 if (visibleOn) {
-                    serviceScope.launch { startListening() }
+                    startListening()
                 } else if (activeSessionHandle == 0L) {
                     Log.i(TAG, "Service started, but visibility is OFF and no active transfer. Stopping service.")
                     try {
@@ -452,6 +453,8 @@ class NxfrService : Service() {
         // Flush resume journal to disk so transfers can be resumed.
         try { NxfrBridge.nxfr_web_stop() } catch (_: Throwable) {}
         _discovery?.stopDiscovery()
+        listenerJob?.cancel()
+        listenerJob = null
         // Close active session and listener — release TLS connections and ports.
         if (activeSessionHandle != 0L) {
             try { NxfrBridge.nxfr_close(activeSessionHandle) } catch (_: Throwable) {}
@@ -558,73 +561,106 @@ class NxfrService : Service() {
     }
 
     /** Accept loop: listen → accept → pump for offers. */
-    private suspend fun startListening() {
-        if (listening) {
+    fun startListening() {
+        if (listening || listenerJob?.isActive == true) {
             Log.w(TAG, "startListening: already active, skipping")
             return
         }
-        listening = true
-        val storeDir = identityDir()
+        listenerJob = serviceScope.launch {
+            listening = true
+            val storeDir = identityDir()
 
-        // Start beacon announcer so this device is discoverable.
-        val did = _deviceId.value
-        val dname = _deviceName.value
-        if (did.isNotEmpty()) {
-            _discovery?.startDiscovery(storeDir, did, dname)
-            Log.i(TAG, "Beacon announcer started (Visible=ON)")
-        }
-
-        var listenJson = withContext(Dispatchers.IO) {
-            NxfrBridge.nxfr_listen(activePort, storeDir)
-        }
-        var listenResult = JSONObject(listenJson)
-
-        // EADDRINUSE retry: close stale listener, try once more.
-        if (listenResult.has("error") && listenResult.getString("error").contains("bind", ignoreCase = true)) {
-            Log.w(TAG, "Bind failed (EADDRINUSE?), closing stale listener and retrying")
-            if (listenerHandle != 0L) {
-                try { withContext(Dispatchers.IO) { NxfrBridge.nxfr_close(listenerHandle) } } catch (_: Throwable) {}
-                listenerHandle = 0
+            // Start beacon announcer so this device is discoverable.
+            val did = _deviceId.value
+            val dname = _deviceName.value
+            if (did.isNotEmpty()) {
+                _discovery?.startDiscovery(storeDir, did, dname)
+                Log.i(TAG, "Beacon announcer started (Visible=ON)")
             }
-            delay(500)
-            listenJson = withContext(Dispatchers.IO) {
+
+            var listenJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_listen(activePort, storeDir)
             }
-            listenResult = JSONObject(listenJson)
-        }
+            var listenResult = JSONObject(listenJson)
 
-        if (listenResult.has("error")) {
-            val msg = listenResult.getString("error")
-            Log.e(TAG, "Listen failed: $msg")
-            _nxfrState.value = NxfrState.Error(msg)
-            _isListening.value = false
+            // EADDRINUSE retry: close stale listener, try once more.
+            if (listenResult.has("error") && listenResult.getString("error").contains("bind", ignoreCase = true)) {
+                Log.w(TAG, "Bind failed (EADDRINUSE?), closing stale listener and retrying")
+                if (listenerHandle != 0L) {
+                    try { withContext(Dispatchers.IO) { NxfrBridge.nxfr_close(listenerHandle) } } catch (_: Throwable) {}
+                    listenerHandle = 0
+                }
+                delay(500)
+                listenJson = withContext(Dispatchers.IO) {
+                    NxfrBridge.nxfr_listen(activePort, storeDir)
+                }
+                listenResult = JSONObject(listenJson)
+            }
+
+            if (listenResult.has("error")) {
+                val msg = listenResult.getString("error")
+                Log.e(TAG, "Listen failed: $msg")
+                _nxfrState.value = NxfrState.Error(msg)
+                _isListening.value = false
+                listening = false
+                listenerJob = null
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(this@NxfrService, "Listen failed: $msg", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return@launch
+            }
+            listenerHandle = listenResult.getLong("listener")
+            _nxfrState.value = NxfrState.Listening
+            Log.i(TAG, "Listening on port ${listenResult.getInt("port")}")
+            _isListening.value = true
+
+            // Accept loop.
+            while (isActive) {
+                val acceptJson = try {
+                    withContext(Dispatchers.IO) {
+                        NxfrBridge.nxfr_accept(listenerHandle)
+                    }
+                } catch (e: Throwable) {
+                    when {
+                        e.message?.contains("invalid listener handle") == true ||
+                        e.message?.contains("listener closed") == true -> {
+                            Log.i(TAG, "Listener handle invalidated, exiting accept loop")
+                            break
+                        }
+                        else -> {
+                            Log.e(TAG, "Accept exception: ${e.message}", e)
+                            delay(100)
+                            continue
+                        }
+                    }
+                }
+
+                val acceptResult = JSONObject(acceptJson)
+                if (acceptResult.has("error")) {
+                    val err = acceptResult.getString("error")
+                    when {
+                        err.contains("invalid listener handle", ignoreCase = true) ||
+                        err.contains("listener closed", ignoreCase = true) -> {
+                            Log.i(TAG, "Listener handle invalidated ($err), exiting accept loop")
+                            break
+                        }
+                        else -> {
+                            Log.e(TAG, "Accept error: $err")
+                            delay(100)
+                            continue
+                        }
+                    }
+                }
+                val handle = acceptResult.getLong("handle")
+                activeSessionHandle = handle
+                Log.i(TAG, "Accepted connection from ${acceptResult.optString("peer_name")}")
+
+                // Pump for events on this session.
+                pumpLoop(handle, isSending = false)
+            }
             listening = false
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(this@NxfrService, "Listen failed: $msg", android.widget.Toast.LENGTH_LONG).show()
-            }
-            return
-        }
-        listenerHandle = listenResult.getLong("listener")
-        _nxfrState.value = NxfrState.Listening
-        Log.i(TAG, "Listening on port ${listenResult.getInt("port")}")
-        _isListening.value = true
-
-        // Accept loop.
-        while (isActive) {
-            val acceptJson = withContext(Dispatchers.IO) {
-                NxfrBridge.nxfr_accept(listenerHandle)
-            }
-            val acceptResult = JSONObject(acceptJson)
-            if (acceptResult.has("error")) {
-                Log.e(TAG, "Accept error: ${acceptResult.getString("error")}")
-                continue
-            }
-            val handle = acceptResult.getLong("handle")
-            activeSessionHandle = handle
-            Log.i(TAG, "Accepted connection from ${acceptResult.optString("peer_name")}")
-
-            // Pump for events on this session.
-            pumpLoop(handle, isSending = false)
+            _isListening.value = false
+            listenerJob = null
         }
     }
 
