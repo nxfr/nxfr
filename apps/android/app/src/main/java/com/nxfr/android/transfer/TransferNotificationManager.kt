@@ -139,48 +139,107 @@ class TransferNotificationManager(private val context: Context) {
         lastBytesTransferred = 0L
         lastSpeedBps = 0.0
 
-        val openIntent = if (isSending) {
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
+        val sizeStr = TransferNotificationFormatter.formatBytes(fileSize)
+
+        val title = if (isSending) {
+            "Sent to ${peerName.ifBlank { "peer" }}"
         } else {
-            Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            }
+            "Received from ${peerName.ifBlank { "peer" }}"
         }
 
-        val pendingIntent = PendingIntent.getActivity(
+        val subtitle = if (isSending) {
+            "$fileName • $sizeStr"
+        } else {
+            val locStr = if (publishedPath.isBlank() || publishedPath.contains("Download")) "Downloads/NXFR" else publishedPath
+            "$fileName • $sizeStr • Saved to $locStr"
+        }
+
+        // Tap → open app
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val contentPendingIntent = PendingIntent.getActivity(
             context,
             transferId,
-            openIntent,
+            openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val sizeStr = TransferNotificationFormatter.formatBytes(fileSize)
-        val subtitle = if (isSending) {
-            "$sizeStr • Sent to ${peerName.ifBlank { "peer" }}"
+        // Action 1: "Open" — for received files, open Downloads; for sent, open app
+        val openActionIntent = if (!isSending) {
+            // Try to open the specific file if we have a path; otherwise open Downloads
+            if (publishedPath.isNotBlank()) {
+                val file = java.io.File(publishedPath)
+                if (file.exists()) {
+                    val mimeType = getMimeType(fileName)
+                    try {
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        )
+                        Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mimeType)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    } catch (_: Exception) {
+                        Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                    }
+                } else {
+                    Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                }
+            } else {
+                Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            }
         } else {
-            val locStr = if (publishedPath.isBlank() || publishedPath.contains("Download")) "Downloads/NXFR" else publishedPath
-            "$sizeStr • Saved to $locStr"
+            openAppIntent
         }
+        val openPendingIntent = PendingIntent.getActivity(
+            context,
+            transferId + 20000,
+            openActionIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
 
-        val notification = NotificationCompat.Builder(context, NxfrApp.CHANNEL_TRANSFERS)
+        // Action 2: "Send More" — opens the app on Send tab
+        val sendMoreIntent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_SEND
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val sendMorePendingIntent = PendingIntent.getActivity(
+            context,
+            transferId + 30000,
+            sendMoreIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, NxfrApp.CHANNEL_TRANSFERS)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Transfer complete ✓")
+            .setContentTitle(title)
             .setContentText(subtitle)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-            .setTimeoutAfter(4000L) // Auto-dismiss after 4s
-            .setContentIntent(pendingIntent)
+            .setContentIntent(contentPendingIntent)
             .setGroup(NOTIFICATION_GROUP)
-            .build()
 
-        notificationManager.notify(transferId, notification)
+        if (!isSending) {
+            builder.addAction(android.R.drawable.ic_menu_view, "Open", openPendingIntent)
+        }
+        builder.addAction(android.R.drawable.ic_menu_send, "Send More", sendMorePendingIntent)
 
-        // Delayed cancellation guarantee
-        mainHandler.postDelayed({
-            try { notificationManager.cancel(transferId) } catch (_: Throwable) {}
-        }, 4000L)
+        notificationManager.notify(transferId, builder.build())
+    }
+
+    private fun getMimeType(fileName: String): String {
+        val extension = fileName.substringAfterLast('.', "").lowercase()
+        return android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(extension) ?: "application/octet-stream"
     }
 
     fun showTransferFailedNotification(
