@@ -135,51 +135,61 @@ class NxfrSoftApManager {
     }
 
     fun joinNetwork(ssid: String, passphrase: String?) {
+        _clientState.value = ClientJoinState.Connecting
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            _clientState.value = ClientJoinState.Connecting
-            val specifier = WifiNetworkSpecifier.Builder()
-                .setSsid(ssid)
-                .apply {
-                    if (passphrase != null) {
-                        setWpa2Passphrase(passphrase)
+            try {
+                val specifier = WifiNetworkSpecifier.Builder()
+                    .setSsid(ssid)
+                    .apply {
+                        if (passphrase != null) {
+                            setWpa2Passphrase(passphrase)
+                        }
+                    }
+                    .build()
+
+                val request = NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .setNetworkSpecifier(specifier)
+                    .build()
+
+                val cm = context!!.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+                networkCallback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        // Bind process to this network so TCP connections go over SoftAP
+                        cm.bindProcessToNetwork(network)
+                        val iface = cm.getLinkProperties(network)?.interfaceName ?: "softap"
+
+                        // Find the gateway/host IP (typically .1 on the AP subnet)
+                        val hostIp = findApHostIp(network, cm) ?: "192.168.43.1"
+                        _clientState.value = ClientJoinState.Connected(hostIp)
+                        Log.i(TAG, "Bound process to SoftAP network: $network, iface=$iface, hostIp=$hostIp")
+                    }
+
+                    override fun onUnavailable() {
+                        _clientState.value = ClientJoinState.Failed("Network request denied or timed out")
+                        Log.e(TAG, "SoftAP join failed: unavailable")
+                    }
+
+                    override fun onLost(network: Network) {
+                        cm.bindProcessToNetwork(null)  // Unbind
+                        _clientState.value = ClientJoinState.Failed("SoftAP network lost")
+                        Log.i(TAG, "Unbound process from SoftAP network (onLost)")
                     }
                 }
-                .build()
-            
-            val request = NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .setNetworkSpecifier(specifier)
-                .build()
-            
-            val cm = context!!.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            
-            networkCallback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    // Bind process to this network so TCP connections go over SoftAP
-                    cm.bindProcessToNetwork(network)
-                    val iface = cm.getLinkProperties(network)?.interfaceName ?: "softap"
-                    
-                    // Find the gateway/host IP (typically .1 on the AP subnet)
-                    val hostIp = findApHostIp(network, cm) ?: "192.168.43.1"
-                    _clientState.value = ClientJoinState.Connected(hostIp)
-                    Log.i(TAG, "Bound process to SoftAP network: $network, iface=$iface, hostIp=$hostIp")
-                }
-                
-                override fun onUnavailable() {
-                    _clientState.value = ClientJoinState.Failed("Network request denied or timed out")
-                    Log.e(TAG, "SoftAP join failed: unavailable")
-                }
-                
-                override fun onLost(network: Network) {
-                    cm.bindProcessToNetwork(null)  // Unbind
-                    _clientState.value = ClientJoinState.Failed("SoftAP network lost")
-                    Log.i(TAG, "Unbound process from SoftAP network (onLost)")
-                }
+
+                cm.requestNetwork(request, networkCallback!!, handler, 30_000)  // 30s timeout
+            } catch (e: SecurityException) {
+                _clientState.value = ClientJoinState.Failed("Missing CHANGE_NETWORK_STATE permission")
+                Log.e(TAG, "SecurityException joining network", e)
+            } catch (e: Throwable) {
+                _clientState.value = ClientJoinState.Failed(e.message ?: "Failed to join network")
+                Log.e(TAG, "Error joining network", e)
             }
-            
-            cm.requestNetwork(request, networkCallback!!, handler, 30_000)  // 30s timeout
         } else {
-            // API 26-28: Cannot programmatically join. Show credentials for manual join.
+            // API 24-28: WifiNetworkSpecifier doesn't exist. Show credentials for manual join.
             _clientState.value = ClientJoinState.Failed("Manual Wi-Fi join required on Android ${Build.VERSION.SDK_INT}")
         }
     }

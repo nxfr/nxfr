@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -73,10 +74,19 @@ fun DesertSheet(
     // QR Scanner launcher
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let { content ->
-            val parsed = NxfrQrTicketParser.parse(content)
-            if (parsed is QrScanResult.DesertTicket) {
-                orchestrator?.joinFromQr(parsed.ssid, parsed.pw.ifEmpty { null }, parsed.ip, parsed.port)
-                NxfrService.setDesertSessionActive(true)
+            try {
+                val parsed = NxfrQrTicketParser.parse(content)
+                if (parsed is QrScanResult.DesertTicket) {
+                    orchestrator?.joinFromQr(parsed.ssid, parsed.pw.ifEmpty { null }, parsed.ip, parsed.port)
+                    NxfrService.setDesertSessionActive(true)
+                }
+            } catch (e: Throwable) {
+                Log.e("DesertSheet", "QR scan handler error", e)
+                // Route to Failed state so the UI shows the error banner
+                orchestrator?.let {
+                    // Force reset so the user sees the error
+                    it.reset()
+                }
             }
         }
     }
