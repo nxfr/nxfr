@@ -19,10 +19,14 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -468,6 +472,8 @@ fun WebShareScreen(
             }
         }
 
+        CertWarningCard(context)
+
         Spacer(modifier = Modifier.height(16.dp))
 
         // URL display card
@@ -725,5 +731,81 @@ private fun generateQrBitmap(content: String): Bitmap? {
         bmp
     } catch (_: Exception) {
         null
+    }
+}
+
+@Composable
+fun CertWarningCard(context: Context) {
+    val prefs = context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE)
+    var isExpanded by remember { mutableStateOf(!prefs.getBoolean("cert_warning_dismissed", false)) }
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, ComposeColor(0xFF334155))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().background(ComposeColor(0xFF0F172A))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        isExpanded = !isExpanded
+                        prefs.edit().putBoolean("cert_warning_dismissed", !isExpanded).apply()
+                    }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "⚠️ Browser certificate warning — tap for help",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = ComposeColor(0xFF00E5FF),
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(
+                    imageVector = if (isExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = null,
+                    tint = ComposeColor(0xFF94A3B8)
+                )
+            }
+            
+            AnimatedVisibility(visible = isExpanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(ComposeColor(0xFF1E293B))
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "This device uses a self-signed TLS certificate. Your browser will show a warning — this is normal for local transfers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFFE2E8F0)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "• Chrome / Edge\n  Tap \"Advanced\" → \"Proceed to [IP] (unsafe)\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFFE2E8F0),
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "• Safari (iOS)\n  Tap \"Show Details\" → \"Visit this website\" → Confirm",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFFE2E8F0),
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "• Firefox\n  Tap \"Advanced\" → \"Accept the Risk and Continue\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFFE2E8F0),
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
     }
 }

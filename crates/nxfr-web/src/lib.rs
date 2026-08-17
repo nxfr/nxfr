@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -77,6 +77,171 @@ impl Drop for TmpFileGuard {
     }
 }
 
+/// Parses "bytes=start-end" or "bytes=start-" from a Range header.
+/// Returns inclusive (start, end) byte offsets, or None if malformed.
+fn parse_range_header(header_val: &str, file_size: u64) -> Option<(u64, u64)> {
+    let s = header_val.trim();
+    if !s.starts_with("bytes=") {
+        return None;
+    }
+    let range_spec = &s[6..];
+    let range_part = range_spec.split(',').next()?.trim();
+    let (start_str, end_str) = range_part.split_once('-')?;
+
+    if start_str.is_empty() {
+        // Suffix range: "bytes=-500" means last 500 bytes
+        let suffix_len: u64 = end_str.parse().ok()?;
+        if suffix_len == 0 || suffix_len > file_size {
+            return None;
+        }
+        Some((file_size - suffix_len, file_size - 1))
+    } else {
+        let start: u64 = start_str.parse().ok()?;
+        let end = if end_str.is_empty() {
+            file_size - 1
+        } else {
+            end_str.parse::<u64>().ok()?
+        };
+        if start > end || start >= file_size {
+            return None;
+        }
+        Some((start, end.min(file_size - 1)))
+    }
+}
+
+/// Writes a ZIP local file header with data descriptor flag (bit 3).
+/// CRC32 and sizes are set to 0; actual values go in the data descriptor after file data.
+async fn write_zip_local_header(
+    stream: &mut (impl AsyncWriteExt + Unpin),
+    filename: &[u8],
+    _file_size: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut header = Vec::with_capacity(30 + filename.len());
+    // Local file header signature
+    header.extend_from_slice(&0x04034b50u32.to_le_bytes());
+    // Version needed to extract (2.0)
+    header.extend_from_slice(&20u16.to_le_bytes());
+    // General purpose bit flag (bit 3 = data descriptor)
+    header.extend_from_slice(&0x0008u16.to_le_bytes());
+    // Compression method (0 = STORE)
+    header.extend_from_slice(&0u16.to_le_bytes());
+    // Last mod file time (00:00:00)
+    header.extend_from_slice(&0u16.to_le_bytes());
+    // Last mod file date (1980-01-01)
+    header.extend_from_slice(&0x0021u16.to_le_bytes());
+    // CRC-32 (0, will be in data descriptor)
+    header.extend_from_slice(&0u32.to_le_bytes());
+    // Compressed size (0, will be in data descriptor)
+    header.extend_from_slice(&0u32.to_le_bytes());
+    // Uncompressed size (0, will be in data descriptor)
+    header.extend_from_slice(&0u32.to_le_bytes());
+    // File name length
+    header.extend_from_slice(&(filename.len() as u16).to_le_bytes());
+    // Extra field length
+    header.extend_from_slice(&0u16.to_le_bytes());
+    // File name
+    header.extend_from_slice(filename);
+    stream.write_all(&header).await?;
+    Ok(())
+}
+
+/// Writes a ZIP data descriptor after file data (with signature).
+async fn write_zip_data_descriptor(
+    stream: &mut (impl AsyncWriteExt + Unpin),
+    crc32: u32,
+    size: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut desc = Vec::with_capacity(16);
+    // Data descriptor signature
+    desc.extend_from_slice(&0x08074b50u32.to_le_bytes());
+    // CRC-32
+    desc.extend_from_slice(&crc32.to_le_bytes());
+    // Compressed size (same as uncompressed for STORE)
+    desc.extend_from_slice(&(size as u32).to_le_bytes());
+    // Uncompressed size
+    desc.extend_from_slice(&(size as u32).to_le_bytes());
+    stream.write_all(&desc).await?;
+    Ok(())
+}
+
+/// Writes a ZIP central directory file header.
+async fn write_zip_central_entry(
+    stream: &mut (impl AsyncWriteExt + Unpin),
+    filename: &[u8],
+    file_size: u64,
+    crc32: u32,
+    local_offset: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut entry = Vec::with_capacity(46 + filename.len());
+    // Central directory file header signature
+    entry.extend_from_slice(&0x02014b50u32.to_le_bytes());
+    // Version made by (2.0, Unix)
+    entry.extend_from_slice(&0x0314u16.to_le_bytes());
+    // Version needed to extract (2.0)
+    entry.extend_from_slice(&20u16.to_le_bytes());
+    // General purpose bit flag (bit 3 = data descriptor)
+    entry.extend_from_slice(&0x0008u16.to_le_bytes());
+    // Compression method (0 = STORE)
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // Last mod file time
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // Last mod file date (1980-01-01)
+    entry.extend_from_slice(&0x0021u16.to_le_bytes());
+    // CRC-32
+    entry.extend_from_slice(&crc32.to_le_bytes());
+    // Compressed size
+    entry.extend_from_slice(&(file_size as u32).to_le_bytes());
+    // Uncompressed size
+    entry.extend_from_slice(&(file_size as u32).to_le_bytes());
+    // File name length
+    entry.extend_from_slice(&(filename.len() as u16).to_le_bytes());
+    // Extra field length
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // File comment length
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // Disk number start
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // Internal file attributes
+    entry.extend_from_slice(&0u16.to_le_bytes());
+    // External file attributes
+    entry.extend_from_slice(&0u32.to_le_bytes());
+    // Relative offset of local header
+    entry.extend_from_slice(&(local_offset as u32).to_le_bytes());
+    // File name
+    entry.extend_from_slice(filename);
+    stream.write_all(&entry).await?;
+    Ok(())
+}
+
+/// Writes the ZIP end of central directory record.
+async fn write_zip_eocd(
+    stream: &mut (impl AsyncWriteExt + Unpin),
+    entry_count: u16,
+    central_dir_size: u32,
+    central_dir_offset: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut eocd = Vec::with_capacity(22);
+    // End of central directory signature
+    eocd.extend_from_slice(&0x06054b50u32.to_le_bytes());
+    // Number of this disk
+    eocd.extend_from_slice(&0u16.to_le_bytes());
+    // Disk where central directory starts
+    eocd.extend_from_slice(&0u16.to_le_bytes());
+    // Number of entries on this disk
+    eocd.extend_from_slice(&entry_count.to_le_bytes());
+    // Total number of entries
+    eocd.extend_from_slice(&entry_count.to_le_bytes());
+    // Size of central directory
+    eocd.extend_from_slice(&central_dir_size.to_le_bytes());
+    // Offset of start of central directory
+    eocd.extend_from_slice(&central_dir_offset.to_le_bytes());
+    // ZIP file comment length
+    eocd.extend_from_slice(&0u16.to_le_bytes());
+    stream.write_all(&eocd).await?;
+    Ok(())
+}
+
+
 const HTML_PAGE: &str = r#"<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -135,6 +300,8 @@ Connected Device Fingerprint:<br>
 </div>
 <div class="drop" id="drop">Click or drag files here</div>
 <input type="file" id="file" multiple>
+<input type="file" id="folder" webkitdirectory directory multiple style="display:none">
+<div style="text-align:center;margin-top:8px"><button type="button" style="background:transparent;color:#94A3B8;border:1px solid #334155;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px" onclick="document.getElementById('folder').click()">Select Folder</button></div>
 <div id="current-file" class="current-file" style="display:none"></div>
 <div class="progress" style="display:none" id="pg"><div class="bar" id="bar"></div></div>
 <p class="status" id="st"></p>
@@ -211,11 +378,24 @@ function fmtBytes(b){
   const i=Math.floor(Math.log(b)/Math.log(1024));
   return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
 }
+function fmtSpeed(bps){
+  if(bps<=0) return '...';
+  if(bps>=1073741824) return (bps/1073741824).toFixed(1)+' GB/s';
+  if(bps>=1048576) return (bps/1048576).toFixed(1)+' MB/s';
+  if(bps>=1024) return (bps/1024).toFixed(0)+' KB/s';
+  return bps.toFixed(0)+' B/s';
+}
+function fmtDuration(s){
+  if(s<60) return Math.ceil(s)+'s';
+  const m=Math.floor(s/60),r=Math.ceil(s%60);
+  return m+':'+String(r).padStart(2,'0');
+}
 function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 const drop=document.getElementById('drop'),fi=document.getElementById('file'),
+folderInput=document.getElementById('folder'),
 pg=document.getElementById('pg'),bar=document.getElementById('bar'),st=document.getElementById('st'),
 curFileEl=document.getElementById('current-file'),cancelBtn=document.getElementById('btn-cancel');
 
@@ -226,19 +406,70 @@ let currentFile = null;
 
 drop.onclick=()=>fi.click();
 fi.onchange=e=>{if(e.target.files&&e.target.files.length){enqueueFiles(e.target.files);fi.value='';}};
+if(folderInput) folderInput.onchange=e=>{
+  if(e.target.files&&e.target.files.length){
+    for(let i=0;i<e.target.files.length;i++){
+      const f=e.target.files[i];
+      const entry={file:f,name:f.name,size:f.size,relativePath:f.webkitRelativePath||f.name};
+      uploadQueue.push(entry);
+    }
+    renderQueue();
+    if(!isUploading) processQueue();
+    folderInput.value='';
+  }
+};
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
 drop.addEventListener('drop',ev=>{
   ev.preventDefault();
   drop.classList.remove('over');
-  if(ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files.length){
+  if(ev.dataTransfer&&ev.dataTransfer.items&&ev.dataTransfer.items.length){
+    const items=ev.dataTransfer.items;
+    let hasEntries=false;
+    for(let i=0;i<items.length;i++){
+      if(items[i].webkitGetAsEntry){
+        const entry=items[i].webkitGetAsEntry();
+        if(entry){
+          hasEntries=true;
+          traverseEntry(entry,'');
+        }
+      }
+    }
+    if(!hasEntries&&ev.dataTransfer.files&&ev.dataTransfer.files.length){
+      enqueueFiles(ev.dataTransfer.files);
+    }
+  } else if(ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files.length){
     enqueueFiles(ev.dataTransfer.files);
   }
 });
 
+function traverseEntry(entry, path){
+  if(entry.isFile){
+    entry.file(f=>{
+      const rp=path?path+'/'+f.name:f.name;
+      const wrapped={file:f,name:f.name,size:f.size,relativePath:rp};
+      uploadQueue.push(wrapped);
+      renderQueue();
+      if(!isUploading) processQueue();
+    });
+  } else if(entry.isDirectory){
+    const reader=entry.createReader();
+    const readBatch=()=>{
+      reader.readEntries(entries=>{
+        if(entries.length===0) return;
+        for(const e of entries){
+          traverseEntry(e, path?path+'/'+entry.name:entry.name);
+        }
+        readBatch();
+      });
+    };
+    readBatch();
+  }
+}
+
 function enqueueFiles(files){
   for(let i=0;i<files.length;i++){
-    uploadQueue.push(files[i]);
+    uploadQueue.push({file:files[i],name:files[i].name,size:files[i].size,relativePath:files[i].name});
   }
   renderQueue();
   if(!isUploading){
@@ -264,7 +495,7 @@ function renderQueue(){
     qBox.style.display = 'block';
     qCount.textContent = uploadQueue.length;
     qList.innerHTML = uploadQueue.map((f, i) =>
-      `<div class="queue-item"><span class="queue-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${fmtBytes(f.size)})</span><button type="button" class="btn-remove" onclick="removeFromQueue(${i})">✕</button></div>`
+      `<div class="queue-item"><span class="queue-name" title="${escapeHtml(f.relativePath||f.name)}">${escapeHtml(f.relativePath||f.name)} (${fmtBytes(f.size)})</span><button type="button" class="btn-remove" onclick="removeFromQueue(${i})">✕</button></div>`
     ).join('');
   } else {
     qBox.style.display = 'none';
@@ -301,11 +532,12 @@ function processQueue(){
   currentFile = uploadQueue.shift();
   renderQueue();
 
+  const displayName = currentFile.relativePath || currentFile.name;
   if(curFileEl){
     curFileEl.style.display = 'block';
-    curFileEl.textContent = 'Uploading: ' + currentFile.name + ' (' + fmtBytes(currentFile.size) + ')';
+    curFileEl.textContent = 'Uploading: ' + displayName + ' (' + fmtBytes(currentFile.size) + ')';
   }
-  drop.textContent = 'Uploading ' + currentFile.name + '...';
+  drop.textContent = 'Uploading ' + displayName + '...';
 
   pg.style.display = 'block';
   bar.style.width = '0%';
@@ -314,17 +546,29 @@ function processQueue(){
   if(cancelBtn) cancelBtn.style.display = 'inline-block';
 
   const fd = new FormData();
-  fd.append('file', currentFile);
+  const uploadName = currentFile.relativePath || currentFile.name;
+  fd.append('file', currentFile.file || currentFile, uploadName);
 
   currentXhr = new XMLHttpRequest();
   currentXhr.open('POST', '/upload' + (t ? '?t=' + encodeURIComponent(t) : ''));
   if(t) currentXhr.setRequestHeader('Authorization', 'Bearer ' + t);
 
+  let lastTime = Date.now(), lastBytes = 0, smoothSpeed = 0;
   currentXhr.upload.onprogress = e => {
     if(e.lengthComputable){
       const p = Math.round(e.loaded / e.total * 100);
       bar.style.width = p + '%';
-      st.textContent = p + '% · ' + fmtBytes(e.loaded) + ' / ' + fmtBytes(e.total);
+      const now = Date.now();
+      const dt = (now - lastTime) / 1000;
+      if(dt >= 0.5){
+        const rawSpeed = (e.loaded - lastBytes) / dt;
+        smoothSpeed = smoothSpeed > 0 ? 0.7 * smoothSpeed + 0.3 * rawSpeed : rawSpeed;
+        lastTime = now; lastBytes = e.loaded;
+        const remaining = e.total - e.loaded;
+        const eta = smoothSpeed > 0 ? remaining / smoothSpeed : 0;
+        const etaStr = eta > 0 ? ' \u00b7 ' + fmtDuration(eta) + ' left' : '';
+        st.textContent = p + '% \u00b7 ' + fmtBytes(e.loaded) + '/' + fmtBytes(e.total) + ' \u00b7 ' + fmtSpeed(smoothSpeed) + etaStr;
+      }
     }
   };
 
@@ -531,7 +775,20 @@ function fmtBytes(b){
   const i=Math.floor(Math.log(b)/Math.log(1024));
   return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
 }
+function fmtSpeed(bps){
+  if(bps<=0) return '...';
+  if(bps>=1073741824) return (bps/1073741824).toFixed(1)+' GB/s';
+  if(bps>=1048576) return (bps/1048576).toFixed(1)+' MB/s';
+  if(bps>=1024) return (bps/1024).toFixed(0)+' KB/s';
+  return bps.toFixed(0)+' B/s';
+}
+function fmtDuration(s){
+  if(s<60) return Math.ceil(s)+'s';
+  const m=Math.floor(s/60),r=Math.ceil(s%60);
+  return m+':'+String(r).padStart(2,'0');
+}
 
+const BLOB_THRESHOLD = 104857600; // 100MB
 const downloadControllers = {};
 
 const list = document.getElementById('file-list');
@@ -598,39 +855,37 @@ async function downloadItem(id) {
   if (downloadControllers[id]) {
     downloadControllers[id].abort();
     delete downloadControllers[id];
-    if (pgStatus) {
-      pgStatus.textContent = 'Download cancelled';
-      pgStatus.style.color = '#94A3B8';
-    }
+    if (pgStatus) { pgStatus.textContent = 'Download cancelled'; pgStatus.style.color = '#94A3B8'; }
     if (pgBar) pgBar.style.background = '#334155';
-    if (btn) {
-      btn.textContent = 'Download';
-      btn.className = 'btn';
-      btn.disabled = false;
-    }
+    if (btn) { btn.textContent = 'Download'; btn.className = 'btn'; btn.disabled = false; }
     return;
   }
 
+  const url = `/dl/${item.id}` + (t ? `?t=${encodeURIComponent(t)}` : '');
+
+  // P1: Large files (>100MB) — hand off to browser native download manager
+  if (item.size > BLOB_THRESHOLD) {
+    if (btn) { btn.textContent = 'Downloading...'; btn.disabled = true; btn.className = 'btn'; }
+    if (pgTrack) pgTrack.style.display = 'block';
+    if (pgStatus) { pgStatus.style.display = 'block'; pgStatus.textContent = 'Downloading via browser...'; pgStatus.style.color = '#94A3B8'; }
+    if (pgBar) { pgBar.style.width = '100%'; pgBar.style.background = '#00E5FF'; }
+    window.location.assign(url + (url.includes('?') ? '&' : '?') + 'dl=1');
+    setTimeout(() => {
+      if (btn) { btn.textContent = 'Downloaded ✓'; btn.className = 'btn btn-success'; btn.disabled = false; }
+      if (pgStatus) pgStatus.textContent = 'Sent to browser download manager';
+    }, 3000);
+    return;
+  }
+
+  // Files <=100MB: fetch + ReadableStream with progress and speed/ETA
   const controller = new AbortController();
   downloadControllers[id] = controller;
 
-  if (btn) {
-    btn.textContent = 'Cancel';
-    btn.className = 'btn btn-cancel';
-    btn.disabled = false;
-  }
+  if (btn) { btn.textContent = 'Cancel'; btn.className = 'btn btn-cancel'; btn.disabled = false; }
   if (pgTrack) pgTrack.style.display = 'block';
-  if (pgBar) {
-    pgBar.style.width = '0%';
-    pgBar.style.background = '#00E5FF';
-  }
-  if (pgStatus) {
-    pgStatus.style.display = 'block';
-    pgStatus.style.color = '#94A3B8';
-    pgStatus.textContent = 'Connecting...';
-  }
+  if (pgBar) { pgBar.style.width = '0%'; pgBar.style.background = '#00E5FF'; }
+  if (pgStatus) { pgStatus.style.display = 'block'; pgStatus.style.color = '#94A3B8'; pgStatus.textContent = 'Connecting...'; }
 
-  const url = `/dl/${item.id}` + (t ? `?t=${encodeURIComponent(t)}` : '');
   const headers = {};
   if (t) headers['Authorization'] = 'Bearer ' + t;
 
@@ -647,6 +902,7 @@ async function downloadItem(id) {
     const reader = response.body.getReader();
     const chunks = [];
     let receivedBytes = 0;
+    let lastTime = Date.now(), lastBytes = 0, smoothSpeed = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -657,17 +913,24 @@ async function downloadItem(id) {
       if (totalBytes > 0) {
         const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
         if (pgBar) pgBar.style.width = pct + '%';
-        if (pgStatus) pgStatus.textContent = `${pct}% · ${fmtBytes(receivedBytes)} / ${fmtBytes(totalBytes)}`;
+        const now = Date.now();
+        const dt = (now - lastTime) / 1000;
+        if (dt >= 0.5) {
+          const rawSpeed = (receivedBytes - lastBytes) / dt;
+          smoothSpeed = smoothSpeed > 0 ? 0.7 * smoothSpeed + 0.3 * rawSpeed : rawSpeed;
+          lastTime = now; lastBytes = receivedBytes;
+          const remaining = totalBytes - receivedBytes;
+          const eta = smoothSpeed > 0 ? remaining / smoothSpeed : 0;
+          const etaStr = eta > 0 ? ' \u00b7 ' + fmtDuration(eta) + ' left' : '';
+          if (pgStatus) pgStatus.textContent = `${pct}% \u00b7 ${fmtBytes(receivedBytes)}/${fmtBytes(totalBytes)} \u00b7 ${fmtSpeed(smoothSpeed)}${etaStr}`;
+        }
       } else {
         if (pgStatus) pgStatus.textContent = `${fmtBytes(receivedBytes)}`;
       }
     }
 
-    if (pgBar) {
-      pgBar.style.width = '100%';
-      pgBar.style.background = '#22C55E';
-    }
-    if (pgStatus) pgStatus.textContent = 'Complete ✓';
+    if (pgBar) { pgBar.style.width = '100%'; pgBar.style.background = '#22C55E'; }
+    if (pgStatus) pgStatus.textContent = 'Complete \u2713';
 
     const blob = new Blob(chunks, { type: item.mime || 'application/octet-stream' });
     const objectUrl = window.URL.createObjectURL(blob);
@@ -679,36 +942,16 @@ async function downloadItem(id) {
     a.remove();
     setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
 
-    if (btn) {
-      btn.textContent = 'Downloaded ✓';
-      btn.className = 'btn btn-success';
-      btn.disabled = false;
-    }
+    if (btn) { btn.textContent = 'Downloaded \u2713'; btn.className = 'btn btn-success'; btn.disabled = false; }
   } catch (err) {
     if (err.name === 'AbortError') {
-      if (pgStatus) {
-        pgStatus.style.display = 'block';
-        pgStatus.textContent = 'Download cancelled';
-        pgStatus.style.color = '#94A3B8';
-      }
+      if (pgStatus) { pgStatus.style.display = 'block'; pgStatus.textContent = 'Download cancelled'; pgStatus.style.color = '#94A3B8'; }
       if (pgBar) pgBar.style.background = '#334155';
-      if (btn) {
-        btn.textContent = 'Download';
-        btn.className = 'btn';
-        btn.disabled = false;
-      }
+      if (btn) { btn.textContent = 'Download'; btn.className = 'btn'; btn.disabled = false; }
     } else {
-      if (pgStatus) {
-        pgStatus.style.display = 'block';
-        pgStatus.textContent = 'Error: ' + err.message;
-        pgStatus.style.color = '#EF4444';
-      }
+      if (pgStatus) { pgStatus.style.display = 'block'; pgStatus.textContent = 'Error: ' + err.message; pgStatus.style.color = '#EF4444'; }
       if (pgBar) pgBar.style.background = '#EF4444';
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Retry';
-        btn.className = 'btn';
-      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; btn.className = 'btn'; }
     }
   } finally {
     delete downloadControllers[id];
@@ -717,15 +960,12 @@ async function downloadItem(id) {
 
 async function downloadAll() {
   const btnAll = document.getElementById('btn-all');
-  if (btnAll) btnAll.disabled = true;
-  for (const item of manifest) {
-    await downloadItem(item.id);
-    await new Promise(r => setTimeout(r, 200));
-  }
-  if (btnAll) {
-    btnAll.disabled = false;
-    btnAll.textContent = 'All Downloads Complete ✓';
-  }
+  if (btnAll) { btnAll.disabled = true; btnAll.textContent = 'Preparing ZIP...'; }
+  const url = '/dl/all.zip' + (t ? '?t=' + encodeURIComponent(t) : '');
+  window.location.assign(url);
+  setTimeout(() => {
+    if (btnAll) { btnAll.disabled = false; btnAll.textContent = 'Download All as ZIP'; }
+  }, 3000);
 }
 </script></body></html>"#;
 
@@ -765,6 +1005,8 @@ pub struct WebServer {
     pub fingerprint: String,
     pub share_manifest: Option<Vec<WebShareItem>>,
     pub failed_attempts: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
+    pub max_downloads: Option<u32>,
+    pub download_count: Arc<AtomicUsize>,
 }
 
 impl WebServer {
@@ -784,6 +1026,7 @@ impl WebServer {
             fingerprint,
             share_manifest,
             get_default_expiry_duration(),
+            None,
         )
     }
 
@@ -795,11 +1038,13 @@ impl WebServer {
         fingerprint: String,
         share_manifest: Option<Vec<WebShareItem>>,
         expiry_duration: Duration,
+        max_downloads: Option<u32>,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let token = generate_token();
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let active_transfers = Arc::new(AtomicUsize::new(0));
+        let download_count = Arc::new(AtomicUsize::new(0));
         (
             Self {
                 token,
@@ -814,6 +1059,8 @@ impl WebServer {
                 fingerprint,
                 share_manifest,
                 failed_attempts: Arc::new(Mutex::new(HashMap::new())),
+                max_downloads,
+                download_count,
             },
             cancel,
         )
@@ -893,6 +1140,7 @@ impl WebServer {
             fp_formatted,
             None,
             expiry_duration,
+            None,
         );
         let token = server.token.clone();
         let last_activity_clone = server.last_activity.clone();
@@ -1073,6 +1321,7 @@ impl WebServer {
             fp_formatted,
             Some(share_manifest),
             expiry_duration,
+            None,
         );
         let token = server.token.clone();
         let last_activity_clone = server.last_activity.clone();
@@ -1375,10 +1624,14 @@ impl WebServer {
 
         if method == "GET" && path.starts_with("/dl/") {
             let mut auth_token: Option<String> = None;
+            let mut range_header: Option<String> = None;
             for line in lines {
                 let lower = line.to_lowercase();
                 if lower.starts_with("authorization: bearer ") {
                     auth_token = Some(line[22..].trim().to_string());
+                }
+                if lower.starts_with("range:") {
+                    range_header = Some(line[6..].trim().to_string());
                 }
             }
             if auth_token.is_none() && !query.is_empty() {
@@ -1405,6 +1658,121 @@ impl WebServer {
                 let body = b"{\"error\": \"Invalid token or PIN\"}";
                 return Self::send_response(stream, "403 Forbidden", "application/json", body)
                     .await;
+            }
+
+            // P3: Handle /dl/all.zip — streamed ZIP of all shared files
+            if path == "/dl/all.zip" {
+                let manifest = match &self.share_manifest {
+                    Some(m) => m,
+                    None => {
+                        let body = b"{\"error\": \"Download mode not active\"}";
+                        return Self::send_response(stream, "404 Not Found", "application/json", body).await;
+                    }
+                };
+
+                let _transfer_guard = ActiveTransferGuard::new(self.active_transfers.clone());
+
+                let header = "HTTP/1.1 200 OK\r\n\
+                     Content-Type: application/zip\r\n\
+                     Content-Disposition: attachment; filename=\"NXFR_Share.zip\"\r\n\
+                     Transfer-Encoding: chunked\r\n\
+                     Connection: close\r\n\
+                     \r\n";
+                stream.write_all(header.as_bytes()).await?;
+
+                // We'll collect central directory entries as we go
+                struct ZipEntry {
+                    filename: Vec<u8>,
+                    file_size: u64,
+                    crc32: u32,
+                    local_offset: u64,
+                }
+                let mut entries: Vec<ZipEntry> = Vec::new();
+                let mut offset: u64 = 0;
+
+                for item in manifest.iter() {
+                    let file_path = PathBuf::from(&item.path);
+                    if !file_path.exists() {
+                        log::warn!("[nxfr-web] [{}] ZIP: skipping missing file '{}'", ip, item.name);
+                        continue;
+                    }
+
+                    let filename = sanitize_filename(&item.name);
+                    let filename_bytes = filename.as_bytes().to_vec();
+
+                    // Write local file header
+                    let local_offset = offset;
+                    write_zip_local_header(stream, &filename_bytes, item.size).await?;
+                    offset += 30 + filename_bytes.len() as u64;
+
+                    // Stream file data and compute CRC32
+                    let mut f = tokio::fs::File::open(&file_path).await?;
+                    let mut file_buf = [0u8; 65536];
+                    let mut hasher = crc32fast::Hasher::new();
+                    let mut file_written: u64 = 0;
+                    loop {
+                        let n = f.read(&mut file_buf).await?;
+                        if n == 0 { break; }
+                        stream.write_all(&file_buf[..n]).await?;
+                        hasher.update(&file_buf[..n]);
+                        file_written += n as u64;
+                        self.bump_activity().await;
+                    }
+                    let crc = hasher.finalize();
+                    offset += file_written;
+
+                    // Write data descriptor
+                    write_zip_data_descriptor(stream, crc, file_written).await?;
+                    offset += 16;
+
+                    entries.push(ZipEntry {
+                        filename: filename_bytes,
+                        file_size: file_written,
+                        crc32: crc,
+                        local_offset,
+                    });
+                }
+
+                // Write central directory
+                let central_dir_offset = offset;
+                for entry in &entries {
+                    write_zip_central_entry(
+                        stream,
+                        &entry.filename,
+                        entry.file_size,
+                        entry.crc32,
+                        entry.local_offset,
+                    ).await?;
+                    offset += 46 + entry.filename.len() as u64;
+                }
+                let central_dir_size = offset - central_dir_offset;
+
+                // Write EOCD
+                write_zip_eocd(
+                    stream,
+                    entries.len() as u16,
+                    central_dir_size as u32,
+                    central_dir_offset as u32,
+                ).await?;
+
+                stream.flush().await?;
+                let _ = stream.shutdown().await;
+
+                // P7: Count this as a download for quota purposes
+                let count = self.download_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(max) = self.max_downloads {
+                    if count as u32 >= max {
+                        log::info!("[nxfr-web] Download quota reached ({}/{}), shutting down", count, max);
+                        self.cancel.cancel();
+                    }
+                }
+
+                log::info!(
+                    "[nxfr-web] [{}] 200 OK: Streamed ZIP archive ({} files)",
+                    ip,
+                    entries.len()
+                );
+                return Ok(());
             }
 
             let id_str = &path[4..];
@@ -1484,16 +1852,79 @@ impl WebServer {
             } else {
                 &item.mime
             };
+            let safe_name = sanitize_filename(&item.name);
+
+            // P2: Handle Range requests
+            if let Some(range_val) = &range_header {
+                match parse_range_header(range_val, item.size) {
+                    Some((start, end)) => {
+                        let content_length = end - start + 1;
+                        let header = format!(
+                            "HTTP/1.1 206 Partial Content\r\n\
+                             Content-Type: {}\r\n\
+                             Content-Length: {}\r\n\
+                             Content-Range: bytes {}-{}/{}\r\n\
+                             Accept-Ranges: bytes\r\n\
+                             Content-Disposition: attachment; filename=\"{}\"\r\n\
+                             Connection: close\r\n\
+                             \r\n",
+                            mime, content_length, start, end, item.size, safe_name
+                        );
+                        stream.write_all(header.as_bytes()).await?;
+
+                        f.seek(std::io::SeekFrom::Start(start)).await?;
+
+                        let _transfer_guard = ActiveTransferGuard::new(self.active_transfers.clone());
+                        let mut file_buf = [0u8; 65536];
+                        let mut remaining = content_length;
+                        let mut total_sent: u64 = 0;
+                        while remaining > 0 {
+                            let to_read = std::cmp::min(remaining as usize, file_buf.len());
+                            let n = f.read(&mut file_buf[..to_read]).await?;
+                            if n == 0 { break; }
+                            stream.write_all(&file_buf[..n]).await?;
+                            total_sent += n as u64;
+                            remaining -= n as u64;
+                            self.bump_activity().await;
+                        }
+                        stream.flush().await?;
+                        let _ = stream.shutdown().await;
+
+                        log::info!(
+                            "[nxfr-web] [{}] 206 Partial Content: '{}' bytes {}-{}/{} ({} sent)",
+                            ip, item.name, start, end, item.size, total_sent
+                        );
+                        return Ok(());
+                    }
+                    None => {
+                        // Invalid range
+                        let header = format!(
+                            "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                             Content-Range: bytes */{}\r\n\
+                             Connection: close\r\n\
+                             \r\n",
+                            item.size
+                        );
+                        stream.write_all(header.as_bytes()).await?;
+                        stream.flush().await?;
+                        let _ = stream.shutdown().await;
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Full file response (200 OK) with Accept-Ranges
             let header = format!(
                 "HTTP/1.1 200 OK\r\n\
                  Content-Type: {}\r\n\
                  Content-Length: {}\r\n\
+                 Accept-Ranges: bytes\r\n\
                  Content-Disposition: attachment; filename=\"{}\"\r\n\
                  Connection: close\r\n\
                  \r\n",
                 mime,
                 item.size,
-                sanitize_filename(&item.name)
+                safe_name
             );
 
             stream.write_all(header.as_bytes()).await?;
@@ -1512,6 +1943,15 @@ impl WebServer {
             }
             stream.flush().await?;
             let _ = stream.shutdown().await;
+
+            // P7: Count this download for quota purposes
+            let count = self.download_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(max) = self.max_downloads {
+                if count as u32 >= max {
+                    log::info!("[nxfr-web] Download quota reached ({}/{}), shutting down", count, max);
+                    self.cancel.cancel();
+                }
+            }
 
             log::info!(
                 "[nxfr-web] [{}] 200 OK: Completed streaming '{}' (id={}, {} / {} bytes)",
@@ -1800,12 +2240,59 @@ impl WebServer {
 
             let sha_hex = hex::encode(hasher.finalize());
 
-            // 4. Sanitize filename using existing path jail
+            // 4. Sanitize filename with subdirectory support (P5: folder uploads)
             let raw_name = original_filename
                 .unwrap_or_else(|| format!("upload_{}.bin", hex::encode(&rand_bytes[..4])));
-            let clean_name = sanitize_filename(&raw_name);
 
-            let mut final_path = inbox_dir.join(&clean_name);
+            // Parse relative path: "photos/vacation/img001.jpg" -> subdir + filename
+            let (sub_dir, clean_name) = if raw_name.contains('/') {
+                // Security: reject absolute paths, .., and excessive nesting
+                let components: Vec<&str> = raw_name
+                    .split('/')
+                    .filter(|c| !c.is_empty() && *c != "." && *c != "..")
+                    .collect();
+                if components.len() > 11 {
+                    log::warn!(
+                        "[nxfr-web] [{}] 400 Bad Request: Path too deeply nested ({})",
+                        ip,
+                        components.len()
+                    );
+                    let body = b"{\"error\": \"Path too deeply nested (max 10 levels)\"}";
+                    return Self::send_response(
+                        stream,
+                        "400 Bad Request",
+                        "application/json",
+                        body,
+                    )
+                    .await;
+                }
+                if components.is_empty() {
+                    (None, sanitize_filename(&raw_name))
+                } else if components.len() == 1 {
+                    (None, sanitize_filename(components[0]))
+                } else {
+                    let dir_parts: Vec<String> = components[..components.len() - 1]
+                        .iter()
+                        .map(|c| sanitize_filename(c))
+                        .collect();
+                    let file_part = sanitize_filename(components[components.len() - 1]);
+                    (Some(dir_parts.join("/")), file_part)
+                }
+            } else {
+                (None, sanitize_filename(&raw_name))
+            };
+
+            // Resolve target directory (inbox + optional subdirectory)
+            let target_dir = match &sub_dir {
+                Some(sd) => {
+                    let d = inbox_dir.join(sd);
+                    tokio::fs::create_dir_all(&d).await?;
+                    d
+                }
+                None => inbox_dir.clone(),
+            };
+
+            let mut final_path = target_dir.join(&clean_name);
             if final_path.exists() {
                 let stem = std::path::Path::new(&clean_name)
                     .file_stem()
@@ -1817,10 +2304,10 @@ impl WebServer {
                     .map(|e| format!(".{}", e))
                     .unwrap_or_default();
                 let mut counter = 1;
-                let mut candidate = inbox_dir.join(format!("{} ({}){}", stem, counter, ext));
+                let mut candidate = target_dir.join(format!("{} ({}){}", stem, counter, ext));
                 while candidate.exists() {
                     counter += 1;
-                    candidate = inbox_dir.join(format!("{} ({}){}", stem, counter, ext));
+                    candidate = target_dir.join(format!("{} ({}){}", stem, counter, ext));
                 }
                 final_path = candidate;
             }

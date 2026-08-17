@@ -20,3 +20,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
 sha2 = { workspace = true }
+crc32fast = { workspace = true }
