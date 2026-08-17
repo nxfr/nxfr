@@ -15,6 +15,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Link
@@ -236,6 +238,26 @@ fun WebShareScreen(
 
     var activeTransfers by remember { mutableIntStateOf(0) }
 
+    // Approval gate state
+    data class PendingRequestUi(
+        val sessionId: String,
+        val ip: String,
+        val userAgent: String,
+        val timestamp: Long
+    )
+    var pendingRequests by remember { mutableStateOf<List<PendingRequestUi>>(emptyList()) }
+    var autoAcceptRequests by remember { mutableStateOf(prefs.getBoolean("web_share_auto_accept", false)) }
+
+    // Sync auto-accept to native on start
+    LaunchedEffect(manifestJsonStr, autoAcceptRequests) {
+        if (manifestJsonStr == null) return@LaunchedEffect
+        try {
+            withContext(Dispatchers.IO) {
+                NxfrService.NxfrBridge.nxfr_web_set_auto_accept(autoAcceptRequests)
+            }
+        } catch (_: Throwable) {}
+    }
+
     // 10-minute silence timer (defers shutdown while active transfers are in flight)
     LaunchedEffect(manifestJsonStr) {
         if (manifestJsonStr == null) return@LaunchedEffect
@@ -247,6 +269,24 @@ fun WebShareScreen(
                 val isRunning = obj.optBoolean("running", true)
                 val active = obj.optInt("active_transfers", 0)
                 activeTransfers = active
+
+                // Parse pending requests
+                val pendingArr = obj.optJSONArray("pending_requests")
+                if (pendingArr != null) {
+                    val reqs = mutableListOf<PendingRequestUi>()
+                    for (i in 0 until pendingArr.length()) {
+                        val r = pendingArr.getJSONObject(i)
+                        reqs.add(PendingRequestUi(
+                            sessionId = r.optString("session_id", ""),
+                            ip = r.optString("ip", ""),
+                            userAgent = r.optString("user_agent", ""),
+                            timestamp = r.optLong("timestamp", 0)
+                        ))
+                    }
+                    pendingRequests = reqs
+                } else {
+                    pendingRequests = emptyList()
+                }
 
                 if (!isRunning) {
                     onStop()
@@ -672,6 +712,146 @@ fun WebShareScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ── REQUESTS SECTION ────────────────────────────────────────
+        OutlinedCard(
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, ComposeColor(0xFF334155)),
+            shape = MaterialTheme.shapes.medium,
+            colors = CardDefaults.outlinedCardColors(
+                containerColor = ComposeColor(0xFF0F172A)
+            )
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "REQUESTS",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = ComposeColor(0xFF00E5FF)
+                    )
+                    if (pendingRequests.isNotEmpty()) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = ComposeColor(0xFF00E5FF)
+                        ) {
+                            Text(
+                                text = "${pendingRequests.size}",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = ComposeColor(0xFF0F172A)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (pendingRequests.isEmpty()) {
+                    Text(
+                        text = if (autoAcceptRequests) "Auto-accepting all requests" else "No requests yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFF94A3B8)
+                    )
+                } else {
+                    pendingRequests.forEach { req ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            shape = MaterialTheme.shapes.small,
+                            color = ComposeColor(0xFF1E293B)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Browser name + IP
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = parseBrowserName(req.userAgent),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = ComposeColor(0xFFFFA726) // Orange like LocalSend
+                                    )
+                                    Text(
+                                        text = req.ip,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ComposeColor(0xFF94A3B8)
+                                    )
+                                }
+                                // Reject button
+                                IconButton(
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            try {
+                                                NxfrService.NxfrBridge.nxfr_web_respond_request(req.sessionId, false)
+                                            } catch (_: Throwable) {}
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Close,
+                                        contentDescription = "Reject",
+                                        tint = ComposeColor(0xFFEF4444)
+                                    )
+                                }
+                                // Accept button
+                                IconButton(
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            try {
+                                                NxfrService.NxfrBridge.nxfr_web_respond_request(req.sessionId, true)
+                                            } catch (_: Throwable) {}
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.CheckCircle,
+                                        contentDescription = "Accept",
+                                        tint = ComposeColor(0xFF22C55E)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = ComposeColor(0xFF334155))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Auto-accept toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Automatically accept requests",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ComposeColor(0xFFE2E8F0)
+                    )
+                    Switch(
+                        checked = autoAcceptRequests,
+                        onCheckedChange = { enabled ->
+                            autoAcceptRequests = enabled
+                            prefs.edit().putBoolean("web_share_auto_accept", enabled).apply()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ComposeColor(0xFF00E5FF),
+                            checkedTrackColor = ComposeColor(0xFF334155)
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // Files Being Shared Card
         if (items.isNotEmpty()) {
             ElevatedCard(
@@ -814,6 +994,36 @@ fun WebShareScreen(
 private fun generateRandomPin(): String {
     val num = (1000..9999).random()
     return num.toString()
+}
+
+/** Extracts a human-readable browser name from a User-Agent string. */
+private fun parseBrowserName(ua: String): String {
+    if (ua.isBlank()) return "Unknown Browser"
+    val lower = ua.lowercase()
+
+    val browser = when {
+        lower.contains("edg/") || lower.contains("edge/") -> "Edge"
+        lower.contains("opr/") || lower.contains("opera") -> "Opera"
+        lower.contains("brave") -> "Brave"
+        lower.contains("vivaldi") -> "Vivaldi"
+        lower.contains("firefox") || lower.contains("fxios") -> "Firefox"
+        lower.contains("crios") -> "Chrome"
+        lower.contains("safari") && !lower.contains("chrome") -> "Safari"
+        lower.contains("chrome") -> "Chrome"
+        else -> "Browser"
+    }
+
+    val os = when {
+        lower.contains("iphone") || lower.contains("ipad") -> "iOS"
+        lower.contains("android") -> "Android"
+        lower.contains("mac os") || lower.contains("macintosh") -> "macOS"
+        lower.contains("windows") -> "Windows"
+        lower.contains("linux") -> "Linux"
+        lower.contains("cros") -> "ChromeOS"
+        else -> null
+    }
+
+    return if (os != null) "$browser ($os)" else browser
 }
 
 

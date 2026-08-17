@@ -557,6 +557,40 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     result.unwrap_or(std::ptr::null_mut())
 }
 
+/// `external fun nxfr_web_respond_request(sessionId: String, accepted: Boolean): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1respond_1request(
+    mut env: JNIEnv,
+    _class: JClass,
+    session_id: JString,
+    accepted: jboolean,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let sid = match jstring_to_string(&mut env, &session_id) {
+            Ok(s) => s,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let sid_cstr = std::ffi::CString::new(sid).unwrap();
+        let ptr = super::nxfr_web_respond_request(sid_cstr.as_ptr(), accepted != 0);
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+/// `external fun nxfr_web_set_auto_accept(enabled: Boolean): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1set_1auto_1accept(
+    mut env: JNIEnv,
+    _class: JClass,
+    enabled: jboolean,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ptr = super::nxfr_web_set_auto_accept(enabled != 0);
+        c_result_to_jstring(&mut env, ptr)
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
 /// `external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String, maxDownloads: Int): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1share_1start(

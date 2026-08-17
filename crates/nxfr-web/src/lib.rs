@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
+use std::sync::atomic::AtomicBool;
 
 pub const DEFAULT_WEB_PORT: u16 = 17396;
 pub const MAX_UPLOAD_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10 GB
@@ -969,6 +970,102 @@ async function downloadAll() {
 }
 </script></body></html>"#;
 
+// ── Approval gate types ─────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestStatus {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PendingRequest {
+    pub session_id: String,
+    pub ip: String,
+    pub user_agent: String,
+    pub timestamp: u64,
+    pub status: RequestStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
+}
+
+// ── Waiting page HTML (shown when approval gate is active) ──────────
+
+const HTML_WAITING_PAGE: &str = r#"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NXFR — Requesting Access</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
+.card{background:#1E293B;border-radius:16px;padding:32px;max-width:440px;width:100%;box-shadow:0 4px 24px #00000066;text-align:center}
+h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
+.sub{color:#94A3B8;margin:0 0 24px;font-size:14px}
+.spinner{width:48px;height:48px;border:4px solid #334155;border-top:4px solid #00E5FF;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.status{font-size:16px;font-weight:600;color:#E2E8F0}
+.rejected{color:#EF4444;font-size:18px;font-weight:700}
+.fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-top:16px;border:1px solid #334155}
+</style></head><body>
+<div class="card">
+<h1>NXFR</h1>
+<p class="sub">Requesting access to shared files</p>
+<div id="spinner" class="spinner"></div>
+<div id="status" class="status">Waiting for response...</div>
+<div class="fp-box">
+Device Fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+</div>
+</div>
+<script>
+const statusEl = document.getElementById('status');
+const spinnerEl = document.getElementById('spinner');
+let sessionId = null;
+
+async function requestAccess() {
+  try {
+    const res = await fetch('/api/request', { method: 'POST' });
+    if (!res.ok) { statusEl.textContent = 'Error requesting access'; return; }
+    const data = await res.json();
+    sessionId = data.session_id;
+    if (data.status === 'accepted' && data.token) {
+      window.location.replace('/?t=' + encodeURIComponent(data.token));
+      return;
+    }
+    pollStatus();
+  } catch (e) {
+    statusEl.textContent = 'Connection error';
+  }
+}
+
+async function pollStatus() {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    try {
+      const res = await fetch('/api/request-status?s=' + encodeURIComponent(sessionId));
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.status === 'accepted' && data.token) {
+        spinnerEl.style.display = 'none';
+        statusEl.textContent = 'Access granted! Redirecting...';
+        statusEl.style.color = '#22C55E';
+        window.location.replace('/?t=' + encodeURIComponent(data.token));
+        return;
+      } else if (data.status === 'rejected') {
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'rejected';
+        statusEl.textContent = 'Rejected';
+        return;
+      }
+    } catch (e) { /* retry */ }
+  }
+}
+
+requestAccess();
+</script></body></html>"#;
+
 pub struct WebServerHandle {
     pub handle: JoinHandle<()>,
     pub token: String,
@@ -976,6 +1073,8 @@ pub struct WebServerHandle {
     pub cancel: CancellationToken,
     pub active_transfers: Arc<AtomicUsize>,
     pub last_activity: Arc<RwLock<Instant>>,
+    pub pending_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
+    pub auto_accept: Arc<AtomicBool>,
 }
 
 impl WebServerHandle {
@@ -989,6 +1088,39 @@ impl WebServerHandle {
 
     pub fn active_transfers_count(&self) -> usize {
         self.active_transfers.load(Ordering::SeqCst)
+    }
+
+    pub fn is_auto_accept(&self) -> bool {
+        self.auto_accept.load(Ordering::SeqCst)
+    }
+
+    pub fn set_auto_accept(&self, enabled: bool) {
+        self.auto_accept.store(enabled, Ordering::SeqCst);
+    }
+
+    pub async fn get_pending_requests(&self) -> Vec<PendingRequest> {
+        let map = self.pending_requests.lock().await;
+        map.values()
+            .filter(|r| r.status == RequestStatus::Pending)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn respond_to_request(&self, session_id: &str, accepted: bool) -> Result<(), String> {
+        let mut map = self.pending_requests.lock().await;
+        match map.get_mut(session_id) {
+            Some(req) if req.status == RequestStatus::Pending => {
+                if accepted {
+                    req.status = RequestStatus::Accepted;
+                    req.session_token = Some(generate_token());
+                } else {
+                    req.status = RequestStatus::Rejected;
+                }
+                Ok(())
+            }
+            Some(_) => Err("Request already responded to".to_string()),
+            None => Err(format!("No pending request with id '{session_id}'")),
+        }
     }
 }
 
@@ -1007,6 +1139,8 @@ pub struct WebServer {
     pub failed_attempts: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
     pub max_downloads: Option<u32>,
     pub download_count: Arc<AtomicUsize>,
+    pub pending_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
+    pub auto_accept: Arc<AtomicBool>,
 }
 
 impl WebServer {
@@ -1045,6 +1179,8 @@ impl WebServer {
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let active_transfers = Arc::new(AtomicUsize::new(0));
         let download_count = Arc::new(AtomicUsize::new(0));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let auto_accept = Arc::new(AtomicBool::new(false));
         (
             Self {
                 token,
@@ -1061,6 +1197,8 @@ impl WebServer {
                 failed_attempts: Arc::new(Mutex::new(HashMap::new())),
                 max_downloads,
                 download_count,
+                pending_requests,
+                auto_accept,
             },
             cancel,
         )
@@ -1069,6 +1207,24 @@ impl WebServer {
     pub async fn bump_activity(&self) {
         let mut act = self.last_activity.write().await;
         *act = Instant::now();
+    }
+
+    /// Validates a token against main token, PIN, and accepted session tokens.
+    async fn is_valid_token(&self, token: &str) -> bool {
+        if token == self.token {
+            return true;
+        }
+        if let Some(pin) = &self.pin {
+            if token == *pin {
+                return true;
+            }
+        }
+        // Check accepted session tokens
+        let map = self.pending_requests.lock().await;
+        map.values().any(|r| {
+            r.status == RequestStatus::Accepted &&
+            r.session_token.as_deref() == Some(token)
+        })
     }
 
     pub async fn start(
@@ -1245,6 +1401,8 @@ impl WebServer {
             cancel,
             active_transfers: active_transfers_handle,
             last_activity: last_activity_handle,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            auto_accept: Arc::new(AtomicBool::new(true)), // uploads don't need approval
         })
     }
 
@@ -1332,6 +1490,8 @@ impl WebServer {
 
         let active_transfers_handle = server.active_transfers.clone();
         let last_activity_handle = server.last_activity.clone();
+        let pending_requests_handle = server.pending_requests.clone();
+        let auto_accept_handle = server.auto_accept.clone();
 
         let tls_config = build_web_tls_config(key_der, cert_der)?;
         let acceptor = TlsAcceptor::from(tls_config);
@@ -1429,6 +1589,8 @@ impl WebServer {
             cancel,
             active_transfers: active_transfers_handle,
             last_activity: last_activity_handle,
+            pending_requests: pending_requests_handle,
+            auto_accept: auto_accept_handle,
         })
     }
 
@@ -1538,9 +1700,151 @@ impl WebServer {
 
         log::info!("[nxfr-web] [{}] HTTP Request: {} {}", ip, method, path);
 
+        // Extract common headers (User-Agent) for use across routes
+        let mut user_agent = String::new();
+        let headers_str_full = String::from_utf8_lossy(&headers_buf[..body_start]);
+        for hdr_line in headers_str_full.lines().skip(1) {
+            let lower = hdr_line.to_lowercase();
+            if lower.starts_with("user-agent:") {
+                user_agent = hdr_line[11..].trim().to_string();
+            }
+        }
+
+        // ── API routes for approval gate ────────────────────────────
+        if method == "POST" && path == "/api/request" {
+            // Browser registers a download request. If auto_accept or PIN is set,
+            // immediately accept. Otherwise, create a pending request.
+            let auto = self.auto_accept.load(Ordering::SeqCst);
+            let has_pin = self.pin.is_some();
+
+            let session_id = generate_token();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            if auto || has_pin {
+                // No gate needed — auto-accept
+                let session_token = generate_token();
+                let req = PendingRequest {
+                    session_id: session_id.clone(),
+                    ip: ip.to_string(),
+                    user_agent: user_agent.clone(),
+                    timestamp: now,
+                    status: RequestStatus::Accepted,
+                    session_token: Some(session_token.clone()),
+                };
+                self.pending_requests.lock().await.insert(session_id.clone(), req);
+                let body = serde_json::json!({
+                    "session_id": session_id,
+                    "status": "accepted",
+                    "token": session_token,
+                });
+                return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
+            } else {
+                // Approval required — hold in pending state
+                let req = PendingRequest {
+                    session_id: session_id.clone(),
+                    ip: ip.to_string(),
+                    user_agent: user_agent.clone(),
+                    timestamp: now,
+                    status: RequestStatus::Pending,
+                    session_token: None,
+                };
+                self.pending_requests.lock().await.insert(session_id.clone(), req);
+                log::info!("[nxfr-web] [{}] New download request pending approval (session={})", ip, &session_id[..8]);
+                let body = serde_json::json!({
+                    "session_id": session_id,
+                    "status": "pending",
+                });
+                return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
+            }
+        }
+
+        if method == "GET" && path == "/api/request-status" {
+            // Browser polls for approval status
+            let mut session_param = "";
+            for pair in query.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if k == "s" { session_param = v; }
+                }
+            }
+            if session_param.is_empty() {
+                let body = b"{\"error\": \"missing session id\"}";
+                return Self::send_response(stream, "400 Bad Request", "application/json", body).await;
+            }
+            let map = self.pending_requests.lock().await;
+            match map.get(session_param) {
+                Some(req) => {
+                    let mut resp = serde_json::json!({ "status": req.status });
+                    if req.status == RequestStatus::Accepted {
+                        if let Some(tok) = &req.session_token {
+                            resp["token"] = serde_json::json!(tok);
+                        }
+                    }
+                    return Self::send_response(stream, "200 OK", "application/json", resp.to_string().as_bytes()).await;
+                }
+                None => {
+                    let body = b"{\"error\": \"unknown session\"}";
+                    return Self::send_response(stream, "404 Not Found", "application/json", body).await;
+                }
+            }
+        }
+
+        if method == "GET" && path == "/api/pending" {
+            // Internal: return all pending requests (used by FFI polling)
+            let map = self.pending_requests.lock().await;
+            let pending: Vec<&PendingRequest> = map.values()
+                .filter(|r| r.status == RequestStatus::Pending)
+                .collect();
+            let body = serde_json::json!({ "pending_requests": pending });
+            return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
+        }
+
+        // ── GET / — main page ───────────────────────────────────────
         if method == "GET" && path == "/" {
             let has_pin = self.pin.is_some();
             if let Some(manifest) = &self.share_manifest {
+                // Check if approval gate should fire:
+                // Gate fires when: no PIN AND auto_accept is OFF AND no valid session token
+                let auto = self.auto_accept.load(Ordering::SeqCst);
+                let needs_gate = !has_pin && !auto;
+
+                if needs_gate {
+                    // Check if the browser has a valid session token in ?t=
+                    let mut query_token: Option<String> = None;
+                    for pair in query.split('&') {
+                        if let Some((k, v)) = pair.split_once('=') {
+                            if k == "t" { query_token = Some(v.to_string()); }
+                        }
+                    }
+                    let has_valid_session = if let Some(tok) = &query_token {
+                        // Check if this token belongs to an accepted session
+                        let map = self.pending_requests.lock().await;
+                        map.values().any(|r| {
+                            r.status == RequestStatus::Accepted &&
+                            r.session_token.as_deref() == Some(tok.as_str())
+                        })
+                    } else {
+                        false
+                    };
+
+                    if !has_valid_session {
+                        // Serve the waiting page
+                        let page = HTML_WAITING_PAGE
+                            .replace("{{FINGERPRINT}}", &self.fingerprint);
+                        log::info!("[nxfr-web] [{}] 200 OK: Served approval waiting page", ip);
+                        return Self::send_response(
+                            stream,
+                            "200 OK",
+                            "text/html; charset=utf-8",
+                            page.as_bytes(),
+                        ).await;
+                    }
+                    // Valid session token → fall through to serve download page
+                    // Set `t` as a usable token for /dl/ auth
+                }
+
                 let manifest_json =
                     serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
                 let page = HTML_DOWNLOAD_PAGE
@@ -1598,7 +1902,7 @@ impl WebServer {
             }
 
             let valid = match &auth_token {
-                Some(tok) => tok == &self.token || self.pin.as_ref() == Some(tok),
+                Some(tok) => self.is_valid_token(tok).await,
                 None => false,
             };
 
@@ -1648,7 +1952,7 @@ impl WebServer {
             }
 
             let valid = match &auth_token {
-                Some(tok) => tok == &self.token || self.pin.as_ref() == Some(tok),
+                Some(tok) => self.is_valid_token(tok).await,
                 None => false,
             };
 
@@ -2017,7 +2321,7 @@ impl WebServer {
             }
 
             let valid = match &auth_token {
-                Some(tok) => tok == &self.token || self.pin.as_ref() == Some(tok),
+                Some(tok) => self.is_valid_token(tok).await,
                 None => false,
             };
 

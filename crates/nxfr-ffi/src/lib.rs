@@ -2428,7 +2428,7 @@ pub extern "C" fn nxfr_web_stop() -> *mut c_char {
     })
 }
 
-/// Query status of the running web server (active transfers, running state).
+/// Query status of the running web server (active transfers, running state, pending requests).
 #[no_mangle]
 pub extern "C" fn nxfr_web_status() -> *mut c_char {
     ffi_guard(|| {
@@ -2437,17 +2437,77 @@ pub extern "C" fn nxfr_web_status() -> *mut c_char {
             Some(handle) => {
                 let active = handle.active_transfers_count();
                 let stopped = handle.is_stopped();
+                let auto_accept = handle.is_auto_accept();
+
+                // Collect pending requests (try_lock to avoid blocking)
+                let pending: Vec<serde_json::Value> = match handle.pending_requests.try_lock() {
+                    Ok(map) => map.values()
+                        .filter(|r| r.status == nxfr_web::RequestStatus::Pending)
+                        .map(|r| serde_json::json!({
+                            "session_id": r.session_id,
+                            "ip": r.ip,
+                            "user_agent": r.user_agent,
+                            "timestamp": r.timestamp,
+                        }))
+                        .collect(),
+                    Err(_) => vec![],
+                };
+
                 json_ok(serde_json::json!({
                     "running": !stopped,
                     "active_transfers": active,
                     "port": handle.port,
+                    "auto_accept": auto_accept,
+                    "pending_requests": pending,
                 }))
             }
             None => json_ok(serde_json::json!({
                 "running": false,
                 "active_transfers": 0,
                 "port": 0,
+                "auto_accept": false,
+                "pending_requests": [],
             })),
+        }
+    })
+}
+
+/// Accept or reject a pending download request.
+#[no_mangle]
+pub extern "C" fn nxfr_web_respond_request(
+    session_id: *const c_char,
+    accepted: bool,
+) -> *mut c_char {
+    ffi_guard(|| {
+        let sid = match cstr_to_str(session_id) {
+            Ok(s) => s,
+            Err(e) => return json_err(&e),
+        };
+        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        match &*guard {
+            Some(handle) => {
+                let rt = get_runtime();
+                match rt.block_on(handle.respond_to_request(sid, accepted)) {
+                    Ok(()) => json_ok(serde_json::json!({ "status": "ok" })),
+                    Err(e) => json_err(&e),
+                }
+            }
+            None => json_err("web server not running"),
+        }
+    })
+}
+
+/// Toggle auto-accept mode for the web share approval gate.
+#[no_mangle]
+pub extern "C" fn nxfr_web_set_auto_accept(enabled: bool) -> *mut c_char {
+    ffi_guard(|| {
+        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        match &*guard {
+            Some(handle) => {
+                handle.set_auto_accept(enabled);
+                json_ok(serde_json::json!({ "status": "ok", "auto_accept": enabled }))
+            }
+            None => json_err("web server not running"),
         }
     })
 }

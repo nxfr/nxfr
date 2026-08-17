@@ -287,6 +287,8 @@ class NxfrService : Service() {
         external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String, maxDownloads: Int): String
         external fun nxfr_web_stop(): String
         external fun nxfr_web_status(): String
+        external fun nxfr_web_respond_request(sessionId: String, accepted: Boolean): String
+        external fun nxfr_web_set_auto_accept(enabled: Boolean): String
         external fun nxfr_web_fingerprint(storeDir: String): String
 
         // ── Transfer ───────────────────────────────────────
