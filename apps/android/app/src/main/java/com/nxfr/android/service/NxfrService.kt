@@ -284,7 +284,7 @@ class NxfrService : Service() {
 
         // ── Web Upload / Share ──────────────────────────────
         external fun nxfr_web_start(port: Int, storeDir: String, pin: String): String
-        external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String): String
+        external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String, maxDownloads: Int): String
         external fun nxfr_web_stop(): String
         external fun nxfr_web_status(): String
         external fun nxfr_web_fingerprint(storeDir: String): String

@@ -52,6 +52,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+private const val PREFS_MAX_DOWNLOADS = "web_share_max_downloads"
+
 /**
  * Stages files for web sharing, then hosts them via the Rust TLS server.
  *
@@ -74,6 +76,9 @@ fun WebShareScreen(
     var secondsRemaining by remember { mutableStateOf(600) } // 10 minutes
     val items = stagedItems
 
+    val prefs = remember { context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE) }
+    var maxDownloads by remember { mutableStateOf(prefs.getString(PREFS_MAX_DOWNLOADS, "∞") ?: "∞") }
+
     var isPinProtected by remember { mutableStateOf(false) }
     var pinCode by remember { mutableStateOf(generateRandomPin()) }
     var showEditPinDialog by remember { mutableStateOf(false) }
@@ -89,13 +94,19 @@ fun WebShareScreen(
     var stagingLabel by remember { mutableStateOf("") }
     var manifestJsonStr by remember { mutableStateOf<String?>(null) }
 
-    fun startServerWithPin(pin: String?) {
+    fun startServerWithPin(pin: String?, maxDlStr: String = maxDownloads) {
         val manifest = manifestJsonStr ?: return
         val storeDir = NxfrService.getIdentityDir(context)
+        val maxDownloadsInt = when (maxDlStr) {
+            "1" -> 1
+            "5" -> 5
+            "10" -> 10
+            else -> 0 // 0 = unlimited
+        }
         try {
             NxfrService.NxfrBridge.nxfr_web_stop()
             val pinParam = pin ?: ""
-            val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, pinParam, manifest)
+            val jsonStr = NxfrService.NxfrBridge.nxfr_web_share_start(17396, storeDir, pinParam, manifest, maxDownloadsInt)
             val res = JSONObject(jsonStr)
 
             if (res.optString("status") == "started") {
@@ -472,6 +483,84 @@ fun WebShareScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── Max Downloads Quota ──
+        OutlinedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            border = BorderStroke(1.dp, ComposeColor(0xFF334155)),
+            colors = CardDefaults.outlinedCardColors(
+                containerColor = ComposeColor(0xFF0F172A)
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "DOWNLOAD QUOTA",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = ComposeColor(0xFF00E5FF),
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Auto-shut down the share link after N downloads. 0 = unlimited.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ComposeColor(0xFF94A3B8)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    listOf("1×", "5×", "10×", "∞").forEach { label ->
+                        val isSelected = when (label) {
+                            "1×" -> maxDownloads == "1"
+                            "5×" -> maxDownloads == "5"
+                            "10×" -> maxDownloads == "10"
+                            "∞" -> maxDownloads == "∞" || maxDownloads == "0"
+                            else -> false
+                        }
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                val newVal = when (label) {
+                                    "1×" -> "1"
+                                    "5×" -> "5"
+                                    "10×" -> "10"
+                                    else -> "∞"
+                                }
+                                maxDownloads = newVal
+                                prefs.edit().putString(PREFS_MAX_DOWNLOADS, newVal).apply()
+                                startServerWithPin(if (isPinProtected) pinCode else null, newVal)
+                            },
+                            label = {
+                                Text(
+                                    text = label,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) ComposeColor(0xFF000000)
+                                            else ComposeColor(0xFFCCCCCC)
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ComposeColor(0xFF00E5FF),
+                                selectedLabelColor = ComposeColor(0xFF000000),
+                                containerColor = ComposeColor(0xFF1E293B)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         CertWarningCard(context)
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -650,6 +739,18 @@ fun WebShareScreen(
                 fontWeight = FontWeight.Bold
             )
         }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = if (maxDownloads == "∞" || maxDownloads == "0")
+                "Quota: Unlimited downloads"
+            else
+                "Quota: $maxDownloads download${if (maxDownloads == "1") "" else "s"} max",
+            style = MaterialTheme.typography.bodySmall,
+            color = ComposeColor(0xFF94A3B8),
+            fontFamily = FontFamily.Monospace
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 

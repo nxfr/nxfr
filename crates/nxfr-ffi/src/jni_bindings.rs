@@ -557,7 +557,7 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     result.unwrap_or(std::ptr::null_mut())
 }
 
-/// `external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String): String`
+/// `external fun nxfr_web_share_start(port: Int, storeDir: String, pin: String, manifestJson: String, maxDownloads: Int): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge_nxfr_1web_1share_1start(
     mut env: JNIEnv,
@@ -566,6 +566,7 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
     store_dir: JString,
     pin: JString,
     manifest_json: JString,
+    max_downloads: jint,
 ) -> jstring {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let dir = match jstring_to_string(&mut env, &store_dir) {
@@ -580,11 +581,17 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
         let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
         let c_pin = std::ffi::CString::new(pin_str).unwrap_or_default();
         let c_manifest = std::ffi::CString::new(manifest_str).unwrap_or_default();
+        let max_dl = if max_downloads > 0 {
+            max_downloads as u32
+        } else {
+            0
+        };
         let ptr = super::nxfr_web_share_start(
             port as u16,
             c_dir.as_ptr(),
             c_pin.as_ptr(),
             c_manifest.as_ptr(),
+            max_dl,
         );
         c_result_to_jstring(&mut env, ptr)
     }));

@@ -1254,6 +1254,7 @@ impl WebServer {
         preferred_port: u16,
         pin: Option<String>,
         share_manifest: Vec<WebShareItem>,
+        max_downloads: Option<u32>,
     ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
         Self::start_share_with_expiry(
             key_der,
@@ -1262,6 +1263,7 @@ impl WebServer {
             pin,
             share_manifest,
             get_default_expiry_duration(),
+            max_downloads,
         )
         .await
     }
@@ -1273,6 +1275,7 @@ impl WebServer {
         pin: Option<String>,
         share_manifest: Vec<WebShareItem>,
         expiry_duration: Duration,
+        max_downloads: Option<u32>,
     ) -> Result<WebServerHandle, Box<dyn std::error::Error + Send + Sync>> {
         let mut listener = None;
         let mut actual_port = preferred_port;
@@ -1321,7 +1324,7 @@ impl WebServer {
             fp_formatted,
             Some(share_manifest),
             expiry_duration,
-            None,
+            max_downloads,
         );
         let token = server.token.clone();
         let last_activity_clone = server.last_activity.clone();
@@ -2426,6 +2429,7 @@ mod tests {
             17450,
             None,
             manifest,
+            None,
         )
         .await
         .expect("Failed to start share server");
@@ -2696,6 +2700,7 @@ mod tests {
             17470,
             Some(pin.clone()),
             manifest,
+            None,
         )
         .await
         .unwrap();
@@ -3438,6 +3443,7 @@ mod tests {
             None,
             manifest,
             expiry_duration,
+            None,
         )
         .await
         .unwrap();
@@ -3561,4 +3567,77 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_web_share_download_quota_shutdown() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_quota_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("test.txt");
+        tokio::fs::write(&file_path, b"quota test content").await.unwrap();
+
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 18,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+
+        // Start share server with max 1 download
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17530,
+            None,
+            manifest,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let server_port = handle.port;
+        let token = handle.token.clone();
+
+        let mut roots = rustls::RootCertStore::empty();
+        let cert_der = rustls_pki_types::CertificateDer::from(identity.cert_der.clone());
+        roots.add(cert_der).unwrap();
+
+        let client_crypto = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_crypto));
+
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node")
+            .unwrap()
+            .to_owned();
+        let mut tls_stream = connector.connect(domain, stream).await.unwrap();
+
+        let request = format!(
+            "GET /dl/0 HTTP/1.1\r\n\
+             Host: localhost:{}\r\n\
+             Authorization: Bearer {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            server_port, token
+        );
+        tls_stream.write_all(request.as_bytes()).await.unwrap();
+        tls_stream.flush().await.unwrap();
+
+        let mut resp = Vec::new();
+        tls_stream.read_to_end(&mut resp).await.unwrap();
+        drop(tls_stream);
+
+        // Wait a brief moment for cancellation to propagate
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        assert!(handle.is_stopped(), "Server handle should be stopped after reaching max downloads quota");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+

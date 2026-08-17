@@ -2332,6 +2332,7 @@ pub extern "C" fn nxfr_web_share_start(
     store_dir: *const c_char,
     pin: *const c_char,
     manifest_json: *const c_char,
+    max_downloads: u32,
 ) -> *mut c_char {
     ffi_guard(|| {
         let dir = match cstr_to_str(store_dir) {
@@ -2352,6 +2353,12 @@ pub extern "C" fn nxfr_web_share_start(
                 Ok(s) if !s.is_empty() => Some(s.to_string()),
                 _ => None,
             }
+        } else {
+            None
+        };
+
+        let max_downloads_opt = if max_downloads > 0 {
+            Some(max_downloads)
         } else {
             None
         };
@@ -2383,6 +2390,7 @@ pub extern "C" fn nxfr_web_share_start(
                 preferred_port,
                 pin_opt,
                 items,
+                max_downloads_opt,
             )
             .await
         });
