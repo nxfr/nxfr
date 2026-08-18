@@ -1,6 +1,5 @@
-!!! warning "Draft Specification"
-    This is the v0.1 draft specification. The protocol is actively evolving.
-    Refer to the [`docs/`](https://github.com/nxfr/nxfr/tree/main/docs) directory for the raw normative text.
+!!! info "Protocol v1.0"
+    This is the v1.0 specification. For the normative text, see the [`docs/`](https://github.com/nxfr/nxfr/tree/main/docs) directory.
 
 # Transfer & Resume
 
@@ -16,6 +15,16 @@ A transfer operates over an established session. It follows this sequence:
    - Receiver sends `CHUNK_ACK` frames acknowledging successful data reception.
 4. Once all files are sent, sender sends `TRANSFER_COMPLETE`.
 5. Receiver confirms all data is written with `TRANSFER_ACK`.
+
+### Receiver Completion
+
+On the receiver side, the state machine tracks completion explicitly:
+
+1. After the last chunk is received and verified, the receiver transitions to **Completing**.
+2. The receiver sends `TRANSFER_ACK` with the final verification status.
+3. Only after the ack is sent does the receiver transition to **Complete**.
+
+This prevents the receiver from reporting success before the ack is actually on the wire.
 
 ## Chunk Format
 

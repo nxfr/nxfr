@@ -94,10 +94,14 @@ pub enum TransferEvent {
     ResumeReceived,
     /// Last CHUNK sent (LAST_CHUNK flag on final file).
     LastChunkSent,
+    /// Receiver: all chunks received (last chunk or TRANSFER_COMPLETE from sender).
+    AllChunksReceived,
     /// TRANSFER_CANCEL from either side.
     CancelReceived,
     /// TRANSFER_COMPLETE sent by sender.
     TransferCompleteSent,
+    /// Receiver: TRANSFER_ACK sent with status="success" after verification.
+    AckSent,
     /// TRANSFER_ACK received with status="success".
     AckSuccess,
     /// TRANSFER_ACK received with status="partial_failure".
@@ -128,8 +132,10 @@ impl fmt::Display for TransferEvent {
             Self::PauseReceived => write!(f, "PauseReceived"),
             Self::ResumeReceived => write!(f, "ResumeReceived"),
             Self::LastChunkSent => write!(f, "LastChunkSent"),
+            Self::AllChunksReceived => write!(f, "AllChunksReceived"),
             Self::CancelReceived => write!(f, "CancelReceived"),
             Self::TransferCompleteSent => write!(f, "TransferCompleteSent"),
+            Self::AckSent => write!(f, "AckSent"),
             Self::AckSuccess => write!(f, "AckSuccess"),
             Self::AckPartialFailure => write!(f, "AckPartialFailure"),
             Self::ChecksumMismatch => write!(f, "ChecksumMismatch"),
@@ -177,6 +183,8 @@ pub enum TransferAction {
     ResumeChunkTransmission,
     /// Send TRANSFER_COMPLETE.
     SendTransferComplete,
+    /// Send TRANSFER_ACK (receiver confirms completion).
+    SendTransferAck,
     /// Send TRANSFER_CANCEL.
     SendTransferCancel,
     /// Send ERROR.
@@ -369,6 +377,16 @@ pub fn transfer_handle_event(
             ],
         )),
 
+        // STREAMING → COMPLETING: Receiver received all chunks / TRANSFER_COMPLETE from sender.
+        (TransferState::Streaming, TransferEvent::AllChunksReceived) => Ok((
+            TransferState::Completing,
+            vec![
+                TransferAction::CancelTimer(TransferTimer::ChunkAck),
+                TransferAction::SendTransferAck,
+                TransferAction::StartTimer(TransferTimer::Completion),
+            ],
+        )),
+
         // STREAMING → FAILED: Checksum mismatch.
         (TransferState::Streaming, TransferEvent::ChecksumMismatch) => Ok((
             TransferState::Failed,
@@ -432,6 +450,17 @@ pub fn transfer_handle_event(
                 TransferAction::CancelTimer(TransferTimer::Completion),
                 TransferAction::NotifyUser {
                     message: "Transfer completed successfully".into(),
+                },
+            ],
+        )),
+
+        // COMPLETING → COMPLETE: Receiver sent TRANSFER_ACK (verification passed).
+        (TransferState::Completing, TransferEvent::AckSent) => Ok((
+            TransferState::Complete,
+            vec![
+                TransferAction::CancelTimer(TransferTimer::Completion),
+                TransferAction::NotifyUser {
+                    message: "Transfer received successfully".into(),
                 },
             ],
         )),
@@ -764,6 +793,84 @@ mod tests {
     #[test]
     fn pending_rejects_ack() {
         let result = transfer_handle_event(&TransferState::Pending, &TransferEvent::AckSuccess);
+        assert!(result.is_err());
+    }
+
+    // ── Receiver-side transitions ────────────────────────────────────
+
+    #[test]
+    fn receiver_streaming_to_completing_on_all_chunks_received() {
+        let (s, a) = transfer_handle_event(
+            &TransferState::Streaming,
+            &TransferEvent::AllChunksReceived,
+        )
+        .unwrap();
+        assert_eq!(s, TransferState::Completing);
+        assert!(a.contains(&TransferAction::SendTransferAck));
+        assert!(a.contains(&TransferAction::CancelTimer(TransferTimer::ChunkAck)));
+        assert!(a.contains(&TransferAction::StartTimer(TransferTimer::Completion)));
+    }
+
+    #[test]
+    fn receiver_completing_to_complete_on_ack_sent() {
+        let (s, a) =
+            transfer_handle_event(&TransferState::Completing, &TransferEvent::AckSent).unwrap();
+        assert_eq!(s, TransferState::Complete);
+        assert!(a.contains(&TransferAction::CancelTimer(TransferTimer::Completion)));
+    }
+
+    #[test]
+    fn receiver_full_happy_path() {
+        // Idle → Pending
+        let (s, _) = transfer_handle_event(
+            &TransferState::Idle,
+            &TransferEvent::ReceiveTransferRequest,
+        )
+        .unwrap();
+        assert_eq!(s, TransferState::Pending);
+
+        // Pending → Negotiating
+        let (s, _) = transfer_handle_event(&s, &TransferEvent::UserAccept).unwrap();
+        assert_eq!(s, TransferState::Negotiating);
+
+        // Negotiating → Streaming
+        let (s, _) = transfer_handle_event(&s, &TransferEvent::AllMetadataAcked).unwrap();
+        assert_eq!(s, TransferState::Streaming);
+
+        // Streaming → Completing (receiver got all chunks)
+        let (s, _) = transfer_handle_event(&s, &TransferEvent::AllChunksReceived).unwrap();
+        assert_eq!(s, TransferState::Completing);
+
+        // Completing → Complete (receiver sent ACK)
+        let (s, _) = transfer_handle_event(&s, &TransferEvent::AckSent).unwrap();
+        assert_eq!(s, TransferState::Complete);
+    }
+
+    #[test]
+    fn incomplete_transfer_does_not_reach_complete() {
+        // Still in Streaming — should NOT accept AckSent
+        let result =
+            transfer_handle_event(&TransferState::Streaming, &TransferEvent::AckSent);
+        assert!(result.is_err());
+
+        // Still in Negotiating — should NOT accept AllChunksReceived
+        let result =
+            transfer_handle_event(&TransferState::Negotiating, &TransferEvent::AllChunksReceived);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn idle_rejects_ack_sent() {
+        let result = transfer_handle_event(&TransferState::Idle, &TransferEvent::AckSent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pending_rejects_all_chunks_received() {
+        let result = transfer_handle_event(
+            &TransferState::Pending,
+            &TransferEvent::AllChunksReceived,
+        );
         assert!(result.is_err());
     }
 }

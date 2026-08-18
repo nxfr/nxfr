@@ -58,7 +58,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val deck = MaterialTheme.deckColors
-    val storeDir = context.filesDir.absolutePath
+    val storeDir = NxfrService.getIdentityDir(context)
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("nxfr_prefs", Context.MODE_PRIVATE) }
     val scrollState = rememberScrollState()

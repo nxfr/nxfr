@@ -38,10 +38,27 @@ import com.nxfr.android.service.NxfrState
 import com.nxfr.android.ui.components.PacketStreamVisualizer
 import com.nxfr.android.ui.components.TerminalStatsBlock
 import com.nxfr.android.ui.theme.deckColors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
+
+private fun computeFileSha256(file: File): String? {
+    if (!file.exists() || !file.isFile) return null
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(65536)
+        var bytesRead: Int
+        while (input.read(buffer).also { bytesRead = it } != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    val hashBytes = digest.digest()
+    return hashBytes.joinToString("") { "%02x".format(it) }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,20 +101,20 @@ fun TransferScreen(
                 lastPublishedPath = state.filePath
                 val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
                 lastDurationSec = if (elapsed > 0) elapsed else 1.0
+                showCompleteSheet = true
 
                 if (NxfrPreferences.showChecksum.value && !state.filePath.isNullOrEmpty()) {
-                    try {
-                        val f = File(state.filePath)
-                        if (f.exists() && f.length() < 50 * 1024 * 1024) {
-                            val bytes = f.readBytes()
-                            val jsonStr = NxfrService.NxfrBridge.nxfr_sha256(bytes)
-                            val obj = JSONObject(jsonStr)
-                            sha256Checksum = obj.optString("sha256")
+                    val path = state.filePath
+                    val checksum = withContext(Dispatchers.IO) {
+                        try {
+                            val f = File(path)
+                            computeFileSha256(f)
+                        } catch (_: Throwable) {
+                            null
                         }
-                    } catch (_: Throwable) {}
+                    }
+                    sha256Checksum = checksum
                 }
-
-                showCompleteSheet = true
 
                 if (NxfrPreferences.autoFinish.value) {
                     delay(1500)

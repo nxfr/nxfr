@@ -197,9 +197,11 @@ enum FfiEvent {
     },
     Complete {
         file_path: Option<String>,
+        peer_id: Option<String>,
     },
     Error {
         msg: String,
+        peer_id: Option<String>,
     },
 }
 
@@ -211,6 +213,65 @@ struct PendingOffer {
     display_name: String,
     total_size: u64,
     total_files: u32,
+}
+
+/// RAII guard to clean up incomplete temporary receive files on failure, cancel, or error.
+struct TmpFileGuard {
+    path: std::path::PathBuf,
+    committed: bool,
+}
+
+impl TmpFileGuard {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for TmpFileGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Resolve filename collisions by appending (1), (2), etc.
+fn resolve_collision(path: &std::path::Path) -> std::path::PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+    for i in 1..=999 {
+        let candidate = parent.join(format!("{stem} ({i}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    parent.join(format!(
+        "{stem}_{}{ext}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    ))
 }
 
 /// Identity loaded from disk (key + cert + device_id).
@@ -254,6 +315,7 @@ struct Session {
 struct Listener {
     pending_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcceptedConn>>>,
     identity: Arc<FfiIdentity>,
+    #[allow(dead_code)] // Retained for future logging/debugging.
     port: u16,
     store_dir: String,
     cancel_token: tokio_util::sync::CancellationToken,
@@ -586,11 +648,13 @@ fn create_reuseaddr_listener(port: u16) -> Result<tokio::net::TcpListener, Strin
     use std::net::SocketAddr;
 
     let domain = Domain::IPV4;
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+    let socket = Socket::new(domain, Type::STREAM.cloexec(), Some(Protocol::TCP))
         .map_err(|e| format!("socket creation failed: {e}"))?;
     socket
         .set_reuse_address(true)
         .map_err(|e| format!("set_reuse_address failed: {e}"))?;
+    #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
+    let _ = socket.set_reuse_port(true);
     socket
         .set_nonblocking(true)
         .map_err(|e| format!("set_nonblocking failed: {e}"))?;
@@ -665,6 +729,7 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
             let accept_task = tokio::spawn(async move {
                 loop {
                     tokio::select! {
+                        biased;
                         _ = cancel_clone.cancelled() => {
                             log::info!("[nxfr-ffi] Accept loop cancelled, releasing TCP listener.");
                             break;
@@ -716,6 +781,7 @@ pub extern "C" fn nxfr_listen(port: u16, store_dir: *const c_char) -> *mut c_cha
                         }
                     }
                 }
+                drop(listener);
             });
 
             Ok::<_, String>((actual_port, cancel_token, accept_task))
@@ -944,6 +1010,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                                         let _ = event_tx_clone
                                             .send(FfiEvent::Error {
                                                 msg: format!("SAS derivation failed: {e}"),
+                                                peer_id: None,
                                             })
                                             .await;
                                         return;
@@ -964,6 +1031,7 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                     let _ = event_tx_clone
                         .send(FfiEvent::Error {
                             msg: "connection closed before offer".into(),
+                            peer_id: None,
                         })
                         .await;
                 }
@@ -1131,7 +1199,7 @@ pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_cha
             return json_err(&format!("file not found: {file_path}"));
         }
 
-        let (conn_arc, event_tx, session_id) = {
+        let (conn_arc, event_tx, session_id, peer_device_id) = {
             let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
@@ -1141,14 +1209,15 @@ pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_cha
                 session.conn.clone(),
                 session.event_tx.clone(),
                 session.session_id,
+                session.peer_device_id,
             )
         };
 
         let file_path_owned = file_path.to_string();
         let rt = get_runtime();
         rt.spawn(async move {
-            if let Err(e) = do_send_file(conn_arc, session_id, &file_path_owned, &event_tx).await {
-                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string() }).await;
+            if let Err(e) = do_send_file(conn_arc, session_id, peer_device_id, &file_path_owned, &event_tx).await {
+                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string(), peer_id: None }).await;
             }
         });
 
@@ -1163,6 +1232,7 @@ pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_cha
 async fn do_send_file(
     conn_arc: Arc<tokio::sync::Mutex<Option<NxfrConnection<TlsStream>>>>,
     session_id: u32,
+    peer_device_id: [u8; 32],
     file_path: &str,
     event_tx: &mpsc::Sender<FfiEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1230,6 +1300,7 @@ async fn do_send_file(
             let _ = event_tx
                 .send(FfiEvent::Error {
                     msg: "Accept timeout: peer did not respond within 120s".to_string(),
+                    peer_id: Some(hex::encode(peer_device_id)),
                 })
                 .await;
             return Err("accept timeout (120s)".into());
@@ -1370,11 +1441,30 @@ async fn do_send_file(
             ..
         } => {
             log::info!("[sender] TransferAck(Success) received — transfer done");
+            let _ = event_tx.send(FfiEvent::Complete { file_path: None, peer_id: Some(hex::encode(peer_device_id)) }).await;
         }
-        other => log::warn!("[sender] unexpected TransferAck: {other:?}"),
+        ControlMessage::TransferAck {
+            status: TransferAckStatus::PartialFailure,
+            ..
+        } => {
+            log::warn!("[sender] TransferAck(PartialFailure) — reporting error");
+            let _ = event_tx
+                .send(FfiEvent::Error {
+                    msg: "Transfer completed with partial failures on receiver".into(),
+                    peer_id: Some(hex::encode(peer_device_id)),
+                })
+                .await;
+        }
+        other => {
+            log::warn!("[sender] unexpected response after TransferComplete: {other:?}");
+            let _ = event_tx
+                .send(FfiEvent::Error {
+                    msg: format!("Unexpected response after TransferComplete: {other:?}"),
+                    peer_id: Some(hex::encode(peer_device_id)),
+                })
+                .await;
+        }
     }
-
-    let _ = event_tx.send(FfiEvent::Complete { file_path: None }).await;
     Ok(())
 }
 
@@ -1433,13 +1523,15 @@ pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
                         "file_name": file_name,
                     }))
                 }
-                FfiEvent::Complete { file_path } => json_ok(serde_json::json!({
+                FfiEvent::Complete { file_path, peer_id } => json_ok(serde_json::json!({
                     "event": "complete",
                     "file_path": file_path.unwrap_or_default(),
+                    "peer_id": peer_id.unwrap_or_default(),
                 })),
-                FfiEvent::Error { msg } => json_ok(serde_json::json!({
+                FfiEvent::Error { msg, peer_id } => json_ok(serde_json::json!({
                     "event": "error",
                     "error": msg,
+                    "peer_id": peer_id.unwrap_or_default(),
                 })),
             },
             Err(mpsc::error::TryRecvError::Empty) => json_ok(serde_json::json!({"event": "none"})),
@@ -1456,7 +1548,7 @@ pub extern "C" fn nxfr_pump(handle: u64) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
     ffi_guard(|| {
-        let (conn_arc, event_tx, session_id, pending_offer) = {
+        let (conn_arc, event_tx, session_id, pending_offer, peer_device_id) = {
             let guard = sessions_map().lock().unwrap_or_else(|e| e.into_inner());
             let session = match guard.get(&handle) {
                 Some(s) => s,
@@ -1472,6 +1564,7 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
                 session.event_tx.clone(),
                 session.session_id,
                 offer,
+                session.peer_device_id,
             )
         };
 
@@ -1507,8 +1600,8 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
 
         // Spawn receiver task.
         rt.spawn(async move {
-            if let Err(e) = do_receive_file(conn_arc, session_id, offer, &event_tx).await {
-                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string() }).await;
+            if let Err(e) = do_receive_file(conn_arc, session_id, peer_device_id, offer, &event_tx).await {
+                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string(), peer_id: None }).await;
             }
         });
 
@@ -1520,6 +1613,7 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
 async fn do_receive_file(
     conn_arc: Arc<tokio::sync::Mutex<Option<NxfrConnection<TlsStream>>>>,
     session_id: u32,
+    peer_device_id: [u8; 32],
     offer: PendingOffer,
     event_tx: &mpsc::Sender<FfiEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1614,9 +1708,27 @@ async fn do_receive_file(
             let _ = std::fs::create_dir_all(parent);
         }
 
-        // Write chunks to a temp file on disk instead of accumulating in memory.
-        let tmp_path = final_path.with_extension("nxfr_tmp");
+        // Write chunks to a unique temp file on disk instead of accumulating in memory.
+        let mut rand_bytes = [0u8; 8];
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut rand_bytes)
+            .map_err(|_| "RNG fill failed")?;
+        let final_file_name = final_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        let tmp_name = format!(
+            ".{}.{}_{}.nxfr_tmp",
+            final_file_name,
+            hex::encode(offer.transfer_id.as_bytes()),
+            hex::encode(rand_bytes)
+        );
+        let tmp_path = match final_path.parent() {
+            Some(p) => p.join(tmp_name),
+            None => canonical_root.join(tmp_name),
+        };
+
         let mut tmp_file = std::fs::File::create(&tmp_path)?;
+        let mut tmp_guard = TmpFileGuard::new(tmp_path.clone());
         let mut hasher = Sha256::new();
         let mut file_received_bytes: u64 = 0;
         let mut expected_offset: u64 = 0;
@@ -1629,7 +1741,6 @@ async fn do_receive_file(
                 match msg {
                     ControlMessage::TransferComplete { .. } => break,
                     ControlMessage::TransferCancel { .. } => {
-                        let _ = std::fs::remove_file(&tmp_path);
                         return Err("transfer cancelled by peer".into());
                     }
                     _ => continue,
@@ -1642,7 +1753,6 @@ async fn do_receive_file(
 
             // Parse chunk: [offset:8][hash:32][data:...]
             if payload.len() < 41 {
-                let _ = std::fs::remove_file(&tmp_path);
                 return Err("chunk too small".into());
             }
             let chunk_offset = u64::from_be_bytes(payload[0..8].try_into().unwrap());
@@ -1651,7 +1761,6 @@ async fn do_receive_file(
 
             // Reject out-of-order or duplicate chunks.
             if chunk_offset != expected_offset {
-                let _ = std::fs::remove_file(&tmp_path);
                 return Err(format!(
                     "chunk offset mismatch: expected {expected_offset}, got {chunk_offset}"
                 ).into());
@@ -1660,7 +1769,6 @@ async fn do_receive_file(
             // Verify per-chunk hash.
             let computed = Sha256::digest(chunk_data);
             if computed.as_slice() != chunk_hash {
-                let _ = std::fs::remove_file(&tmp_path);
                 return Err(format!("chunk hash mismatch at offset {chunk_offset}").into());
             }
 
@@ -1703,7 +1811,6 @@ async fn do_receive_file(
         // Verify per-file SHA-256
         let final_hash: [u8; 32] = hasher.finalize().into();
         if final_hash != expected_hash {
-            let _ = std::fs::remove_file(&tmp_path);
             return Err(format!(
                 "file hash mismatch for {}: expected {}, got {}",
                 relative_path,
@@ -1713,10 +1820,12 @@ async fn do_receive_file(
             .into());
         }
 
-        // Rename temp file to final destination.
-        std::fs::rename(&tmp_path, &final_path)?;
+        // Rename temp file to collision-safe final destination and commit guard.
+        let final_dest = resolve_collision(&final_path);
+        std::fs::rename(&tmp_path, &final_dest)?;
+        tmp_guard.commit();
         if first_received_path.is_none() {
-            first_received_path = Some(final_path.to_string_lossy().to_string());
+            first_received_path = Some(final_dest.to_string_lossy().to_string());
         }
         received_files_count += 1;
     }
@@ -1742,6 +1851,7 @@ async fn do_receive_file(
     let _ = event_tx
         .send(FfiEvent::Complete {
             file_path: final_res_path,
+            peer_id: Some(hex::encode(peer_device_id)),
         })
         .await;
     Ok(())
@@ -2023,20 +2133,24 @@ pub extern "C" fn nxfr_set_name(store_dir: *const c_char, name: *const c_char) -
 #[no_mangle]
 pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
     ffi_guard(|| {
-        if let Some(listener) = listeners_map()
+        if let Some(mut listener) = listeners_map()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&handle)
         {
-            log::info!(
-                "[nxfr-ffi] nxfr_close: Aborting listener handle {} on port {}",
-                handle,
-                listener.port
-            );
             listener.cancel_token.cancel();
-            listener.accept_task.abort();
+            let rt = get_runtime();
+            let _join_res = rt.block_on(async {
+                if tokio::time::timeout(std::time::Duration::from_millis(500), &mut listener.accept_task)
+                    .await
+                    .is_err()
+                {
+                    log::warn!("[nxfr-ffi] accept_task for handle {handle} timed out, aborting");
+                    listener.accept_task.abort();
+                    let _ = (&mut listener.accept_task).await;
+                }
+            });
             drop(listener);
-            log::info!("[nxfr-ffi] listener dropped, port released");
             return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
         }
 
@@ -2432,12 +2546,16 @@ pub extern "C" fn nxfr_web_stop() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn nxfr_web_status() -> *mut c_char {
     ffi_guard(|| {
-        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
-        match &*guard {
+        let handle_opt = {
+            let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        match handle_opt {
             Some(handle) => {
                 let active = handle.active_transfers_count();
                 let stopped = handle.is_stopped();
                 let auto_accept = handle.is_auto_accept();
+                let downloads = handle.download_count();
 
                 // Collect pending requests (try_lock to avoid blocking)
                 let pending: Vec<serde_json::Value> = match handle.pending_requests.try_lock() {
@@ -2456,6 +2574,7 @@ pub extern "C" fn nxfr_web_status() -> *mut c_char {
                 json_ok(serde_json::json!({
                     "running": !stopped,
                     "active_transfers": active,
+                    "download_count": downloads,
                     "port": handle.port,
                     "auto_accept": auto_accept,
                     "pending_requests": pending,
@@ -2464,6 +2583,7 @@ pub extern "C" fn nxfr_web_status() -> *mut c_char {
             None => json_ok(serde_json::json!({
                 "running": false,
                 "active_transfers": 0,
+                "download_count": 0,
                 "port": 0,
                 "auto_accept": false,
                 "pending_requests": [],
@@ -2483,8 +2603,11 @@ pub extern "C" fn nxfr_web_respond_request(
             Ok(s) => s,
             Err(e) => return json_err(&e),
         };
-        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
-        match &*guard {
+        let handle_opt = {
+            let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        match handle_opt {
             Some(handle) => {
                 let rt = get_runtime();
                 match rt.block_on(handle.respond_to_request(sid, accepted)) {
@@ -2501,8 +2624,11 @@ pub extern "C" fn nxfr_web_respond_request(
 #[no_mangle]
 pub extern "C" fn nxfr_web_set_auto_accept(enabled: bool) -> *mut c_char {
     ffi_guard(|| {
-        let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
-        match &*guard {
+        let handle_opt = {
+            let guard = web_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        match handle_opt {
             Some(handle) => {
                 handle.set_auto_accept(enabled);
                 json_ok(serde_json::json!({ "status": "ok", "auto_accept": enabled }))
@@ -2629,6 +2755,7 @@ pub extern "C" fn nxfr_web_fingerprint(store_dir: *const c_char) -> *mut c_char 
         json_ok(serde_json::json!({
             "fingerprint": hex_str,
             "formatted": formatted,
+            "spki_sha256": formatted,
         }))
     })
 }
@@ -3274,6 +3401,7 @@ mod tests {
         assert!(devices.is_empty(), "should be empty after unpair");
     }
 
+
     #[test]
     fn test_listener_teardown_and_rapid_rebind() {
         let dir = tempfile::tempdir().unwrap();
@@ -3427,5 +3555,73 @@ mod tests {
             fingerprint, device_id,
             "Web fingerprint must match device_id SPKI sha256"
         );
+    }
+
+    #[test]
+    fn test_resolve_collision_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("report.pdf");
+
+        // Non-existing file returns itself
+        assert_eq!(resolve_collision(&file_path), file_path);
+
+        // Create report.pdf
+        std::fs::write(&file_path, b"content").unwrap();
+        let coll1 = resolve_collision(&file_path);
+        assert_eq!(coll1, dir.path().join("report (1).pdf"));
+
+        // Different extension report.docx is independent
+        let docx_path = dir.path().join("report.docx");
+        assert_eq!(resolve_collision(&docx_path), docx_path);
+
+        // Create report (1).pdf
+        std::fs::write(&coll1, b"content 2").unwrap();
+        let coll2 = resolve_collision(&file_path);
+        assert_eq!(coll2, dir.path().join("report (2).pdf"));
+    }
+
+    #[test]
+    fn test_tmp_file_guard_raii_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp_path = dir.path().join(".test.123_abc.nxfr_tmp");
+        std::fs::write(&tmp_path, b"uncommitted bytes").unwrap();
+        assert!(tmp_path.exists());
+
+        {
+            let _guard = TmpFileGuard::new(tmp_path.clone());
+            // Drops without commit
+        }
+        assert!(!tmp_path.exists(), "Tmp file must be unlinked on uncommitted drop");
+
+        // Committed guard preserves file
+        std::fs::write(&tmp_path, b"committed bytes").unwrap();
+        {
+            let mut guard = TmpFileGuard::new(tmp_path.clone());
+            guard.commit();
+        }
+        assert!(tmp_path.exists(), "Tmp file must remain after commit");
+    }
+
+    #[test]
+    fn test_cstr_to_str_null_and_invalid_utf8() {
+        assert_eq!(cstr_to_str(std::ptr::null()), Err("null pointer".to_string()));
+
+        // Invalid UTF-8 bytes
+        let bad_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
+        let res = cstr_to_str(bad_utf8.as_ptr() as *const c_char);
+        assert!(res.is_err(), "Invalid UTF-8 must return Err");
+    }
+
+    #[test]
+    fn test_cstring_nul_error_handling() {
+        // String with interior NUL
+        let bad_string = "hello\0world";
+        let cstr_res = std::ffi::CString::new(bad_string);
+        assert!(cstr_res.is_err(), "CString::new with interior NUL must return Err");
+
+        // json_ok gracefully returns without panic
+        let ptr = json_ok(serde_json::json!({ "msg": "valid" }));
+        assert!(!ptr.is_null());
+        unsafe { nxfr_string_free(ptr); }
     }
 }

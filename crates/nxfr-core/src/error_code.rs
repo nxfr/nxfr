@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// Protocol error codes per §15.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ErrorCode {
     UnsupportedVersion,
     InvalidFrame,
@@ -20,6 +20,8 @@ pub enum ErrorCode {
     RateLimited,
     InternalError,
     ManifestTooLarge,
+    /// Forward-compatible unrecognized error code from a newer peer.
+    Unknown(String),
 }
 
 impl ErrorCode {
@@ -40,7 +42,7 @@ impl ErrorCode {
         matches!(self, Self::ChecksumMismatch | Self::RateLimited)
     }
 
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::UnsupportedVersion => "unsupported_version",
             Self::InvalidFrame => "invalid_frame",
@@ -59,29 +61,30 @@ impl ErrorCode {
             Self::RateLimited => "rate_limited",
             Self::InternalError => "internal_error",
             Self::ManifestTooLarge => "manifest_too_large",
+            Self::Unknown(s) => s.as_str(),
         }
     }
 
-    pub fn from_wire_str(s: &str) -> Option<Self> {
+    pub fn from_wire_str(s: &str) -> Self {
         match s {
-            "unsupported_version" => Some(Self::UnsupportedVersion),
-            "invalid_frame" => Some(Self::InvalidFrame),
-            "payload_too_large" => Some(Self::PayloadTooLarge),
-            "invalid_cbor" => Some(Self::InvalidCbor),
-            "unknown_message_type" => Some(Self::UnknownMessageType),
-            "session_timeout" => Some(Self::SessionTimeout),
-            "checksum_mismatch" => Some(Self::ChecksumMismatch),
-            "disk_full" => Some(Self::DiskFull),
-            "storage_error" => Some(Self::StorageError),
-            "path_rejected" => Some(Self::PathRejected),
-            "transfer_not_found" => Some(Self::TransferNotFound),
-            "stream_not_found" => Some(Self::StreamNotFound),
-            "identity_changed" => Some(Self::IdentityChanged),
-            "pair_required" => Some(Self::PairRequired),
-            "rate_limited" => Some(Self::RateLimited),
-            "internal_error" => Some(Self::InternalError),
-            "manifest_too_large" => Some(Self::ManifestTooLarge),
-            _ => None,
+            "unsupported_version" => Self::UnsupportedVersion,
+            "invalid_frame" => Self::InvalidFrame,
+            "payload_too_large" => Self::PayloadTooLarge,
+            "invalid_cbor" => Self::InvalidCbor,
+            "unknown_message_type" => Self::UnknownMessageType,
+            "session_timeout" => Self::SessionTimeout,
+            "checksum_mismatch" => Self::ChecksumMismatch,
+            "disk_full" => Self::DiskFull,
+            "storage_error" => Self::StorageError,
+            "path_rejected" => Self::PathRejected,
+            "transfer_not_found" => Self::TransferNotFound,
+            "stream_not_found" => Self::StreamNotFound,
+            "identity_changed" => Self::IdentityChanged,
+            "pair_required" => Self::PairRequired,
+            "rate_limited" => Self::RateLimited,
+            "internal_error" => Self::InternalError,
+            "manifest_too_large" => Self::ManifestTooLarge,
+            other => Self::Unknown(other.to_string()),
         }
     }
 }
@@ -108,6 +111,7 @@ mod tests {
 
         assert!(!ErrorCode::ChecksumMismatch.is_fatal());
         assert!(!ErrorCode::UnknownMessageType.is_fatal());
+        assert!(!ErrorCode::Unknown("custom_nonfatal".into()).is_fatal());
     }
 
     #[test]
@@ -116,6 +120,7 @@ mod tests {
         assert!(ErrorCode::RateLimited.is_retryable());
 
         assert!(!ErrorCode::InternalError.is_retryable());
+        assert!(!ErrorCode::Unknown("custom_error".into()).is_retryable());
     }
 
     #[test]
@@ -142,10 +147,14 @@ mod tests {
 
         for code in codes {
             let s = code.as_str();
-            assert_eq!(ErrorCode::from_wire_str(s), Some(code));
+            assert_eq!(ErrorCode::from_wire_str(s), code);
             assert_eq!(code.to_string(), s);
         }
 
-        assert_eq!(ErrorCode::from_wire_str("invalid_code"), None);
+        // Unknown forward-compatible codes
+        let unknown = ErrorCode::from_wire_str("future_quota_error");
+        assert_eq!(unknown, ErrorCode::Unknown("future_quota_error".to_string()));
+        assert_eq!(unknown.as_str(), "future_quota_error");
+        assert_eq!(unknown.to_string(), "future_quota_error");
     }
 }

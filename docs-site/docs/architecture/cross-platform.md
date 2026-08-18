@@ -25,7 +25,7 @@ Path validation is a critical security and compatibility feature. To ensure file
 
 ## Future Targets
 
-While Linux is the primary target currently, future development aims to expand native clients to:
-- **Android**: Utilizing Kotlin and JNI for core logic.
+While Linux and Android are already shipped, future development aims to expand native clients to:
 - **Windows**: Utilizing C# or Rust for native WinUI 3 integration.
 - **macOS**: Utilizing Swift for native integration.
+- **iOS**: Utilizing Swift for native integration.

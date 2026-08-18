@@ -71,12 +71,16 @@ class NxfrService : Service() {
             val inst = instance
             if (inst != null && _isListening.value) {
                 inst.serviceScope.launch {
+                    val oldJob = inst.listenerJob
+                    inst.listenerJob = null
+                    oldJob?.cancel()
+                    try { oldJob?.join() } catch (_: Throwable) {}
                     if (inst.listenerHandle != 0L) {
                         try { withContext(Dispatchers.IO) { NxfrBridge.nxfr_close(inst.listenerHandle) } } catch (_: Throwable) {}
                         inst.listenerHandle = 0
-                        inst.listening = false
-                        _isListening.value = false
                     }
+                    inst.listening = false
+                    _isListening.value = false
                     inst.startListening()
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, "Listening on $newPort", Toast.LENGTH_SHORT).show()
@@ -557,8 +561,12 @@ class NxfrService : Service() {
         super.onDestroy()
         serviceScope.cancel()
         if (activeSessionHandle != 0L) {
-            NxfrBridge.nxfr_close(activeSessionHandle)
+            try { NxfrBridge.nxfr_close(activeSessionHandle) } catch (_: Throwable) {}
             activeSessionHandle = 0
+        }
+        if (listenerHandle != 0L) {
+            try { NxfrBridge.nxfr_close(listenerHandle) } catch (_: Throwable) {}
+            listenerHandle = 0
         }
     }
 
@@ -752,6 +760,9 @@ class NxfrService : Service() {
             val sendError = sendResult.getString("error")
             Log.e(TAG, "doSendFile nxfr_send_file failed: $sendError")
             _nxfrState.value = NxfrState.Error(sendError)
+            try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
+            activeSessionHandle = 0
+            evaluateLifecycleContract()
             return
         }
         _nxfrState.value = NxfrState.Transferring(0f, 0, filePath, isSending = true)
@@ -906,15 +917,21 @@ class NxfrService : Service() {
                     )
 
                     if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                        val historyPaths = if (isSending) {
+                            val sendPath = (_nxfrState.value as? NxfrState.Transferring)?.fileName
+                            listOfNotNull(sendPath)
+                        } else {
+                            listOfNotNull(publishedPath)
+                        }
                         recordHistory(
                             context = this,
                             direction = if (isSending) "send" else "recv",
                             peerName = activePeerName,
                             peerId = event.optString("peer_id"),
-                            fileCount = 1,
+                            fileCount = historyPaths.size.coerceAtLeast(1),
                             totalBytes = completedFileSize,
                             status = "complete",
-                            filePaths = listOfNotNull(publishedPath)
+                            filePaths = historyPaths
                         )
                     }
 
@@ -934,16 +951,18 @@ class NxfrService : Service() {
                     }
                     val raw = if (event.has("error")) event.optString("error") else event.optString("message", "Unknown error")
                     val status = if (raw.contains("reject", ignoreCase = true)) "rejected" else "failed"
-                    recordHistory(
-                        context = this,
-                        direction = if (isSending) "send" else "recv",
-                        peerName = activePeerName,
-                        peerId = if (event.has("peer_id")) event.optString("peer_id") else event.optString("device_id", ""),
-                        fileCount = 1,
-                        totalBytes = 0L,
-                        status = status,
-                        filePaths = emptyList()
-                    )
+                    if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                        recordHistory(
+                            context = this,
+                            direction = if (isSending) "send" else "recv",
+                            peerName = activePeerName,
+                            peerId = if (event.has("peer_id")) event.optString("peer_id") else event.optString("device_id", ""),
+                            fileCount = 1,
+                            totalBytes = 0L,
+                            status = status,
+                            filePaths = emptyList()
+                        )
+                    }
                     // Map storage errors to human-readable messages.
                     val human = when {
                         raw.contains("EROFS") || raw.contains("os error 30") || raw.contains("StorageError") ->
@@ -970,12 +989,25 @@ class NxfrService : Service() {
                 }
                 "disconnected" -> {
                     if (handle != activeSessionHandle) return
+                    if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                        recordHistory(
+                            context = this,
+                            direction = if (isSending) "send" else "recv",
+                            peerName = activePeerName,
+                            peerId = event.optString("peer_id", event.optString("device_id", "")),
+                            fileCount = 1,
+                            totalBytes = 0L,
+                            status = "failed",
+                            filePaths = emptyList()
+                        )
+                    }
                     notifManager.showTransferFailedNotification(
                         transferId = transferId,
                         title = "Transfer disconnected",
                         message = "Session disconnected unexpectedly"
                     )
                     _nxfrState.value = NxfrState.Error("Session disconnected")
+                    try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
                     activeSessionHandle = 0
                     evaluateLifecycleContract()
                     return

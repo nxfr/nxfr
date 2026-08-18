@@ -417,10 +417,7 @@ fn decode_pair_request(map: &CborMap) -> Result<ControlMessage, CodecError> {
 
 fn decode_error(map: &CborMap) -> Result<ControlMessage, CodecError> {
     let code_str = get_text(map, "code")?;
-    let code = ErrorCode::from_wire_str(&code_str).ok_or_else(|| CodecError::WrongType {
-        field: "code".to_string(),
-        expected: "known error code string",
-    })?;
+    let code = ErrorCode::from_wire_str(&code_str);
     Ok(ControlMessage::Error {
         code,
         message: get_text_opt(map, "message")?,
@@ -1114,6 +1111,19 @@ mod tests {
             code: ErrorCode::ChecksumMismatch,
             message: Some("Hash verification failed".to_string()),
             fatal: false,
+            details: None,
+        };
+        let encoded = encode_control(&msg).unwrap();
+        let decoded = decode_control(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn round_trip_unknown_error_code() {
+        let msg = ControlMessage::Error {
+            code: ErrorCode::Unknown("future_peer_error_code_xyz".to_string()),
+            message: Some("Something new happened".to_string()),
+            fatal: true,
             details: None,
         };
         let encoded = encode_control(&msg).unwrap();

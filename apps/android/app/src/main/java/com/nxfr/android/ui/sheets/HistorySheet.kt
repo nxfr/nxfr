@@ -28,6 +28,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nxfr.android.service.NxfrService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.nxfr.android.ui.theme.deckColors
 import org.json.JSONObject
 import java.io.File
@@ -114,7 +116,9 @@ fun HistorySheet(
     }
 
     LaunchedEffect(Unit) {
-        loadHistory()
+        withContext(Dispatchers.IO) {
+            loadHistory()
+        }
     }
 
     ModalBottomSheet(
@@ -310,7 +314,7 @@ private fun HistoryDeckRow(item: HistoryItem) {
     val isSend = item.direction.equals("send", ignoreCase = true)
 
     val (statusLabel, statusColor) = when (item.status.lowercase()) {
-        "complete" -> "COMPLETE" to deck.signalSuccess
+        "complete", "completed" -> "COMPLETE" to deck.signalSuccess
         "rejected" -> "REJECTED" to deck.signalAlert
         "cancelled" -> "CANCELLED" to deck.textDim
         else -> "FAILED" to deck.signalAlert

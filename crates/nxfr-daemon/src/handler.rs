@@ -61,8 +61,7 @@ pub async fn handle_incoming(
             error!("IDENTITY CHANGED for paired device {peer_id_hex} — sending fatal error");
             let mut conn = NxfrConnection::new(tls_stream);
             let err_msg = ControlMessage::Error {
-                code: nxfr_core::error_code::ErrorCode::from_wire_str("identity_changed")
-                    .unwrap_or(nxfr_core::error_code::ErrorCode::InternalError),
+                code: nxfr_core::error_code::ErrorCode::IdentityChanged,
                 message: Some("SPKI does not match pinned identity".to_string()),
                 fatal: true,
                 details: None,

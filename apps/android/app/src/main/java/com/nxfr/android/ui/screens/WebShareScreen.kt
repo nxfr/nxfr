@@ -132,7 +132,7 @@ fun WebShareScreen(
                 try {
                     val fpJson = NxfrService.NxfrBridge.nxfr_web_fingerprint(storeDir)
                     val fpObj = JSONObject(fpJson)
-                    fingerprint = fpObj.optString("spki_sha256", "Unknown")
+                    fingerprint = fpObj.optString("formatted", fpObj.optString("fingerprint", "Unknown"))
                 } catch (_: Throwable) {}
             } else {
                 Toast.makeText(context, "Failed to start web share: ${res.optString("error")}", Toast.LENGTH_LONG).show()
@@ -216,27 +216,26 @@ fun WebShareScreen(
         startServerWithPin(if (isPinProtected) pinCode else null)
     }
 
-    // Clean up on dispose
-    DisposableEffect(Unit) {
-        onDispose {
-            try {
-                NxfrService.NxfrBridge.nxfr_web_stop()
-            } catch (_: Throwable) {}
-            val stagingDir = File(context.cacheDir, "web-share-staging")
-            stagingDir.deleteRecursively()
-        }
+    fun stopAndCleanup() {
+        try {
+            NxfrService.NxfrBridge.nxfr_web_stop()
+        } catch (_: Throwable) {}
+        val stagingDir = File(context.cacheDir, "web-share-staging")
+        stagingDir.deleteRecursively()
+        onStop()
     }
 
     if (nativeError != null) {
         ErrorScreen(
             title = "NATIVE LIB OUTDATED",
             message = nativeError ?: "NATIVE LIB OUTDATED — run rebuildNative + reinstall",
-            onBack = onStop
+            onBack = { stopAndCleanup() }
         )
         return
     }
 
     var activeTransfers by remember { mutableIntStateOf(0) }
+    var lastRecordedDownloads by remember { mutableIntStateOf(0) }
 
     // Approval gate state
     data class PendingRequestUi(
@@ -268,7 +267,29 @@ fun WebShareScreen(
                 val obj = org.json.JSONObject(statusJson)
                 val isRunning = obj.optBoolean("running", true)
                 val active = obj.optInt("active_transfers", 0)
+                val dlCount = obj.optInt("download_count", 0)
                 activeTransfers = active
+
+                // M2: Record history when a new download completes
+                if (dlCount > lastRecordedDownloads) {
+                    val newCompleted = dlCount - lastRecordedDownloads
+                    lastRecordedDownloads = dlCount
+                    if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                        for (i in 0 until newCompleted) {
+                            val filePaths = items.mapNotNull { it.localFile?.absolutePath }
+                            NxfrService.recordHistory(
+                                context = context,
+                                direction = "send",
+                                peerName = "Web Browser",
+                                peerId = "web-share",
+                                fileCount = items.size.coerceAtLeast(1),
+                                totalBytes = totalSize,
+                                status = "complete",
+                                filePaths = filePaths
+                            )
+                        }
+                    }
+                }
 
                 // Parse pending requests
                 val pendingArr = obj.optJSONArray("pending_requests")
@@ -289,7 +310,7 @@ fun WebShareScreen(
                 }
 
                 if (!isRunning) {
-                    onStop()
+                    stopAndCleanup()
                     break
                 }
 
@@ -300,7 +321,7 @@ fun WebShareScreen(
                     if (secondsRemaining > 0) {
                         secondsRemaining--
                     } else {
-                        onStop()
+                        stopAndCleanup()
                         break
                     }
                 }
@@ -308,7 +329,7 @@ fun WebShareScreen(
                 if (secondsRemaining > 0) {
                     secondsRemaining--
                 } else {
-                    onStop()
+                    stopAndCleanup()
                     break
                 }
             }
@@ -353,7 +374,7 @@ fun WebShareScreen(
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
                 text = "${(stagingProgress * 100).toInt()}%",
@@ -364,7 +385,7 @@ fun WebShareScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            OutlinedButton(onClick = onStop) {
+            OutlinedButton(onClick = { stopAndCleanup() }) {
                 Text("Cancel")
             }
         }
@@ -935,7 +956,7 @@ fun WebShareScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         Button(
-            onClick = onStop,
+            onClick = { stopAndCleanup() },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
         ) {

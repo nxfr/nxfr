@@ -49,6 +49,7 @@ All protocol logic lives in Rust (`nxfr-ffi` crate). The Kotlin layer is a wrapp
 | `nxfr_web_status()` | Query running status and active in-flight stream count |
 | `nxfr_web_stop()` | Gracefully stop active web server |
 | `nxfr_web_fingerprint(store_dir)` | Compute SPKI SHA-256 fingerprint for web cert pinning |
+| `nxfr_web_respond_request(handle, response)` | Respond to a pending web upload/download request |
 | `nxfr_history_add(record, store_dir)` | Append record to persistent transfer history |
 | `nxfr_history_list(limit, store_dir)` | Retrieve ordered transfer history records |
 | `nxfr_history_clear(store_dir)` | Clear transfer history records |
@@ -82,9 +83,9 @@ sequenceDiagram
     end
 
     R->>F: TransferComplete
+    F-->>K: {event: "completing", ...}
     F->>R: TransferAck
-    K->>F: nxfr_pump(2)
-    F-->>K: {event: "complete", file_path: "..."}
+    F-->>K: {event: "complete", file_path: "...", peer_id: "..."}
 ```
 
 ## Build Requirements

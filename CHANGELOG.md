@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Sender false-positive completion (H3)**: `FfiEvent::Complete` was emitted even when the receiver reported partial failure. Now only fires on `TransferAckStatus::Success`; partial failures map to `FfiEvent::Error`.
+- **Receiver state machine missing transitions (H7)**: Added `AllChunksReceived` and `AckSent` events to the transfer state machine. Receivers now go through `Streaming → Completing → Complete` instead of skipping straight to Complete.
+- **`/dl/all.zip` buffered entire archive in memory (H4)**: Rewrote the multi-file ZIP download endpoint to stream using chunked transfer encoding (`ChunkedWriter`). No more OOM on large share sessions.
+- **Web server mutex deadlock (H6)**: `nxfr_web_respond_request` held a mutex lock across an `rt.block_on()` call, causing deadlocks under concurrent requests. Fixed by cloning the handle out of the lock first.
+- **Native listener/session handle leaks on Android (H5)**: `NxfrService` wasn't closing native handles in `onDestroy`, disconnect handler, or send-error paths. Added `nxfr_close()` calls in all three.
+- **SHA-256 computed on main thread (H8)**: `TransferScreen.kt` was hashing files synchronously on the Compose main thread. Moved to `withContext(Dispatchers.IO)` with a streaming 64KB buffer.
+- **Web share/upload lifecycle not tied to Composable disposal (H9)**: `DisposableEffect` wasn't stopping the web server on screen exit. Added explicit `stopAndCleanup()` in both `WebShareScreen` and `WebUploadScreen`.
+- **History status mismatch (H1)**: Status strings were inconsistent (`"complete"` vs `"completed"`) across `WebUploadScreen.kt`, `HistorySheet.kt`, and `RecentSessionsCard.kt`. Standardized to `"completed"`.
+- **Settings screen wrong identity directory (H2)**: `SettingsScreen.kt` was using `filesDir` instead of `NxfrService.getIdentityDir(context)`.
+- **Send file path and multi-file history (H10)**: `doSendFile` wasn't passing absolute paths, and multi-file transfers only recorded one history entry.
+- **History timestamp key mismatch (M1)**: `RecentSessionsCard.kt` was reading `"timestamp"` instead of `"ts_ms"`.
+- **History DB contention under concurrent access (M3)**: Added WAL journal mode and `busy_timeout(5000)` to `HistoryDb::open()`.
+- **History loading on main thread (M4)**: Wrapped `loadHistory()` in `withContext(Dispatchers.IO)`.
+- **History recorded regardless of user preference (M6)**: Guarded history recording on `NxfrPreferences.saveToHistory`.
+- **Cancelled/disconnected transfers not recorded in history (M5)**: Disconnect handler now records a history entry with `status="failed"`.
+- **Listener port rebind race on Android (M7)**: `updateActivePortAndRebind()` now cancels and joins the old listener job and closes the native handle before rebinding.
+- **Web I/O missing timeouts (M8)**: Added 15s header-read timeout and 30s chunk I/O timeout on all upload/download paths.
+- **Zero-byte file Range request crash (M9)**: `Range` header on a zero-byte file caused an underflow. Now returns 416 immediately.
+- **Temp file collisions and orphaned files (M10)**: Added `TmpFileGuard` RAII cleanup, random temp filenames, and `resolve_collision` renaming (`file (1).txt`).
+- **Web fingerprint key inconsistency (L2)**: `nxfr_web_fingerprint` now returns both `"fingerprint"` and `"spki_sha256"` keys. `WebShareScreen.kt` falls back from one to the other.
+- **File count off-by-one for single files (L3)**: Fixed file count computation in `nxfr_send_file`.
+- **Unsafe CString unwrap in JNI (L5)**: Replaced `CString::new(s).unwrap()` in `jni_bindings.rs` with safe error handling for interior NUL bytes.
+
+### Added
+- **Forward-compatible error codes (L4)**: Added `ErrorCode::Unknown(String)` variant and `from_wire_str()` fallback in `nxfr-core`, so unknown error codes from newer protocol versions don't crash older clients.
+- **Peer ID propagation (L1)**: `peer_id` (SPKI SHA-256 hex) now included in `FfiEvent::Complete` and `FfiEvent::Error` JSON output from `nxfr_pump`.
+- **Web download history tracking (M2)**: Atomic download counter and history recording for web share downloads.
+- **`SOCK_CLOEXEC` on listener sockets**: `create_reuseaddr_listener` now uses `SOCK_CLOEXEC` to prevent fd leaks across exec.
+
+### Changed
+- `nxfr-core` test count: 100 → 107 (new transfer state machine and error code tests)
+- `nxfr-ffi` test count: 38 → 44 (new CString safety, collision policy, history, and web endpoint tests)
+- `nxfr-web` test count: 7 → 13 (new chunked streaming, timeout, temp file, and ZIP tests)
+
 ## [1.0.0] - 2026-08-16
 
 ### Added

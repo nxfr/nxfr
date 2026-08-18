@@ -28,6 +28,10 @@ impl HistoryDb {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA busy_timeout = 3000;",
+        )?;
         Self::init_schema(&conn)?;
         Ok(Self { conn })
     }

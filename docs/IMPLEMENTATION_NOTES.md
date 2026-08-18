@@ -146,3 +146,35 @@ Technical decisions, rationale, and protocol interpretations across NXFR crates 
 ### 4.13 Web Portal Security: DOM Construction and Credential Hygiene
 - **Decision**: In `nxfr-web`, manifest item rendering is implemented using safe DOM construction (`createElement` + `textContent`) rather than template string `innerHTML` interpolation to completely eliminate DOM-based XSS from untrusted filenames.
 - **Log Hygiene**: Authentication tokens are strictly redacted from logs (`token=****`) to prevent credential leakage into Android logcat or terminal consoles.
+
+### 4.14 Forward-Compatible Error Code Decoding (`nxfr-core`)
+- **Issue**: Unknown error codes from newer protocol versions caused a hard parse failure, crashing the session.
+- **Resolution**: Added `ErrorCode::Unknown(String)` variant with `from_wire_str()` fallback. If a wire string doesn't match any known variant, it gets wrapped in `Unknown` instead of erroring. This keeps older clients working when talking to newer peers.
+
+### 4.15 Listener Socket `SOCK_CLOEXEC` (`nxfr-ffi`)
+- **Decision**: `create_reuseaddr_listener` now creates sockets with `Type::STREAM.cloexec()`. This sets `SOCK_CLOEXEC` at creation time (atomic, no race window) so listener file descriptors aren't leaked to child processes spawned by the host application.
+
+### 4.16 Receiver Transfer Completion Path (`nxfr-core`)
+- **Issue**: The receiver state machine jumped directly from `Streaming` to `Complete` without an intermediate step, which meant the transfer could be marked complete before `TRANSFER_ACK` was sent to the sender.
+- **Resolution**: Added `AllChunksReceived` and `AckSent` events. The receiver now transitions `Streaming → Completing` (on last chunk received) → `Complete` (only after ack is on the wire). `SendTransferAck` is emitted as an action from the `Completing` state.
+
+### 4.17 Web `/dl/all.zip` Chunked Streaming (`nxfr-web`)
+- **Issue**: The multi-file ZIP download built the entire archive in memory before sending, which OOM'd on large share sessions.
+- **Resolution**: Replaced with `ChunkedWriter` implementing RFC 9112 chunked transfer encoding. Each file entry is streamed directly from disk through chunk framing (`<hex-size>\r\n<data>\r\n`) without buffering the full archive. ZIP internal offsets track decoded payload position, not HTTP framing.
+
+### 4.18 Web I/O Timeout Guards (`nxfr-web`)
+- **Decision**: All HTTP paths now enforce `HEADER_READ_TIMEOUT` (15s) and `CHUNK_IO_TIMEOUT` (30s). Slow clients that stall during header parsing or mid-transfer get disconnected instead of holding the connection open indefinitely.
+
+### 4.19 Temp File Safety (`nxfr-web`)
+- **Issue**: Upload temp files used predictable names and weren't cleaned up on error or cancellation. Concurrent uploads to the same filename could silently overwrite each other.
+- **Resolution**: `TmpFileGuard` wraps temp files with RAII cleanup (deletes on `Drop` unless explicitly committed). Temp filenames use random suffixes. Final filenames go through `resolve_collision` which appends `(1)`, `(2)`, etc. to avoid overwrites — matching the same policy used by `nxfr-ffi` for native transfers.
+
+### 4.20 JNI CString Interior NUL Safety (`nxfr-ffi`)
+- **Issue**: `CString::new(s).unwrap()` in `jni_bindings.rs` would panic if a web response string contained an interior NUL byte, crashing the JVM.
+- **Resolution**: Replaced with a match on `CString::new()` that returns a JSON error response instead of panicking.
+
+### 4.21 Listener Rebind Lifecycle (`nxfr-ffi`, `NxfrService.kt`)
+- **Issue**: When changing the listening port, the old listener wasn't fully torn down before binding the new one, causing `EADDRINUSE` on rapid rebinds.
+- **Resolution (native)**: `nxfr_close` now cancels the accept task's cancellation token, awaits the task with a 500ms timeout (aborting if stuck), and only then drops the listener. The accept task explicitly drops its `TcpListener` reference on cancellation.
+- **Resolution (Android)**: `updateActivePortAndRebind()` cancels and joins the old `listenerJob`, calls `nxfr_close(listenerHandle)`, and resets all state before starting a new listener.
+

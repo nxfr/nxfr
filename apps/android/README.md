@@ -26,7 +26,7 @@ The Android implementation of the **Nearby Xfer Protocol (NXFR)**, featuring the
 │                    Rust Native Core                      │
 │  - nxfr-transport (TLS 1.3 mTLS, TCP 17394)              │
 │  - nxfr-web (Token/PIN HTTPS, TCP 17396)                 │
-│  - nxfr-crypto (Ed25519, SAS Key Exporter)               │
+│  - nxfr-crypto (ECDSA P-256, SAS Key Exporter)           │
 │  - nxfr-storage (Resumable Chunk Engine & Checksums)     │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -63,6 +63,10 @@ The Android implementation of the **Nearby Xfer Protocol (NXFR)**, featuring the
 - **Tier 3 (App Sandbox)**: Safe inbox fallback in `getExternalFilesDir(null)/inbox/` ensuring files are never silently dropped.
 - **Automated Cache Cleaner**: `CacheCleaner.kt` automatically purges temporary staging directories (`staging_*`, `web-share-staging`, `send_*`, `apps/`, `debug_bundle_*`) on startup and transfer completion, keeping app cache footprint near 0 MB.
 
+### 5. Transfer Integrity
+- SHA-256 file verification runs off the main thread using a streaming 64KB buffer (`Dispatchers.IO`).
+- This prevents UI jank during checksum verification of large files.
+
 ---
 
 ## Background Behavior & Battery Contract
@@ -78,6 +82,7 @@ NXFR respects device battery, radio state, and user privacy:
    - **Visible = ON**: Foreground service remains active with notification `"NXFR visible on LAN — tap to manage"`.
    - **Visible = OFF**: When visibility is toggled off and no transfer or web session is active, the service immediately invokes `stopForeground(true)` and `stopSelf()`.
    - **Terminal State Re-evaluation**: Transfer completion, error, or cancellation instantly re-evaluates the lifecycle contract, stepping down beacon intervals and tearing down background services when idle.
+   - `updateActivePortAndRebind()` properly tears down the old listener (cancels job, closes native handle, resets state) before starting a new one.
 
 3. **App Swipe Removal (`onTaskRemoved`) & OS Timeout (`onTimeout`)**:
    - Swiping NXFR away from recent apps immediately terminates web share portals (`nxfr_web_stop()`), unbinds TCP port `17396`, and stops the foreground service if visibility is disabled.

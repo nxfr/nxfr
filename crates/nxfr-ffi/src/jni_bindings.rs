@@ -570,7 +570,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let sid_cstr = std::ffi::CString::new(sid).unwrap();
+        let sid_cstr = match std::ffi::CString::new(sid) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &format!("invalid session_id: {e}")),
+        };
         let ptr = super::nxfr_web_respond_request(sid_cstr.as_ptr(), accepted != 0);
         c_result_to_jstring(&mut env, ptr)
     }));

@@ -57,7 +57,7 @@ fun RecentSessionsCard(
                             list.add(
                                 HistoryItem(
                                     id = item.optLong("id"),
-                                    tsMs = item.optLong("timestamp_ms"),
+                                    tsMs = item.optLong("ts_ms"),
                                     direction = item.optString("direction", "send"),
                                     peerName = item.optString("peer_name", "Peer"),
                                     peerId = item.optString("peer_id", ""),
@@ -155,7 +155,7 @@ fun RecentSessionsCard(
 private fun SessionLedgerRow(item: HistoryItem) {
     val deck = MaterialTheme.deckColors
     val isSend = item.direction == "send"
-    val isComplete = item.status.equals("complete", ignoreCase = true)
+    val isComplete = item.status.equals("complete", ignoreCase = true) || item.status.equals("completed", ignoreCase = true)
 
     val displayName = item.filePaths.firstOrNull()?.substringAfterLast('/') ?: "Payload #${item.id}"
     val sizeStr = formatBytes(item.totalBytes)

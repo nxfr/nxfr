@@ -86,6 +86,13 @@ fun WebUploadScreen(
     val deviceId by NxfrService.deviceId.collectAsState()
     val notificationManager = remember { TransferNotificationManager(context) }
 
+    fun stopAndCleanup() {
+        try {
+            NxfrService.NxfrBridge.nxfr_web_stop()
+        } catch (_: Throwable) {}
+        onStop()
+    }
+
     DisposableEffect(Unit) {
         Log.i("WebUploadScreen", "Starting web upload server...")
         val storeDir = NxfrService.getIdentityDir(context)
@@ -111,12 +118,7 @@ fun WebUploadScreen(
             Log.e("WebUploadScreen", "Start error: ${t.message}", t)
         }
 
-        onDispose {
-            Log.i("WebUploadScreen", "Stopping web upload server...")
-            try {
-                NxfrService.NxfrBridge.nxfr_web_stop()
-            } catch (_: Throwable) {}
-        }
+        onDispose {}
     }
 
     // Live inbox poller to detect uploaded files, publish to Downloads, and notify
@@ -133,16 +135,18 @@ fun WebUploadScreen(
                                 val size = file.length()
                                 val publishedPath = FilePublisher.publishToDownloads(context, file)
 
-                                NxfrService.recordHistory(
-                                    context = context,
-                                    direction = "recv",
-                                    peerName = "Web Browser",
-                                    peerId = "web-upload",
-                                    fileCount = 1,
-                                    totalBytes = size,
-                                    status = "completed",
-                                    filePaths = listOf(publishedPath)
-                                )
+                                if (com.nxfr.android.prefs.NxfrPreferences.saveToHistory.value) {
+                                    NxfrService.recordHistory(
+                                        context = context,
+                                        direction = "recv",
+                                        peerName = "Web Browser",
+                                        peerId = "web-upload",
+                                        fileCount = 1,
+                                        totalBytes = size,
+                                        status = "complete",
+                                        filePaths = listOf(publishedPath)
+                                    )
+                                }
 
                                 withContext(Dispatchers.Main) {
                                     notificationManager.showTransferCompleteNotification(
@@ -193,7 +197,7 @@ fun WebUploadScreen(
         ErrorScreen(
             title = "Web Upload Error",
             message = errorMessage!!,
-            onBack = onStop
+            onBack = { stopAndCleanup() }
         )
         return
     }
@@ -503,7 +507,7 @@ fun WebUploadScreen(
         Spacer(modifier = Modifier.height(20.dp))
         
         Button(
-            onClick = onStop,
+            onClick = { stopAndCleanup() },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error

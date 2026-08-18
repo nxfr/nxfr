@@ -1,6 +1,5 @@
-!!! warning "Draft Specification"
-    This is the v0.1 draft specification. The protocol is actively evolving.
-    Refer to the [`docs/`](https://github.com/nxfr/nxfr/tree/main/docs) directory for the raw normative text.
+!!! info "Protocol v1.0"
+    This is the v1.0 specification. For the normative text, see the [`docs/`](https://github.com/nxfr/nxfr/tree/main/docs) directory.
 
 # Threat Model
 

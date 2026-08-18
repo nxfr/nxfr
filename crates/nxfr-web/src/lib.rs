@@ -22,6 +22,8 @@ const MAX_FAILED_ATTEMPTS: u32 = 5;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const BLOCK_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_EXPIRY_DURATION: Duration = Duration::from_secs(600); // 10 minutes
+pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+pub const CHUNK_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn get_default_expiry_duration() -> Duration {
     if let Ok(secs_str) = std::env::var("NXFR_WEB_EXPIRY_SECS") {
@@ -79,8 +81,11 @@ impl Drop for TmpFileGuard {
 }
 
 /// Parses "bytes=start-end" or "bytes=start-" from a Range header.
-/// Returns inclusive (start, end) byte offsets, or None if malformed.
+/// Returns inclusive (start, end) byte offsets, or None if malformed or unsatisfiable.
 fn parse_range_header(header_val: &str, file_size: u64) -> Option<(u64, u64)> {
+    if file_size == 0 {
+        return None;
+    }
     let s = header_val.trim();
     if !s.starts_with("bytes=") {
         return None;
@@ -110,13 +115,45 @@ fn parse_range_header(header_val: &str, file_size: u64) -> Option<(u64, u64)> {
     }
 }
 
-/// Writes a ZIP local file header with data descriptor flag (bit 3).
+/// Helper to frame HTTP chunked responses (Transfer-Encoding: chunked per RFC 9112 §7.1).
+struct ChunkedWriter<'a, W: AsyncWriteExt + Unpin> {
+    stream: &'a mut W,
+}
+
+impl<'a, W: AsyncWriteExt + Unpin> ChunkedWriter<'a, W> {
+    fn new(stream: &'a mut W) -> Self {
+        Self { stream }
+    }
+
+    async fn write_chunk(&mut self, data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let chunk_header = format!("{:X}\r\n", data.len());
+        tokio::time::timeout(CHUNK_IO_TIMEOUT, async {
+            self.stream.write_all(chunk_header.as_bytes()).await?;
+            self.stream.write_all(data).await?;
+            self.stream.write_all(b"\r\n").await
+        })
+        .await
+        .map_err(|_| "Chunk write timed out (30s)")??;
+        Ok(())
+    }
+
+    async fn finish(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        tokio::time::timeout(CHUNK_IO_TIMEOUT, async {
+            self.stream.write_all(b"0\r\n\r\n").await?;
+            self.stream.flush().await
+        })
+        .await
+        .map_err(|_| "Chunk finish timed out (30s)")??;
+        Ok(())
+    }
+}
+
+/// Builds a ZIP local file header with data descriptor flag (bit 3).
 /// CRC32 and sizes are set to 0; actual values go in the data descriptor after file data.
-async fn write_zip_local_header(
-    stream: &mut (impl AsyncWriteExt + Unpin),
-    filename: &[u8],
-    _file_size: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn build_zip_local_header(filename: &[u8]) -> Vec<u8> {
     let mut header = Vec::with_capacity(30 + filename.len());
     // Local file header signature
     header.extend_from_slice(&0x04034b50u32.to_le_bytes());
@@ -142,16 +179,11 @@ async fn write_zip_local_header(
     header.extend_from_slice(&0u16.to_le_bytes());
     // File name
     header.extend_from_slice(filename);
-    stream.write_all(&header).await?;
-    Ok(())
+    header
 }
 
-/// Writes a ZIP data descriptor after file data (with signature).
-async fn write_zip_data_descriptor(
-    stream: &mut (impl AsyncWriteExt + Unpin),
-    crc32: u32,
-    size: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// Builds a ZIP data descriptor after file data (with signature).
+fn build_zip_data_descriptor(crc32: u32, size: u64) -> Vec<u8> {
     let mut desc = Vec::with_capacity(16);
     // Data descriptor signature
     desc.extend_from_slice(&0x08074b50u32.to_le_bytes());
@@ -161,18 +193,16 @@ async fn write_zip_data_descriptor(
     desc.extend_from_slice(&(size as u32).to_le_bytes());
     // Uncompressed size
     desc.extend_from_slice(&(size as u32).to_le_bytes());
-    stream.write_all(&desc).await?;
-    Ok(())
+    desc
 }
 
-/// Writes a ZIP central directory file header.
-async fn write_zip_central_entry(
-    stream: &mut (impl AsyncWriteExt + Unpin),
+/// Builds a ZIP central directory file header.
+fn build_zip_central_entry(
     filename: &[u8],
     file_size: u64,
     crc32: u32,
     local_offset: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Vec<u8> {
     let mut entry = Vec::with_capacity(46 + filename.len());
     // Central directory file header signature
     entry.extend_from_slice(&0x02014b50u32.to_le_bytes());
@@ -210,17 +240,15 @@ async fn write_zip_central_entry(
     entry.extend_from_slice(&(local_offset as u32).to_le_bytes());
     // File name
     entry.extend_from_slice(filename);
-    stream.write_all(&entry).await?;
-    Ok(())
+    entry
 }
 
-/// Writes the ZIP end of central directory record.
-async fn write_zip_eocd(
-    stream: &mut (impl AsyncWriteExt + Unpin),
+/// Builds the ZIP end of central directory record.
+fn build_zip_eocd(
     entry_count: u16,
     central_dir_size: u32,
     central_dir_offset: u32,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Vec<u8> {
     let mut eocd = Vec::with_capacity(22);
     // End of central directory signature
     eocd.extend_from_slice(&0x06054b50u32.to_le_bytes());
@@ -238,8 +266,7 @@ async fn write_zip_eocd(
     eocd.extend_from_slice(&central_dir_offset.to_le_bytes());
     // ZIP file comment length
     eocd.extend_from_slice(&0u16.to_le_bytes());
-    stream.write_all(&eocd).await?;
-    Ok(())
+    eocd
 }
 
 
@@ -1066,13 +1093,15 @@ async function pollStatus() {
 requestAccess();
 </script></body></html>"#;
 
+#[derive(Clone)]
 pub struct WebServerHandle {
-    pub handle: JoinHandle<()>,
+    pub handle: Arc<tokio::sync::Mutex<Option<JoinHandle<()>>>>,
     pub token: String,
     pub port: u16,
     pub cancel: CancellationToken,
     pub active_transfers: Arc<AtomicUsize>,
     pub last_activity: Arc<RwLock<Instant>>,
+    pub download_count: Arc<AtomicUsize>,
     pub pending_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
     pub auto_accept: Arc<AtomicBool>,
 }
@@ -1088,6 +1117,10 @@ impl WebServerHandle {
 
     pub fn active_transfers_count(&self) -> usize {
         self.active_transfers.load(Ordering::SeqCst)
+    }
+
+    pub fn download_count(&self) -> usize {
+        self.download_count.load(Ordering::SeqCst)
     }
 
     pub fn is_auto_accept(&self) -> bool {
@@ -1395,12 +1428,13 @@ impl WebServer {
         });
 
         Ok(WebServerHandle {
-            handle: join_handle,
+            handle: Arc::new(Mutex::new(Some(join_handle))),
             token,
             port: actual_port,
             cancel,
             active_transfers: active_transfers_handle,
             last_activity: last_activity_handle,
+            download_count: Arc::new(AtomicUsize::new(0)),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
             auto_accept: Arc::new(AtomicBool::new(true)), // uploads don't need approval
         })
@@ -1490,6 +1524,7 @@ impl WebServer {
 
         let active_transfers_handle = server.active_transfers.clone();
         let last_activity_handle = server.last_activity.clone();
+        let download_count_handle = server.download_count.clone();
         let pending_requests_handle = server.pending_requests.clone();
         let auto_accept_handle = server.auto_accept.clone();
 
@@ -1583,12 +1618,13 @@ impl WebServer {
         });
 
         Ok(WebServerHandle {
-            handle: join_handle,
+            handle: Arc::new(Mutex::new(Some(join_handle))),
             token,
             port: actual_port,
             cancel,
             active_transfers: active_transfers_handle,
             last_activity: last_activity_handle,
+            download_count: download_count_handle,
             pending_requests: pending_requests_handle,
             auto_accept: auto_accept_handle,
         })
@@ -1666,7 +1702,15 @@ impl WebServer {
         let body_start: usize;
 
         loop {
-            let n = stream.read(&mut buf).await?;
+            let read_res = tokio::time::timeout(HEADER_READ_TIMEOUT, stream.read(&mut buf)).await;
+            let n = match read_res {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => {
+                    log::warn!("[nxfr-web] [{}] Request header read timed out (15s)", ip);
+                    return Ok(());
+                }
+            };
             if n == 0 {
                 return Ok(());
             }
@@ -1987,6 +2031,8 @@ impl WebServer {
                      \r\n";
                 stream.write_all(header.as_bytes()).await?;
 
+                let mut chunked = ChunkedWriter::new(stream);
+
                 // We'll collect central directory entries as we go
                 struct ZipEntry {
                     filename: Vec<u8>,
@@ -2009,8 +2055,9 @@ impl WebServer {
 
                     // Write local file header
                     let local_offset = offset;
-                    write_zip_local_header(stream, &filename_bytes, item.size).await?;
-                    offset += 30 + filename_bytes.len() as u64;
+                    let local_header = build_zip_local_header(&filename_bytes);
+                    chunked.write_chunk(&local_header).await?;
+                    offset += local_header.len() as u64;
 
                     // Stream file data and compute CRC32
                     let mut f = tokio::fs::File::open(&file_path).await?;
@@ -2020,7 +2067,7 @@ impl WebServer {
                     loop {
                         let n = f.read(&mut file_buf).await?;
                         if n == 0 { break; }
-                        stream.write_all(&file_buf[..n]).await?;
+                        chunked.write_chunk(&file_buf[..n]).await?;
                         hasher.update(&file_buf[..n]);
                         file_written += n as u64;
                         self.bump_activity().await;
@@ -2029,8 +2076,9 @@ impl WebServer {
                     offset += file_written;
 
                     // Write data descriptor
-                    write_zip_data_descriptor(stream, crc, file_written).await?;
-                    offset += 16;
+                    let descriptor = build_zip_data_descriptor(crc, file_written);
+                    chunked.write_chunk(&descriptor).await?;
+                    offset += descriptor.len() as u64;
 
                     entries.push(ZipEntry {
                         filename: filename_bytes,
@@ -2043,26 +2091,27 @@ impl WebServer {
                 // Write central directory
                 let central_dir_offset = offset;
                 for entry in &entries {
-                    write_zip_central_entry(
-                        stream,
+                    let cd_entry = build_zip_central_entry(
                         &entry.filename,
                         entry.file_size,
                         entry.crc32,
                         entry.local_offset,
-                    ).await?;
-                    offset += 46 + entry.filename.len() as u64;
+                    );
+                    chunked.write_chunk(&cd_entry).await?;
+                    offset += cd_entry.len() as u64;
                 }
                 let central_dir_size = offset - central_dir_offset;
 
                 // Write EOCD
-                write_zip_eocd(
-                    stream,
+                let eocd = build_zip_eocd(
                     entries.len() as u16,
                     central_dir_size as u32,
                     central_dir_offset as u32,
-                ).await?;
+                );
+                chunked.write_chunk(&eocd).await?;
 
-                stream.flush().await?;
+                // Finalize chunked stream with 0\r\n\r\n
+                chunked.finish().await?;
                 let _ = stream.shutdown().await;
 
                 // P7: Count this as a download for quota purposes
@@ -2189,7 +2238,9 @@ impl WebServer {
                             let to_read = std::cmp::min(remaining as usize, file_buf.len());
                             let n = f.read(&mut file_buf[..to_read]).await?;
                             if n == 0 { break; }
-                            stream.write_all(&file_buf[..n]).await?;
+                            tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.write_all(&file_buf[..n]))
+                                .await
+                                .map_err(|_| "Download chunk write timed out (30s)")??;
                             total_sent += n as u64;
                             remaining -= n as u64;
                             self.bump_activity().await;
@@ -2244,7 +2295,9 @@ impl WebServer {
                 if n == 0 {
                     break;
                 }
-                stream.write_all(&file_buf[..n]).await?;
+                tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.write_all(&file_buf[..n]))
+                    .await
+                    .map_err(|_| "Download chunk write timed out (30s)")??;
                 total_sent += n as u64;
                 self.bump_activity().await;
             }
@@ -2526,8 +2579,20 @@ impl WebServer {
                     buffer.drain(..safe_len);
                 }
 
-                // Read next chunk into stack buffer
-                let n = stream.read(&mut read_buf).await?;
+                // Read next chunk into stack buffer with per-chunk timeout (30s)
+                let read_res = tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.read(&mut read_buf)).await;
+                let n = match read_res {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => {
+                        drop(file);
+                        return Err(e.into());
+                    }
+                    Err(_) => {
+                        log::warn!("[nxfr-web] [{}] Upload chunk read timed out (30s)", ip);
+                        drop(file);
+                        return Err("Upload timed out (30s inactivity)".into());
+                    }
+                };
                 if n == 0 {
                     log::warn!(
                         "[nxfr-web] [{}] Client disconnected prematurely during upload after {} bytes",
@@ -2683,6 +2748,155 @@ mod tests {
 
         let dots_res = sanitize_filename("...");
         assert!(dots_res.starts_with("uploaded_file_") && dots_res.ends_with(".bin"));
+    }
+
+    #[test]
+    fn test_parse_range_header_all_cases() {
+        // M9: Empty file (size 0) must return None without panic or underflow
+        assert_eq!(parse_range_header("bytes=0-0", 0), None);
+        assert_eq!(parse_range_header("bytes=0-", 0), None);
+        assert_eq!(parse_range_header("bytes=-500", 0), None);
+        assert_eq!(parse_range_header("bytes=10-20", 0), None);
+
+        // Normal file (size 1000)
+        assert_eq!(parse_range_header("bytes=0-499", 1000), Some((0, 499)));
+        assert_eq!(parse_range_header("bytes=500-999", 1000), Some((500, 999)));
+        assert_eq!(parse_range_header("bytes=500-", 1000), Some((500, 999)));
+        assert_eq!(parse_range_header("bytes=-500", 1000), Some((500, 999)));
+        assert_eq!(parse_range_header("bytes=0-", 1000), Some((0, 999)));
+
+        // Range capping
+        assert_eq!(parse_range_header("bytes=0-2000", 1000), Some((0, 999)));
+
+        // Invalid ranges
+        assert_eq!(parse_range_header("bytes=1000-500", 1000), None);
+        assert_eq!(parse_range_header("bytes=1000-", 1000), None);
+        assert_eq!(parse_range_header("bytes=1500-2000", 1000), None);
+        assert_eq!(parse_range_header("invalid", 1000), None);
+        assert_eq!(parse_range_header("bytes=-0", 1000), None);
+        assert_eq!(parse_range_header("bytes=-1500", 1000), None);
+    }
+
+    #[tokio::test]
+    async fn test_chunked_writer_framing() {
+        let mut output = Vec::new();
+        {
+            let mut writer = ChunkedWriter::new(&mut output);
+            writer.write_chunk(b"Hello").await.unwrap();
+            writer.write_chunk(b" World!").await.unwrap();
+            writer.finish().await.unwrap();
+        }
+        let expected = b"5\r\nHello\r\n7\r\n World!\r\n0\r\n\r\n";
+        assert_eq!(&output, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dl_all_zip_streamed_archive() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_test_zip_{}", generate_token()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file1_path = temp_dir.join("file1.txt");
+        let file2_path = temp_dir.join("file2.txt");
+        let data1 = b"Hello from file 1 in zip";
+        let data2 = b"And hello from file 2 in zip with more bytes";
+        tokio::fs::write(&file1_path, data1).await.unwrap();
+        tokio::fs::write(&file2_path, data2).await.unwrap();
+
+        let manifest = vec![
+            WebShareItem {
+                id: 0,
+                name: "file1.txt".to_string(),
+                size: data1.len() as u64,
+                mime: "text/plain".to_string(),
+                path: file1_path.to_string_lossy().to_string(),
+            },
+            WebShareItem {
+                id: 1,
+                name: "file2.txt".to_string(),
+                size: data2.len() as u64,
+                mime: "text/plain".to_string(),
+                path: file2_path.to_string_lossy().to_string(),
+            },
+        ];
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17535,
+            None,
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let server_port = handle.port;
+        let token = handle.token.clone();
+
+        let mut roots = rustls::RootCertStore::empty();
+        let cert_der = rustls_pki_types::CertificateDer::from(identity.cert_der.clone());
+        roots.add(cert_der).unwrap();
+
+        let client_crypto = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_crypto));
+
+        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node").unwrap().to_owned();
+        let mut tls_stream = connector.connect(domain, stream).await.unwrap();
+
+        let request = format!(
+            "GET /dl/all.zip HTTP/1.1\r\n\
+             Host: localhost:{}\r\n\
+             Authorization: Bearer {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            server_port, token
+        );
+        tls_stream.write_all(request.as_bytes()).await.unwrap();
+        tls_stream.flush().await.unwrap();
+
+        let mut raw_response = Vec::new();
+        tls_stream.read_to_end(&mut raw_response).await.unwrap();
+        drop(tls_stream);
+
+        // Split headers and body
+        let header_end = raw_response.windows(4).position(|w| w == b"\r\n\r\n").expect("headers present");
+        let headers = String::from_utf8_lossy(&raw_response[..header_end]);
+        assert!(headers.contains("200 OK"), "Expected 200 OK, got:\n{}", headers);
+        assert!(headers.contains("Transfer-Encoding: chunked"), "Expected chunked encoding");
+        assert!(headers.contains("Content-Type: application/zip"), "Expected application/zip");
+
+        let body_chunked = &raw_response[header_end + 4..];
+
+        // Decode chunked body according to RFC 9112
+        let mut unchunked = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let next_crlf = body_chunked[cursor..].windows(2).position(|w| w == b"\r\n").expect("valid chunk header CRLF");
+            let size_str = std::str::from_utf8(&body_chunked[cursor..cursor + next_crlf]).expect("valid hex size string");
+            let chunk_size = usize::from_str_radix(size_str.trim(), 16).expect("valid hex number");
+            cursor += next_crlf + 2;
+            if chunk_size == 0 {
+                break;
+            }
+            unchunked.extend_from_slice(&body_chunked[cursor..cursor + chunk_size]);
+            cursor += chunk_size;
+            assert_eq!(&body_chunked[cursor..cursor + 2], b"\r\n", "chunk data must end in CRLF");
+            cursor += 2;
+        }
+
+        // Verify that unchunked body starts with ZIP magic (0x04034b50 -> PK\x03\x04)
+        assert!(unchunked.len() > 30, "ZIP must not be empty");
+        assert_eq!(&unchunked[0..4], b"PK\x03\x04", "Must start with ZIP local file header signature");
+
+        // Verify end of central directory signature (0x06054b50 -> PK\x05\x06) is present at end
+        assert!(unchunked.windows(4).any(|w| w == b"PK\x05\x06"), "Must contain EOCD record");
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[tokio::test]
