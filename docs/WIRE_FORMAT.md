@@ -1,6 +1,6 @@
 # NXFR Wire Format Specification
 
-**Status:** Draft
+**Status:** Stable
 **Date:** 2026-08-16
 **Companion to:** [PROTOCOL.md](PROTOCOL.md)
 
@@ -184,7 +184,7 @@ All control message payloads MUST follow these CBOR encoding rules:
 | String keys | Map keys MUST be UTF-8 text strings (major type 3) | Debuggability, consistency |
 | Binary data | Binary values MUST use byte strings (major type 2) | Efficiency for hashes, IDs |
 | Integer minimality | Integers MUST use the smallest valid CBOR encoding | Interoperability |
-| No tags | CBOR tags (major type 6) MUST NOT be used in v0.1 | Simplicity |
+| No tags | CBOR tags (major type 6) MUST NOT be used | Simplicity |
 | Max nesting | Maximum nesting depth: 6 (RESUME_STATUS requires depth 6) | Prevents stack overflow |
 | Unknown fields | Receivers MUST ignore unknown map keys | Forward compatibility |
 | Deterministic keys | Map keys SHOULD be sorted lexicographically | Reproducible test vectors |

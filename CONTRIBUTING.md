@@ -15,6 +15,16 @@ This guide outlines our development process, standards, and expectations to ensu
 2. Change into the project directory: `cd nxfr`
 3. Build the entire workspace: `cargo build --workspace`
 4. Run all tests to ensure your environment is working: `cargo test --workspace`
+
+You can also run tests for individual crates:
+```bash
+cargo test -p nxfr-core      # 107 tests — protocol state machines, codec, framing
+cargo test -p nxfr-web        # 13 tests — web server, chunked streaming, timeouts
+cargo test -p nxfr-ffi        # 44 tests — FFI bridge, JNI safety, transfer lifecycle
+cargo test -p nxfr-storage    # 19 tests — history, paired device DB
+cargo test -p nxfr-crypto     # 8 tests — key generation, SAS derivation
+cargo test -p nxfr-transport  # 7 tests — framing codec, TLS config
+```
 5. For Android: `cd apps/android && ./gradlew assembleDebug`
 
 ## Code Style

@@ -1,6 +1,6 @@
 # NXFR Protocol Specification v1.0
 
-**Status:** Draft
+**Status:** Stable
 **Date:** 2026-08-16
 **Authors:** NXFR Protocol Working Group
 
@@ -1122,7 +1122,7 @@ Each transfer operates an independent state machine identified by `transfer_id`.
 | `NEGOTIATING` | Transfer accepted, exchanging FILE_METADATA / FILE_METADATA_ACK. |
 | `STREAMING` | Actively sending/receiving CHUNK frames. |
 | `PAUSED` | Transfer paused by either side. |
-| `COMPLETING` | All chunks sent. Awaiting receiver verification and TRANSFER_ACK. |
+| `COMPLETING` | Sender: all chunks sent, awaiting TRANSFER_ACK. Receiver: all chunks received and verified, sending TRANSFER_ACK. |
 | `COMPLETE` | Transfer verified and acknowledged. Terminal state. |
 | `CANCELLED` | Transfer cancelled by either side. Terminal state. |
 | `FAILED` | Transfer failed due to unrecoverable error. Terminal state. |
@@ -1182,10 +1182,12 @@ Each transfer operates an independent state machine identified by `transfer_id`.
 | STREAMING | COMPLETING | Last CHUNK sent (LAST_CHUNK flag on last file) | — | Sender sends TRANSFER_COMPLETE |
 | STREAMING | CANCELLED | TRANSFER_CANCEL from either side | — | Cleanup partial files |
 | STREAMING | FAILED | Checksum mismatch, disk_full, connection loss | — | Send ERROR if possible |
+| STREAMING | COMPLETING | Receiver: last CHUNK received and hash verified | — | Begin whole-file verification, send TRANSFER_ACK |
 | PAUSED | STREAMING | TRANSFER_RESUME from either side | 300s | Resume chunk transmission |
 | PAUSED | CANCELLED | TRANSFER_CANCEL from either side | — | Cleanup |
 | PAUSED | FAILED | Pause timeout (300s) | — | Auto-cancel |
 | COMPLETING | COMPLETE | Receive TRANSFER_ACK with `status="success"` | 60s | Transfer done |
+| COMPLETING | COMPLETE | Receiver: TRANSFER_ACK successfully sent | — | Transfer done |
 | COMPLETING | FAILED | Receive TRANSFER_ACK with `status="partial_failure"` or checksum fails | — | Log failures |
 | COMPLETING | FAILED | Completion timeout (60s) | — | Assume failure |
 | Any active | CANCELLED | TRANSFER_CANCEL | — | Both sides clean up |
@@ -1450,6 +1452,11 @@ file (following the link). The `relative_path` MUST NOT contain symlink referenc
    Implementations SHOULD use exponential backoff with a base of 1 second.
 4. **Unknown error codes** MUST be treated as non-fatal. Implementations MUST NOT
    close the session for unrecognized error codes.
+5. **Forward compatibility**: Implementations MUST gracefully handle unknown
+   error code strings. An error code not listed in §15.1 MUST be preserved
+   as-is (e.g., wrapped in an `Unknown` variant) and treated as non-fatal.
+   Implementations MUST NOT crash or close the session upon receiving an
+   unrecognized error code.
 
 ### 15.3 Checksum Mismatch Handling
 
@@ -1688,8 +1695,17 @@ To support interoperability with devices without native NXFR software installed 
    - `GET /auth` — Verifies provided token or PIN, returning `200 {"status": "authenticated"}` or `403 {"error": "Invalid PIN"}`.
    - `GET /dl/:id` — Streams requested file payload from manifest with chunked transfer encoding and SHA-256 validation.
    - `POST /upload` — Receives `multipart/form-data` file upload into sandboxed `web-inbox/` with strict filename sanitization.
+   - `GET /dl/all.zip` — Streams all manifest files as a ZIP archive using chunked transfer encoding (RFC 9112). Individual file entries are streamed directly from disk without buffering the full archive in memory.
 4. **Brute-Force Mitigation:**
    - Client IPs exceeding 5 consecutive failed authorization attempts are immediately throttled and blocked for 5 minutes (`403 Forbidden`).
+5. **I/O Timeouts:**
+   - HTTP header read: 15 seconds maximum.
+   - Chunk/body I/O: 30 seconds maximum per read/write operation.
+   - Connections that stall beyond these limits MUST be dropped.
+6. **Temporary File Safety:**
+   - Upload temp files MUST use random filenames to prevent collision.
+   - Temp files MUST be cleaned up on error or cancellation (RAII guard pattern).
+   - Final filenames MUST resolve collisions by appending `(1)`, `(2)`, etc.
 
 ---
 

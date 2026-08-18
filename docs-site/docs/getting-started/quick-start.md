@@ -90,9 +90,9 @@ Initiate a pairing request:
 nxfr pair "Friend's Laptop"
 ```
 
-Both devices will display a 4-digit code. If they match, confirm the pairing:
+Both devices will display a 6-digit code. If they match, confirm the pairing:
 ```
-SAS Code: 4892
+SAS Code: 489201
 Does this match the code on "Friend's Laptop"? [y/N]: y
 Pairing successful. Device added to trusted database.
 ```

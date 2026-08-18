@@ -1,7 +1,7 @@
 # NXFR Protocol Security and Threat Model
 
-**Status:** Draft
-**Date:** 2026-08-08
+**Status:** Stable
+**Date:** 2026-08-18
 **Authors:** NXFR Protocol Working Group
 
 ## Introduction
@@ -423,12 +423,12 @@ The TLS context MUST be configured to set the minimum protocol version to TLS 1.
 - TLS 1.3 removes many vulnerable primitives present in earlier versions.
 
 ### 8.5 No 0-RTT
-Zero Round Trip Time (0-RTT) early data is explicitly forbidden in NXFR v0.1.
+Zero Round Trip Time (0-RTT) early data is explicitly forbidden.
 - 0-RTT is inherently vulnerable to replay attacks.
 - Implementations MUST configure their TLS stack to reject early data.
 
 ### 8.6 No PSK Resumption
-Pre-Shared Key (PSK) session resumption MUST NOT be used in v0.1.
+Pre-Shared Key (PSK) session resumption MUST NOT be used.
 - All connections MUST perform a full TLS 1.3 handshake using the ECDSA certificates.
 
 ### 8.7 Certificate Pinning via device_id
@@ -507,7 +507,7 @@ To achieve the security guarantees outlined in this document, implementors MUST 
 
 ## 11. Future Security Enhancements
 
-The NXFR Working Group is actively considering the following security enhancements for future minor or major version iterations (v0.2+ or v1.0).
+The NXFR Working Group is considering the following security enhancements for future versions.
 
 ### 11.1 QR Code Pairing
 Replacing the 6-digit SAS with a QR code containing a pre-shared key (PSK) and the expected public key fingerprint.
@@ -549,6 +549,10 @@ Developers building NXFR clients should use the following checklist prior to rel
 - [ ] Incoming paths are strictly validated against directory traversal.
 - [ ] UI correctly distinguishes between paired and unpaired devices.
 - [ ] In-flight window and max payload constraints are strictly enforced.
+- [ ] Unknown error codes are handled gracefully (not crash or disconnect).
+- [ ] Web portal enforces I/O timeouts (15s header, 30s body).
+- [ ] Upload temp files use random names and RAII cleanup.
+- [ ] Listener sockets use `SOCK_CLOEXEC` to prevent fd leaks.
 
 ### 12.2 Known Anti-Patterns
 - **Ignoring Certificate Errors:** Because certificates are self-signed, naive TLS setups may simply disable verification. This is a fatal flaw in NXFR. Verification MUST happen via the pinned `device_id`.
