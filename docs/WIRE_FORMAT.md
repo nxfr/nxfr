@@ -58,7 +58,7 @@ Every NXFR frame begins with a fixed **28-byte header**:
 | Offset | Size | Field | Type | Encoding | Description |
 |--------|------|-------|------|----------|-------------|
 | 0 | 4 | `magic` | `[u8; 4]` | ASCII | Always `0x4E584652` (`"NXFR"`). |
-| 4 | 1 | `version` | `u8` | — | Frame format version. `0x01` for v0.1. |
+| 4 | 1 | `version` | `u8` | — | Frame format version. `0x01` for v1.0. |
 | 5 | 1 | `kind` | `u8` | — | `0x01` = CONTROL, `0x02` = CHUNK, `0x03` = KEEPALIVE. |
 | 6 | 2 | `flags` | `u16` | Big-endian | Bit flags, semantics per kind (see §3.1). |
 | 8 | 4 | `session_id` | `u32` | Big-endian | Session identifier. `0` before HELLO_ACK. |

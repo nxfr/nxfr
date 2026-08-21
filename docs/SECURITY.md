@@ -376,7 +376,7 @@ The `TRANSFER_REQUEST` message contains a manifest of all files to be transferre
 - The protocol sets a hard limit of **500 entries** per manifest.
 - Additionally, the **encoded TRANSFER_REQUEST MUST fit within the 64 KiB CONTROL frame payload limit**. At approximately 100 bytes per manifest entry (path + SHA-256 + metadata), 500 entries consume ~50 KiB, leaving headroom for the envelope fields.
 - Manifests exceeding either limit MUST be rejected with error code `manifest_too_large`.
-- **Manifest paging** (splitting a large directory across multiple TRANSFER_REQUEST messages) is deferred to v0.2.
+- **Manifest paging** (splitting a large directory across multiple TRANSFER_REQUEST messages) is deferred to a future version.
 
 ### 7.6 Connection Rate Limiting
 Implementations SHOULD track connection attempts by IP address and `device_id`.

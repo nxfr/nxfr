@@ -101,7 +101,7 @@ In the common case, the sender initiates.
 ### 5.1 Protocol
 
 Devices MUST use mDNS/DNS-SD as specified in [RFC 6762] and [RFC 6763] for local
-network discovery. No other discovery mechanism is defined in v0.1.
+network discovery. No other discovery mechanism is defined in v1.0.
 
 ### 5.2 Service Registration
 
@@ -120,7 +120,7 @@ The DNS-SD TXT record MUST contain the following key-value pairs:
 
 | Key | Type | Required | Max Size | Description |
 |-----|------|----------|----------|-------------|
-| `v` | string | REQUIRED | 8 bytes | Protocol version, e.g., `"0.1"` |
+| `v` | string | REQUIRED | 8 bytes | Protocol version, e.g., `"1.0"` |
 | `id` | string | REQUIRED | 16 bytes | First 16 hex chars of `SHA-256(device_id \|\| YYYY-MM-DD)`. Implementations SHOULD rotate daily. See §6.3.4. |
 | `name` | string | REQUIRED | 63 bytes | Human-readable device name, UTF-8 encoded |
 | `plat` | string | REQUIRED | 8 bytes | Platform: `"linux"`, `"android"`, `"windows"`, `"macos"`, `"ios"` |
@@ -257,7 +257,7 @@ Certificate validation in NXFR does NOT use the CA trust chain. Instead:
 
 #### 6.2.5 Session Restrictions
 
-- TLS session resumption (PSK) MUST NOT be used in v0.1.
+- TLS session resumption (PSK) MUST NOT be used in v1.0.
 - 0-RTT data MUST NOT be sent or accepted.
 - TLS 1.2 and earlier MUST NOT be accepted. If the peer cannot negotiate TLS 1.3,
   the connection MUST be closed.
@@ -349,7 +349,7 @@ frame consists of a fixed 28-byte header followed by a variable-length payload.
 | Offset | Size | Field | Type | Description |
 |--------|------|-------|------|-------------|
 | 0 | 4 | `magic` | `[u8; 4]` | Frame magic: `b"NXFR"` (`0x4E584652`). MUST be present in every frame. |
-| 4 | 1 | `version` | `u8` | Frame format version. MUST be `1` for NXFR v0.1. |
+| 4 | 1 | `version` | `u8` | Frame format version. MUST be `1` for NXFR v1.0. |
 | 5 | 1 | `kind` | `u8` | Frame kind: `0x01` CONTROL, `0x02` CHUNK, `0x03` KEEPALIVE. |
 | 6 | 2 | `flags` | `u16` | Big-endian. Bit semantics depend on `kind` (see §7.3). |
 | 8 | 4 | `session_id` | `u32` | Big-endian. Session identifier assigned by responder in HELLO_ACK. `0` in the initial HELLO frame before assignment. |
@@ -446,7 +446,7 @@ maps per [RFC 8949]. The following encoding rules apply:
 3. **Binary data.** Binary values (device_id, transfer_id, sha256, etc.) MUST be
    encoded as CBOR byte strings (major type 2).
 4. **Integers.** Integer values MUST use the smallest valid CBOR encoding.
-5. **No tags.** CBOR tags (major type 6) MUST NOT be used in v0.1.
+5. **No tags.** CBOR tags (major type 6) MUST NOT be used in v1.0.
 6. **Nesting depth.** The maximum CBOR nesting depth is **6** (e.g.,
    `RESUME_STATUS`: map → `files` array → map → `received_ranges` array → array → uint).
    Deeper nesting MUST be rejected. This limit remains bounded against stack exhaustion
@@ -605,7 +605,7 @@ Initiates the pairing process. Either side MAY send this after HELLO exchange.
 | Field | Type | Req | Semantics |
 |-------|------|-----|-----------|
 | `type` | uint | R | Always `3` (0x03). |
-| `sas_method` | tstr | R | SAS display method. v0.1 defines only `"numeric-6"`. |
+| `sas_method` | tstr | R | SAS display method. v1.0 defines only `"numeric-6"`. |
 
 **SAS Derivation:**
 
@@ -760,7 +760,7 @@ unless an auto-accept policy applies for this paired peer.
 The encoded TRANSFER_REQUEST message MUST fit within the 64 KiB CONTROL frame
 payload limit. If a directory contains more entries than can fit in a single
 TRANSFER_REQUEST, the sender MUST send ERROR `manifest_too_large` and the
-transfer cannot proceed. Manifest paging is deferred to v0.2.
+transfer cannot proceed. Manifest paging is deferred to a future version.
 
 ---
 
@@ -1376,7 +1376,7 @@ Manifest entries:
 ### 14.2 Sequential Streaming
 
 Files within a directory MUST be streamed sequentially (one at a time). Parallel
-file streaming is NOT supported in v0.1. The sender MUST:
+file streaming is NOT supported in v1.0. The sender MUST:
 
 1. Send `FILE_METADATA` for file N.
 2. Wait for `FILE_METADATA_ACK`.
@@ -1493,14 +1493,14 @@ The current version is `[1, 0]` (v1.0).
 ### 16.2 Frame Format Version
 
 The `version` field in the frame header tracks frame format changes independently
-of the protocol version. NXFR v0.1 uses frame format version `1`.
+of the protocol version. NXFR v1.0 uses frame format version `1`.
 
 ### 16.3 Capability Negotiation
 
 Capabilities are optional protocol extensions negotiated during the HELLO exchange.
 Both sides advertise their supported capabilities. The active set is the intersection.
 
-v0.1 defines no mandatory capabilities. Future capabilities:
+v1.0 defines no mandatory capabilities. Future capabilities:
 
 | Token | Description |
 |-------|-------------|
@@ -1529,7 +1529,7 @@ messages without breaking older implementations.
 | In-flight chunk window | 8 | Keeps the network pipe full without unbounded buffering. At 1 MiB chunks, 8 MiB max unacknowledged data. |
 | Max concurrent transfers | 4 per session | Prevents resource exhaustion on constrained devices. |
 | Max concurrent sessions | 8 per device | Prevents connection exhaustion. |
-| Max manifest entries | 500 | Encoded TRANSFER_REQUEST MUST fit in 64 KiB. At ~100 bytes per entry (path + hash), 500 entries ≈ 50 KiB CBOR. Paging deferred to v0.2. |
+| Max manifest entries | 500 | Encoded TRANSFER_REQUEST MUST fit in 64 KiB. At ~100 bytes per entry (path + hash), 500 entries ≈ 50 KiB CBOR. Paging deferred to a future version. |
 | Max device name | 63 bytes (UTF-8) | Aligned with DNS-SD TXT value limit per RFC 6763. |
 | Max path component | 255 bytes | Filesystem compatibility (ext4, NTFS, APFS). |
 | Max relative path | 4,096 bytes | Filesystem compatibility (PATH_MAX on Linux). |

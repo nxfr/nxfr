@@ -32,7 +32,7 @@ with custom transport stacks.
 QUIC stack across Linux, Android, and Windows
 without heavily inflating binary size or relying
 on immature third-party libraries is currently
-unfeasible for a v0.1 release.
+unfeasible for the v1.0 release.
 - **UDP (Custom reliability):** Rejected due to
 the immense complexity of implementing congestion
 control, packet ordering, and reliable delivery,
@@ -376,8 +376,8 @@ perfectly, differing wildly across platforms.
 intersection of advertised string arrays in the
 HELLO exchange.
 **Rationale:** This allows the protocol to evolve
-without breaking backwards compatibility. If v0.2
-adds `zstd` compression, older v0.1 clients will
+without breaking backwards compatibility. If a future version
+adds `zstd` compression, older v1.0 clients will
 simply not advertise `zstd`, and the intersection
 will cleanly fall back to uncompressed transfer,
 ensuring graceful degradation.
@@ -469,8 +469,8 @@ transfer Linux/macOS directories containing
 symlinks will encounter errors, skipped files, or
 unexpected duplicated data, potentially breaking
 development workflows.
-**Recommendation:** For v0.1, we strictly skip
-symlinks. For v0.2, we should introduce a
+**Recommendation:** For v1.0, we strictly skip
+symlinks. For a future version, we should introduce a
 capability flag (`symlinks`). If both sides
 support it, the manifest can include a new `type:
 "symlink"` and `target: "path"` field, allowing
@@ -481,10 +481,10 @@ safe recreation of relative symlinks.
 with thousands of very small files will suffer
 from high latency due to sequential FILE_METADATA
 round-trips and TCP slow start on each new stream.
-**Recommendation:** Stay sequential for v0.1 to
+**Recommendation:** Stay sequential for v1.0 to
 keep the state machine simple, deterministic, and
 resume logic robust. Investigate parallel stream
-multiplexing for v0.2, taking care to manage disk
+multiplexing for a future version, taking care to manage disk
 I/O contention on spinning platters.
 
 ### Q-03: How do we prevent battery drain from mDNS MulticastLocks on Android?
@@ -530,7 +530,7 @@ without associating any CHUNK frames.
 be too large for lossy 2.4GHz networks (causing
 massive retransmissions) or too small for pristine
 Wi-Fi 6 (causing excessive ACK overhead).
-**Recommendation:** Stick to 1 MiB for v0.1 for
+**Recommendation:** Stick to 1 MiB for v1.0 for
 predictability. In the future, implement dynamic
 chunk sizing based on RTT and packet loss metrics
 derived from KEEPALIVE frames.
