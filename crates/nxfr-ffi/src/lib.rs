@@ -532,7 +532,7 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
 
                 // Send HELLO.
                 let hello = ControlMessage::Hello {
-                    protocol_version: ProtocolVersion::V0_1,
+                    protocol_version: ProtocolVersion::V1_0,
                     device_id: DeviceId::from_bytes(identity.device_id),
                     device_name: {
                         let cfg_path = std::path::Path::new(dir).join("config.toml");
@@ -550,21 +550,31 @@ pub extern "C" fn nxfr_connect(addr: *const c_char, store_dir: *const c_char) ->
                     .await
                     .map_err(|e| format!("send HELLO: {e}"))?;
 
-                // Receive HELLO_ACK.
-                let (hdr, payload) = conn
-                    .recv_frame()
-                    .await
-                    .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
+                // Receive HELLO_ACK (timeout per §17.2).
+                let (hdr, payload) =
+                    tokio::time::timeout(nxfr_common::timeouts::HELLO_EXCHANGE, conn.recv_frame())
+                        .await
+                        .map_err(|_| "HELLO_ACK exchange timed out (10s)")?
+                        .map_err(|e| format!("recv HELLO_ACK: {e}"))?;
                 if hdr.kind != FrameKind::Control {
                     return Err("expected CONTROL frame for HELLO_ACK".into());
                 }
                 let msg = codec::decode_control(&payload).map_err(|e| format!("decode: {e}"))?;
                 let (peer_name, session_id) = match msg {
                     ControlMessage::HelloAck {
+                        protocol_version,
                         device_name,
                         session_id,
                         ..
-                    } => (device_name, session_id),
+                    } => {
+                        if !protocol_version.is_supported() {
+                            return Err(format!(
+                                "peer returned unsupported protocol version {}.{}",
+                                protocol_version.major, protocol_version.minor
+                            ));
+                        }
+                        (device_name, session_id)
+                    }
                     _ => return Err(format!("expected HELLO_ACK, got {msg:?}")),
                 };
 
@@ -828,7 +838,11 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                 Some(l) => l,
                 None => return json_err("invalid listener handle"),
             };
-            (lis.pending_rx.clone(), lis.identity.clone(), lis.store_dir.clone())
+            (
+                lis.pending_rx.clone(),
+                lis.identity.clone(),
+                lis.store_dir.clone(),
+            )
         };
 
         // Block until a TLS connection arrives.
@@ -859,11 +873,12 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
 
             let mut conn = NxfrConnection::new(stream);
 
-            // Receive HELLO.
-            let (hdr, payload) = conn
-                .recv_frame()
-                .await
-                .map_err(|e| format!("recv HELLO: {e}"))?;
+            // Receive HELLO (timeout per §17.2).
+            let (hdr, payload) =
+                tokio::time::timeout(nxfr_common::timeouts::HELLO_EXCHANGE, conn.recv_frame())
+                    .await
+                    .map_err(|_| "HELLO exchange timed out (10s)")?
+                    .map_err(|e| format!("recv HELLO: {e}"))?;
             if hdr.kind != FrameKind::Control {
                 return Err("expected CONTROL for HELLO".into());
             }
@@ -874,8 +889,11 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
                     protocol_version,
                     ..
                 } => {
-                    if *protocol_version != ProtocolVersion::V0_1 {
-                        return Err("unsupported protocol version".into());
+                    if !protocol_version.is_supported() {
+                        return Err(format!(
+                            "unsupported protocol version {}.{}",
+                            protocol_version.major, protocol_version.minor
+                        ));
                     }
                     device_name.clone()
                 }
@@ -885,16 +903,15 @@ pub extern "C" fn nxfr_accept(listener: u64) -> *mut c_char {
             // Send HELLO_ACK.
             let session_id = rand_session_id();
             let ack = ControlMessage::HelloAck {
-                protocol_version: ProtocolVersion::V0_1,
+                protocol_version: ProtocolVersion::V1_0,
                 device_id: DeviceId::from_bytes(identity.device_id),
                 device_name: {
                     let cfg_path = std::path::Path::new(&store_dir).join("config.toml");
-                    let name = nxfr_storage::config::NxfrConfig::load_from(&cfg_path)
+                    nxfr_storage::config::NxfrConfig::load_from(&cfg_path)
                         .ok()
                         .map(|c| c.device_name)
                         .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| "NXFR-Android".to_string());
-                    name
+                        .unwrap_or_else(|| "NXFR-Android".to_string())
                 },
                 platform: Platform::Android,
                 capabilities: vec![],
@@ -1216,8 +1233,21 @@ pub extern "C" fn nxfr_send_file(handle: u64, path: *const c_char) -> *mut c_cha
         let file_path_owned = file_path.to_string();
         let rt = get_runtime();
         rt.spawn(async move {
-            if let Err(e) = do_send_file(conn_arc, session_id, peer_device_id, &file_path_owned, &event_tx).await {
-                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string(), peer_id: None }).await;
+            if let Err(e) = do_send_file(
+                conn_arc,
+                session_id,
+                peer_device_id,
+                &file_path_owned,
+                &event_tx,
+            )
+            .await
+            {
+                let _ = event_tx
+                    .send(FfiEvent::Error {
+                        msg: e.to_string(),
+                        peer_id: None,
+                    })
+                    .await;
             }
         });
 
@@ -1441,7 +1471,12 @@ async fn do_send_file(
             ..
         } => {
             log::info!("[sender] TransferAck(Success) received — transfer done");
-            let _ = event_tx.send(FfiEvent::Complete { file_path: None, peer_id: Some(hex::encode(peer_device_id)) }).await;
+            let _ = event_tx
+                .send(FfiEvent::Complete {
+                    file_path: None,
+                    peer_id: Some(hex::encode(peer_device_id)),
+                })
+                .await;
         }
         ControlMessage::TransferAck {
             status: TransferAckStatus::PartialFailure,
@@ -1600,8 +1635,15 @@ pub extern "C" fn nxfr_confirm(handle: u64, accept: bool) -> *mut c_char {
 
         // Spawn receiver task.
         rt.spawn(async move {
-            if let Err(e) = do_receive_file(conn_arc, session_id, peer_device_id, offer, &event_tx).await {
-                let _ = event_tx.send(FfiEvent::Error { msg: e.to_string(), peer_id: None }).await;
+            if let Err(e) =
+                do_receive_file(conn_arc, session_id, peer_device_id, offer, &event_tx).await
+            {
+                let _ = event_tx
+                    .send(FfiEvent::Error {
+                        msg: e.to_string(),
+                        peer_id: None,
+                    })
+                    .await;
             }
         });
 
@@ -1763,7 +1805,8 @@ async fn do_receive_file(
             if chunk_offset != expected_offset {
                 return Err(format!(
                     "chunk offset mismatch: expected {expected_offset}, got {chunk_offset}"
-                ).into());
+                )
+                .into());
             }
 
             // Verify per-chunk hash.
@@ -1886,7 +1929,7 @@ pub extern "C" fn nxfr_pair_begin(handle: u64) -> *mut c_char {
                 session_id,
                 0,
                 &ControlMessage::PairRequest {
-                    sas_method: "sas-v0".to_string(),
+                    sas_method: "numeric-6".to_string(),
                 },
             )
             .await
@@ -2140,15 +2183,19 @@ pub extern "C" fn nxfr_close(handle: u64) -> *mut c_char {
         {
             listener.cancel_token.cancel();
             let rt = get_runtime();
-            let _join_res = rt.block_on(async {
-                if tokio::time::timeout(std::time::Duration::from_millis(500), &mut listener.accept_task)
-                    .await
-                    .is_err()
+            rt.block_on(async {
+                if tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    &mut listener.accept_task,
+                )
+                .await
+                .is_err()
                 {
                     log::warn!("[nxfr-ffi] accept_task for handle {handle} timed out, aborting");
                     listener.accept_task.abort();
                     let _ = (&mut listener.accept_task).await;
                 }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             });
             drop(listener);
             return json_ok(serde_json::json!({ "handle": handle, "status": "closed" }));
@@ -2559,14 +2606,17 @@ pub extern "C" fn nxfr_web_status() -> *mut c_char {
 
                 // Collect pending requests (try_lock to avoid blocking)
                 let pending: Vec<serde_json::Value> = match handle.pending_requests.try_lock() {
-                    Ok(map) => map.values()
+                    Ok(map) => map
+                        .values()
                         .filter(|r| r.status == nxfr_web::RequestStatus::Pending)
-                        .map(|r| serde_json::json!({
-                            "session_id": r.session_id,
-                            "ip": r.ip,
-                            "user_agent": r.user_agent,
-                            "timestamp": r.timestamp,
-                        }))
+                        .map(|r| {
+                            serde_json::json!({
+                                "session_id": r.session_id,
+                                "ip": r.ip,
+                                "user_agent": r.user_agent,
+                                "timestamp": r.timestamp,
+                            })
+                        })
                         .collect(),
                     Err(_) => vec![],
                 };
@@ -3107,36 +3157,36 @@ mod tests {
             "confirm failed: {confirm_result:?}"
         );
 
-        // Pump sender until complete.
+        // Pump sender and receiver concurrently until both complete.
         let mut sender_complete = false;
+        let mut received_path = None;
         for _ in 0..200 {
-            let event = parse_ffi_json(nxfr_pump(sender_handle));
-            match event.get("event").and_then(|e| e.as_str()) {
-                Some("complete") => {
-                    sender_complete = true;
-                    break;
+            if !sender_complete {
+                let event = parse_ffi_json(nxfr_pump(sender_handle));
+                match event.get("event").and_then(|e| e.as_str()) {
+                    Some("complete") => {
+                        sender_complete = true;
+                    }
+                    Some("error") => panic!("sender error: {event:?}"),
+                    _ => {}
                 }
-                Some("error") => panic!("sender error: {event:?}"),
-                _ => {}
+            }
+            if received_path.is_none() {
+                let event = parse_ffi_json(nxfr_pump(receiver_handle));
+                match event.get("event").and_then(|e| e.as_str()) {
+                    Some("complete") => {
+                        received_path = event["file_path"].as_str().map(|s| s.to_string());
+                    }
+                    Some("error") => panic!("receiver error: {event:?}"),
+                    _ => {}
+                }
+            }
+            if sender_complete && received_path.is_some() {
+                break;
             }
             thread::sleep(Duration::from_millis(50));
         }
         assert!(sender_complete, "sender never completed");
-
-        // Pump receiver until complete.
-        let mut received_path = None;
-        for _ in 0..200 {
-            let event = parse_ffi_json(nxfr_pump(receiver_handle));
-            match event.get("event").and_then(|e| e.as_str()) {
-                Some("complete") => {
-                    received_path = event["file_path"].as_str().map(|s| s.to_string());
-                    break;
-                }
-                Some("error") => panic!("receiver error: {event:?}"),
-                _ => {}
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
         let received_path = received_path.expect("receiver never completed");
 
         // Verify SHA-256.
@@ -3401,7 +3451,6 @@ mod tests {
         assert!(devices.is_empty(), "should be empty after unpair");
     }
 
-
     #[test]
     fn test_listener_teardown_and_rapid_rebind() {
         let dir = tempfile::tempdir().unwrap();
@@ -3591,7 +3640,10 @@ mod tests {
             let _guard = TmpFileGuard::new(tmp_path.clone());
             // Drops without commit
         }
-        assert!(!tmp_path.exists(), "Tmp file must be unlinked on uncommitted drop");
+        assert!(
+            !tmp_path.exists(),
+            "Tmp file must be unlinked on uncommitted drop"
+        );
 
         // Committed guard preserves file
         std::fs::write(&tmp_path, b"committed bytes").unwrap();
@@ -3604,7 +3656,10 @@ mod tests {
 
     #[test]
     fn test_cstr_to_str_null_and_invalid_utf8() {
-        assert_eq!(cstr_to_str(std::ptr::null()), Err("null pointer".to_string()));
+        assert_eq!(
+            cstr_to_str(std::ptr::null()),
+            Err("null pointer".to_string())
+        );
 
         // Invalid UTF-8 bytes
         let bad_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
@@ -3617,11 +3672,92 @@ mod tests {
         // String with interior NUL
         let bad_string = "hello\0world";
         let cstr_res = std::ffi::CString::new(bad_string);
-        assert!(cstr_res.is_err(), "CString::new with interior NUL must return Err");
+        assert!(
+            cstr_res.is_err(),
+            "CString::new with interior NUL must return Err"
+        );
 
         // json_ok gracefully returns without panic
         let ptr = json_ok(serde_json::json!({ "msg": "valid" }));
         assert!(!ptr.is_null());
-        unsafe { nxfr_string_free(ptr); }
+        unsafe {
+            nxfr_string_free(ptr);
+        }
+    }
+
+    #[test]
+    fn test_ffi_pairing_e2e_sas_flow() {
+        let tmp_a = tempfile::tempdir().unwrap();
+        let tmp_b = tempfile::tempdir().unwrap();
+
+        let dir_a = CString::new(tmp_a.path().to_str().unwrap()).unwrap();
+        let dir_b = CString::new(tmp_b.path().to_str().unwrap()).unwrap();
+        let _ = parse_ffi_json(nxfr_identity_generate(dir_a.as_ptr()));
+        let _ = parse_ffi_json(nxfr_identity_generate(dir_b.as_ptr()));
+
+        let listen_result = parse_ffi_json(nxfr_listen(0, dir_b.as_ptr()));
+        let listener_handle = listen_result["listener"].as_u64().unwrap();
+        let port = listen_result["port"].as_u64().unwrap();
+
+        let dir_a_str = tmp_a.path().to_str().unwrap().to_string();
+        let addr = format!("127.0.0.1:{port}");
+        let connect_thread = thread::spawn(move || {
+            let addr_c = CString::new(addr).unwrap();
+            let dir_c = CString::new(dir_a_str).unwrap();
+            let r = parse_ffi_json(nxfr_connect(addr_c.as_ptr(), dir_c.as_ptr()));
+            r["handle"].as_u64().unwrap()
+        });
+        let accept_thread = thread::spawn(move || {
+            let r = parse_ffi_json(nxfr_accept(listener_handle));
+            r["handle"].as_u64().unwrap()
+        });
+
+        let client_h = connect_thread.join().unwrap();
+        let server_h = accept_thread.join().unwrap();
+
+        // 1. Client initiates pairing via nxfr_pair_begin
+        let pair_begin_res = parse_ffi_json(nxfr_pair_begin(client_h));
+        assert!(
+            pair_begin_res.get("error").is_none(),
+            "pair_begin failed: {:?}",
+            pair_begin_res
+        );
+        let client_sas = pair_begin_res["sas_code"].as_str().unwrap().to_string();
+        assert_eq!(client_sas.len(), 6, "Client SAS must be 6 digits");
+
+        // 2. Server pumps events and receives PairRequest with matching SAS
+        let mut server_sas = String::new();
+        for _ in 0..100 {
+            let e = parse_ffi_json(nxfr_pump(server_h));
+            if e.get("event").and_then(|v| v.as_str()) == Some("pair_request") {
+                server_sas = e["sas_code"].as_str().unwrap().to_string();
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(client_sas, server_sas, "SAS codes must match on both sides");
+
+        // 3. Server confirms pairing via nxfr_pair_confirm
+        let srv_confirm = parse_ffi_json(nxfr_pair_confirm(server_h, true, dir_b.as_ptr()));
+        assert_eq!(srv_confirm["status"].as_str().unwrap(), "pair_confirmed");
+
+        // 4. Client confirms pairing via nxfr_pair_confirm
+        let cli_confirm = parse_ffi_json(nxfr_pair_confirm(client_h, true, dir_a.as_ptr()));
+        assert_eq!(cli_confirm["status"].as_str().unwrap(), "pair_confirmed");
+
+        // 5. Verify both DBs list the peer as paired
+        let list_a = parse_ffi_json(nxfr_paired_list(dir_a.as_ptr()));
+        let dev_a = list_a["devices"].as_array().unwrap();
+        assert_eq!(dev_a.len(), 1);
+        assert_eq!(dev_a[0]["trust_level"].as_str().unwrap(), "paired");
+
+        let list_b = parse_ffi_json(nxfr_paired_list(dir_b.as_ptr()));
+        let dev_b = list_b["devices"].as_array().unwrap();
+        assert_eq!(dev_b.len(), 1);
+        assert_eq!(dev_b[0]["trust_level"].as_str().unwrap(), "paired");
+
+        let _ = parse_ffi_json(nxfr_close(client_h));
+        let _ = parse_ffi_json(nxfr_close(server_h));
+        let _ = parse_ffi_json(nxfr_close(listener_handle));
     }
 }
