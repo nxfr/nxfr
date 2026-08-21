@@ -235,7 +235,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = editNameValue,
                         onValueChange = { editNameValue = it },
-                        label = { Text("Station Call-Sign") },
+                        label = { Text("Device Name") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -592,7 +592,7 @@ fun SettingsScreen(
 
         LedgerRow(
             title = "NXFR Protocol Engine",
-            subtitle = "v0.2.9-alpha [BUILD 16] · Rust TLS 1.3 Core"
+            subtitle = "v${com.nxfr.android.BuildConfig.VERSION_NAME} [BUILD ${com.nxfr.android.BuildConfig.VERSION_CODE}] · Rust TLS 1.3 Core"
         ) {
             SecuritySeal(text = "VERIFIED", color = deck.signalSuccess)
         }

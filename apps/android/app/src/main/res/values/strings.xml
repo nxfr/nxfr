@@ -3,7 +3,8 @@
     <!-- App -->
     <string name="app_name">NXFR</string>
     <string name="app_tagline">Nearby File Transfer</string>
-    <string name="app_version">0.1.0-alpha</string>
+    <!-- Keep in sync with build.gradle.kts (versionName) -->
+    <string name="app_version">1.0.0</string>
 
     <!-- Navigation -->
     <string name="nav_receive">Deck</string>

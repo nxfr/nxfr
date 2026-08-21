@@ -35,8 +35,8 @@ object DebugBundleExporter {
             // 2. Environment Info
             val envFile = File(bundleDir, "environment.json")
             val envObj = JSONObject().apply {
-                put("app_version", "0.2.8-alpha")
-                put("version_code", 15)
+                put("app_version", com.nxfr.android.BuildConfig.VERSION_NAME)
+                put("version_code", com.nxfr.android.BuildConfig.VERSION_CODE)
                 put("os_version", Build.VERSION.RELEASE)
                 put("sdk_int", Build.VERSION.SDK_INT)
                 put("device_model", Build.MODEL)
