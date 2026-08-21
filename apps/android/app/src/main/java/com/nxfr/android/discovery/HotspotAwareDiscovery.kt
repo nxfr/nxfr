@@ -76,7 +76,12 @@ class HotspotAwareDiscovery(private val context: Context) {
     /**
      * Start all tiers: Tier 0 (beacon), Tier 1 (NSD), Tier 2 fallback after 3 s.
      */
-    fun startDiscovery(storeDir: String, localDeviceId: String = "", localDeviceName: String = "NXFR-Android") {
+    fun startDiscovery(
+        storeDir: String,
+        localDeviceId: String = "",
+        localDeviceName: String = "NXFR-Android",
+        localPort: Int = NXFR_PORT
+    ) {
         this.storeDir = storeDir
         _isScanning.value = true
         _showHotspotBanner.value = isOnHotspot()
@@ -84,6 +89,7 @@ class HotspotAwareDiscovery(private val context: Context) {
         // Tier 0: UDP beacon (instant).
         beacon.localDeviceId = localDeviceId
         beacon.localDeviceName = localDeviceName
+        beacon.localPort = localPort
         beacon.start()
         beaconStartTimeMs = System.currentTimeMillis()
         beaconsReceived = 0

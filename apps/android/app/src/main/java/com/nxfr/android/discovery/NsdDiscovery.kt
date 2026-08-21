@@ -110,7 +110,7 @@ class NsdDiscovery(private val context: Context) {
             serviceName = deviceName
             serviceType = SERVICE_TYPE
             setPort(port)
-            setAttribute("v", "0.1")
+            setAttribute("v", "1.0")
             setAttribute("id", advertisedId)
             setAttribute("name", deviceName)
             setAttribute("plat", "android")

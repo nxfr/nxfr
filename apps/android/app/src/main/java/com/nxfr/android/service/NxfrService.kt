@@ -40,6 +40,13 @@ sealed class NxfrState {
         val deviceId: String = "",
         val sasCode: String = ""
     ) : NxfrState()
+    data class Pairing(
+        val handle: Long,
+        val sasCode: String,
+        val peerName: String,
+        val deviceId: String = "",
+        val isInitiator: Boolean = false
+    ) : NxfrState()
     data class Transferring(
         val progress: Float,
         val total: Long,
@@ -56,9 +63,12 @@ class NxfrService : Service() {
         private const val TAG = "NxfrService"
         const val ACTION_SEND = "com.nxfr.android.SEND"
         const val ACTION_CONNECT = "com.nxfr.android.CONNECT"
+        const val ACTION_PAIR = "com.nxfr.android.PAIR"
         const val ACTION_CANCEL_TRANSFER = "com.nxfr.android.CANCEL_TRANSFER"
         const val EXTRA_ADDR = "addr"
         const val EXTRA_FILE_PATH = "file_path"
+        const val EXTRA_PEER_NAME = "peer_name"
+        const val EXTRA_EXPECTED_DEVICE_ID = "expected_device_id"
         const val DEFAULT_PORT = 17394
         const val DEFAULT_MULTICAST = "224.0.0.251"
 
@@ -98,7 +108,7 @@ class NxfrService : Service() {
                     val did = _deviceId.value
                     val dname = _deviceName.value
                     if (did.isNotEmpty()) {
-                        _discovery?.startDiscovery(storeDir, did, dname)
+                        _discovery?.startDiscovery(storeDir, did, dname, activePort)
                     }
                 }
             }
@@ -179,8 +189,8 @@ class NxfrService : Service() {
                     try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
                     svc.activeSessionHandle = 0
                 }
-                _nxfrState.value = NxfrState.Idle
-                Log.i("NxfrService", "Active transfer cancelled")
+                _nxfrState.value = if (_isListening.value) NxfrState.Listening else NxfrState.Idle
+                Log.i("NxfrService", "Active transfer/pairing finished or cancelled")
             }
         }
 
@@ -267,6 +277,15 @@ class NxfrService : Service() {
             instance?.let { svc ->
                 svc.startListening()
             }
+        }
+
+        fun initiatePairing(context: android.content.Context, addr: String, peerName: String) {
+            val intent = Intent(context, NxfrService::class.java).apply {
+                action = ACTION_PAIR
+                putExtra(EXTRA_ADDR, addr)
+                putExtra(EXTRA_PEER_NAME, peerName)
+            }
+            context.startService(intent)
         }
     }
 
@@ -415,10 +434,16 @@ class NxfrService : Service() {
                 val addr = intent.getStringExtra(EXTRA_ADDR) ?: return START_STICKY
                 serviceScope.launch { doManualConnect(addr) }
             }
+            ACTION_PAIR -> {
+                val addr = intent.getStringExtra(EXTRA_ADDR) ?: return START_STICKY
+                val peerName = intent.getStringExtra(EXTRA_PEER_NAME) ?: addr
+                serviceScope.launch { doInitiatePairing(addr, peerName) }
+            }
             ACTION_SEND -> {
                 val addr = intent.getStringExtra(EXTRA_ADDR) ?: return START_STICKY
                 val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return START_STICKY
-                serviceScope.launch { doSendFile(addr, filePath) }
+                val expectedDeviceId = intent.getStringExtra(EXTRA_EXPECTED_DEVICE_ID) ?: ""
+                serviceScope.launch { doSendFile(addr, filePath, expectedDeviceId) }
             }
             ACTION_CANCEL_TRANSFER -> {
                 Log.i(TAG, "onStartCommand: ACTION_CANCEL_TRANSFER received from notification")
@@ -580,13 +605,8 @@ class NxfrService : Service() {
             listening = true
             val storeDir = identityDir()
 
-            // Start beacon announcer so this device is discoverable.
             val did = _deviceId.value
             val dname = _deviceName.value
-            if (did.isNotEmpty()) {
-                _discovery?.startDiscovery(storeDir, did, dname)
-                Log.i(TAG, "Beacon announcer started (Visible=ON)")
-            }
 
             var listenJson = withContext(Dispatchers.IO) {
                 NxfrBridge.nxfr_listen(activePort, storeDir)
@@ -620,9 +640,16 @@ class NxfrService : Service() {
                 return@launch
             }
             listenerHandle = listenResult.getLong("listener")
+            val boundPort = listenResult.getInt("port")
             _nxfrState.value = NxfrState.Listening
-            Log.i(TAG, "Listening on port ${listenResult.getInt("port")}")
+            Log.i(TAG, "Listening on port $boundPort")
             _isListening.value = true
+
+            // Start beacon announcer with the exact bound port so this device is discoverable.
+            if (did.isNotEmpty()) {
+                _discovery?.startDiscovery(storeDir, did, dname, boundPort)
+                Log.i(TAG, "Beacon announcer started on port $boundPort (Visible=ON)")
+            }
 
             // Accept loop.
             while (isActive) {
@@ -665,8 +692,10 @@ class NxfrService : Service() {
                 activeSessionHandle = handle
                 Log.i(TAG, "Accepted connection from ${acceptResult.optString("peer_name")}")
 
-                // Pump for events on this session.
-                pumpLoop(handle, isSending = false)
+                // Pump for events on this session asynchronously so accept loop continues listening (REL-1).
+                serviceScope.launch(Dispatchers.IO) {
+                    pumpLoop(handle, isSending = false)
+                }
             }
             listening = false
             _isListening.value = false
@@ -716,7 +745,7 @@ class NxfrService : Service() {
     }
 
     /** Send a file to a remote device. */
-    private suspend fun doSendFile(addr: String, filePath: String) {
+    private suspend fun doSendFile(addr: String, filePath: String, expectedDeviceId: String = "") {
         val storeDir = identityDir()
         val isDesert = _desertSessionActive.value || addr.startsWith("192.168.49.") || addr.startsWith("192.168.43.")
         Log.i(TAG, "doSendFile: addr=$addr filePath=$filePath (isDesert=$isDesert, timeout budget=${if (isDesert) "10s" else "5s"})...")
@@ -747,7 +776,18 @@ class NxfrService : Service() {
         val handle = connResult.getLong("handle")
         activeSessionHandle = handle
         val peer = connResult.optString("peer_name", addr)
+        val peerDeviceId = connResult.optString("peer_device_id", "")
         activePeerName = peer
+
+        // Verify TLS-authenticated peer device ID matches scanned ticket if specified
+        if (expectedDeviceId.isNotEmpty() && !peerDeviceId.equals(expectedDeviceId, ignoreCase = true)) {
+            Log.e(TAG, "Security error: Peer device ID mismatch! Scanned=$expectedDeviceId, TLS=$peerDeviceId")
+            try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
+            activeSessionHandle = 0
+            _nxfrState.value = NxfrState.Error("Security error: peer identity does not match scanned QR ticket")
+            return
+        }
+
         startForegroundForTransfer()
         Log.i(TAG, "Connected to $addr, peer=$peer, handle=$handle. Initiating file send...")
 
@@ -769,6 +809,59 @@ class NxfrService : Service() {
 
         // Pump for progress.
         pumpLoop(handle, isSending = true)
+    }
+
+    /** Initiate standalone pairing with a discovered peer. */
+    private suspend fun doInitiatePairing(addr: String, peerName: String) {
+        val storeDir = identityDir()
+        Log.i(TAG, "doInitiatePairing to $addr ($peerName)...")
+
+        val connJson = withContext(Dispatchers.IO) {
+            NxfrBridge.nxfr_connect(addr, storeDir)
+        }
+        val connResult = JSONObject(connJson)
+        if (connResult.has("error")) {
+            val errorMsg = connResult.getString("error")
+            Log.e(TAG, "Pairing connect to $addr failed: $errorMsg")
+            _nxfrState.value = NxfrState.Error("Pairing connect failed: $errorMsg")
+            return
+        }
+
+        val handle = connResult.getLong("handle")
+        activeSessionHandle = handle
+        val resolvedPeerName = connResult.optString("peer_name", peerName)
+        val peerDeviceId = connResult.optString("peer_device_id", "")
+        activePeerName = resolvedPeerName
+
+        val pairJson = withContext(Dispatchers.IO) {
+            NxfrBridge.nxfr_pair_begin(handle)
+        }
+        val pairResult = JSONObject(pairJson)
+        if (pairResult.has("error")) {
+            val errorMsg = pairResult.getString("error")
+            Log.e(TAG, "nxfr_pair_begin failed: $errorMsg")
+            withContext(Dispatchers.IO) {
+                try { NxfrBridge.nxfr_close(handle) } catch (_: Throwable) {}
+            }
+            activeSessionHandle = 0
+            _nxfrState.value = NxfrState.Error("Pairing failed: $errorMsg")
+            return
+        }
+
+        val sasCode = pairResult.optString("sas_code", "")
+        Log.i(TAG, "Pairing initiated: handle=$handle, SAS=$sasCode, peer=$resolvedPeerName")
+        _nxfrState.value = NxfrState.Pairing(
+            handle = handle,
+            sasCode = sasCode,
+            peerName = resolvedPeerName,
+            deviceId = peerDeviceId,
+            isInitiator = true
+        )
+
+        // Pump in background for events (e.g. error, disconnect)
+        serviceScope.launch(Dispatchers.IO) {
+            pumpLoop(handle, isSending = false)
+        }
     }
 
     /** Pump events from a session handle, updating state. */
@@ -858,15 +951,25 @@ class NxfrService : Service() {
                     val peerNameFromEvent = event.optString("peer_name")
                     if (peerNameFromEvent.isNotEmpty()) activePeerName = peerNameFromEvent
 
-                    // Update the current Offering state with the real SAS.
+                    // If a transfer offer is active, update the Offering state with the real SAS.
                     val currentState = _nxfrState.value
                     if (currentState is NxfrState.Offering) {
                         _nxfrState.value = currentState.copy(
                             sasCode = sasCode,
                             deviceId = peerDeviceId.ifEmpty { currentState.deviceId }
                         )
+                        Log.i(TAG, "PairRequest received — SAS code set for consent dialog")
+                    } else {
+                        // Standalone incoming pairing request
+                        _nxfrState.value = NxfrState.Pairing(
+                            handle = handle,
+                            sasCode = sasCode,
+                            peerName = activePeerName,
+                            deviceId = peerDeviceId,
+                            isInitiator = false
+                        )
+                        Log.i(TAG, "PairRequest received — Standalone pairing state set (handle=$handle, SAS=$sasCode)")
                     }
-                    Log.i(TAG, "PairRequest received — SAS code set for consent dialog")
                 }
                 "progress" -> {
                     pollDelayMs = 50L

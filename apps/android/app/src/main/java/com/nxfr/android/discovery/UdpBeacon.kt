@@ -75,6 +75,7 @@ class UdpBeacon(private val context: Context) {
 
     var localDeviceId: String = ""
     var localDeviceName: String = "NXFR-Android"
+    var localPort: Int = TCP_PORT
 
     /** Rotating advertised_id for privacy; computed on start(). */
     private var localAdvertisedId: String = ""
@@ -282,7 +283,7 @@ class UdpBeacon(private val context: Context) {
             put("advertised_id", localAdvertisedId) // NEVER broadcast real device_id.
             put("name", localDeviceName)
             put("plat", "android")
-            put("tcp_port", TCP_PORT)
+            put("tcp_port", localPort)
         }.toString()
     }
 
