@@ -317,7 +317,7 @@ fun TransferScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "ESTABLISHING TLS 1.3 PIPE [WAIT]...",
+                            text = "ESTABLISHING SECURE TLS 1.3 CONNECTION...",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,

@@ -155,7 +155,7 @@ fun ReceiveScreen(
                 )
 
                 Text(
-                    text = "Device Call-Sign: $deviceName",
+                    text = "Device Name: $deviceName",
                     style = MaterialTheme.typography.bodyLarge,
                     color = deck.textPrimary
                 )

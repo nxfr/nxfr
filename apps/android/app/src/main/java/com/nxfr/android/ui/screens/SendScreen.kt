@@ -266,7 +266,8 @@ fun SendScreen(
             when (val scanRes = com.nxfr.android.transfer.NxfrQrTicketParser.parse(result.contents)) {
                 is com.nxfr.android.transfer.QrScanResult.ConnectTicket -> {
                     val addr = scanRes.addr
-                    startSendFlow(context, coroutineScope, addr)
+                    val did = scanRes.deviceId
+                    startSendFlow(context, coroutineScope, addr, did)
                 }
                 is com.nxfr.android.transfer.QrScanResult.DesertTicket -> {
                     Toast.makeText(context, "Desert Mode QR — use the Desert Mode sheet to scan this", Toast.LENGTH_LONG).show()
@@ -496,8 +497,7 @@ fun SendScreen(
                 // Action Icons (Manual Connect, QR Scanner, Refresh, Diagnostics)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(
-                        onClick = { showManualConnectSheet = true },
-                        modifier = Modifier.size(32.dp)
+                        onClick = { showManualConnectSheet = true }
                     ) {
                         Icon(Icons.Outlined.GpsFixed, contentDescription = "Manual Connect", tint = deck.signalBeam, modifier = Modifier.size(18.dp))
                     }
@@ -518,22 +518,19 @@ fun SendScreen(
                             } else {
                                 showCameraPermissionRationale = true
                             }
-                        },
-                        modifier = Modifier.size(32.dp)
+                        }
                     ) {
                         Icon(NxfrIcons.QrScan, contentDescription = "Scan QR", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
                     }
 
                     IconButton(
-                        onClick = onRefresh,
-                        modifier = Modifier.size(32.dp)
+                        onClick = onRefresh
                     ) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "Refresh", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
                     }
 
                     IconButton(
-                        onClick = { showTroubleshootSheet = true },
-                        modifier = Modifier.size(32.dp)
+                        onClick = { showTroubleshootSheet = true }
                     ) {
                         Icon(NxfrIcons.Diagnostics, contentDescription = "Diagnostics", tint = deck.textSecondary, modifier = Modifier.size(18.dp))
                     }
@@ -637,6 +634,9 @@ fun SendScreen(
                             device = device,
                             isQueued = isQueued,
                             isMultipleMode = sendMode == SendMode.MULTIPLE,
+                            onPairClick = if (!device.isPaired) {
+                                { NxfrService.initiatePairing(context, "${device.host}:${device.port}", device.name) }
+                            } else null,
                             onClick = {
                                 if (sendMode == SendMode.MULTIPLE) {
                                     queuedDeviceIds = if (isQueued) {
@@ -756,7 +756,8 @@ fun SendScreen(
 private fun startSendFlow(
     context: Context,
     coroutineScope: kotlinx.coroutines.CoroutineScope,
-    addr: String
+    addr: String,
+    expectedDeviceId: String = ""
 ) {
     if (StagingRepository.stagedItems.value.isEmpty()) {
         Toast.makeText(context, "Attach files or media before transmitting", Toast.LENGTH_SHORT).show()
@@ -770,6 +771,9 @@ private fun startSendFlow(
                     action = NxfrService.ACTION_SEND
                     putExtra(NxfrService.EXTRA_ADDR, addr)
                     putExtra(NxfrService.EXTRA_FILE_PATH, stagingFolder.absolutePath)
+                    if (expectedDeviceId.isNotEmpty()) {
+                        putExtra(NxfrService.EXTRA_EXPECTED_DEVICE_ID, expectedDeviceId)
+                    }
                 }
                 context.startService(sendIntent)
                 Toast.makeText(context, "Initiating transfer to $addr...", Toast.LENGTH_SHORT).show()

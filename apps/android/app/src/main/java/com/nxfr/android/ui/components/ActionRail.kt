@@ -99,7 +99,7 @@ private fun ActionDeckChip(
 
     Box(
         modifier = modifier
-            .heightIn(min = 42.dp)
+            .heightIn(min = 48.dp)
             .background(
                 if (enabled) deck.surface else deck.surfaceContainer,
                 RoundedCornerShape(3.dp)

@@ -109,7 +109,7 @@ fun WebUploadScreen(
                 Log.i("WebUploadScreen", "Started on port $uploadPort, token=****")
             }
         } catch (e: UnsatisfiedLinkError) {
-            val msg = "NATIVE LIB OUTDATED — run rebuildNative + reinstall"
+            val msg = "A required component is unavailable. Please update or reinstall NXFR."
             errorMessage = msg
             Log.e("WebUploadScreen", "JNI link error: ${e.message}", e)
             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()

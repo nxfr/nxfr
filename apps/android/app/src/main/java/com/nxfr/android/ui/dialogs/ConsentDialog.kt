@@ -47,7 +47,7 @@ fun ConsentDialog(
 
     var isPairedNode by remember { mutableStateOf(false) }
 
-    LaunchedEffect(senderName) {
+    LaunchedEffect(deviceId) {
         withContext(Dispatchers.IO) {
             try {
                 val storeDir = NxfrService.getIdentityDir(context)
@@ -57,7 +57,7 @@ fun ConsentDialog(
                     val devicesArray = json.getJSONArray("devices")
                     for (i in 0 until devicesArray.length()) {
                         val devObj = devicesArray.getJSONObject(i)
-                        if (devObj.optString("name").equals(senderName, ignoreCase = true)) {
+                        if (devObj.optString("device_id").equals(deviceId, ignoreCase = true)) {
                             isPairedNode = true
                             break
                         }
@@ -124,9 +124,9 @@ fun ConsentDialog(
                 SealBadge(text = "TLS 1.3 MUTUAL AUTH", color = deck.signalBeam)
 
                 if (isPairedNode) {
-                    SealBadge(text = "TOFU: PAIRED & TRUSTED", color = deck.signalSuccess)
+                    SealBadge(text = "PAIRED & VERIFIED", color = deck.signalSuccess)
                 } else {
-                    SealBadge(text = "TOFU: NEW UNPAIRED NODE", color = deck.signalWarning)
+                    SealBadge(text = "NEW DEVICE (UNPAIRED)", color = deck.signalWarning)
                 }
             }
 
@@ -139,8 +139,8 @@ fun ConsentDialog(
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TelemetryLine(label = "PEER CALLSIGN", value = senderName)
-                TelemetryLine(label = "NODE ID", value = "did:nxfr:$shortId")
+                TelemetryLine(label = "SENDER DEVICE", value = senderName)
+                TelemetryLine(label = "DEVICE ID", value = "did:nxfr:$shortId")
 
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -154,7 +154,7 @@ fun ConsentDialog(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "SAS AUTHENTICATION CODE",
+                        text = "SAS VERIFICATION CODE",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
@@ -170,7 +170,7 @@ fun ConsentDialog(
                         letterSpacing = 3.sp
                     )
                     Text(
-                        text = "Verify digits match sender station screen",
+                        text = "Verify digits match sender device screen",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 10.sp,
                         color = deck.textSecondary
@@ -276,7 +276,7 @@ fun ConsentDialog(
                     border = androidx.compose.foundation.BorderStroke(1.dp, deck.signalAlert),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
+                        .height(48.dp)
                 ) {
                     Text(
                         text = "ABORT / REJECT",

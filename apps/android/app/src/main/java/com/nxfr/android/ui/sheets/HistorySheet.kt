@@ -109,7 +109,7 @@ fun HistorySheet(
             historyItems = list
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "UnsatisfiedLinkError loading history: ${e.message}", e)
-            Toast.makeText(context, "NATIVE LIB OUTDATED — run rebuildNative + reinstall", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "A required component is unavailable. Please update or reinstall NXFR.", Toast.LENGTH_LONG).show()
         } catch (t: Throwable) {
             Log.e(TAG, "Error loading history: ${t.message}", t)
         }
@@ -350,7 +350,7 @@ private fun HistoryDeckRow(item: HistoryItem) {
                         Toast.makeText(context, "Cannot open file: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    Toast.makeText(context, "PAYLOAD NO LONGER ON DEVICE", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "File is no longer available on device", Toast.LENGTH_SHORT).show()
                 }
             }
             .padding(12.dp)

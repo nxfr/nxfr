@@ -123,12 +123,12 @@ fun IdentityDeckBar(
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Station", fontWeight = FontWeight.Bold) },
+            title = { Text("Rename Device", fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = editNameValue,
                     onValueChange = { editNameValue = it },
-                    label = { Text("Station Call-Sign / Name") },
+                    label = { Text("Device Name") },
                     singleLine = true
                 )
             },

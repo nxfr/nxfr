@@ -46,6 +46,7 @@ import com.nxfr.android.discovery.NetworkInterfaceHelper
 import com.nxfr.android.service.NxfrService
 import com.nxfr.android.staging.StagedItem
 import com.nxfr.android.staging.StagingRepository
+import com.nxfr.android.ui.theme.deckColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -139,7 +140,7 @@ fun WebShareScreen(
             }
         } catch (e: UnsatisfiedLinkError) {
             Log.e("WebShareScreen", "UnsatisfiedLinkError: ${e.message}", e)
-            nativeError = "NATIVE LIB OUTDATED — run rebuildNative + reinstall"
+            nativeError = "A required component is unavailable. Please update or reinstall NXFR."
         } catch (t: Throwable) {
             Log.e("WebShareScreen", "Error starting web share: ${t.message}", t)
             nativeError = t.message ?: "Failed to start web share"
@@ -227,8 +228,8 @@ fun WebShareScreen(
 
     if (nativeError != null) {
         ErrorScreen(
-            title = "NATIVE LIB OUTDATED",
-            message = nativeError ?: "NATIVE LIB OUTDATED — run rebuildNative + reinstall",
+            title = "Component Unavailable",
+            message = nativeError ?: "A required component is unavailable. Please update or reinstall NXFR.",
             onBack = { stopAndCleanup() }
         )
         return
@@ -550,9 +551,9 @@ fun WebShareScreen(
         OutlinedCard(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium,
-            border = BorderStroke(1.dp, ComposeColor(0xFF334155)),
+            border = BorderStroke(1.dp, MaterialTheme.deckColors.gridLineBright),
             colors = CardDefaults.outlinedCardColors(
-                containerColor = ComposeColor(0xFF0F172A)
+                containerColor = MaterialTheme.deckColors.surfaceContainer
             )
         ) {
             Column(
@@ -563,7 +564,7 @@ fun WebShareScreen(
                 Text(
                     text = "DOWNLOAD QUOTA",
                     style = MaterialTheme.typography.labelSmall,
-                    color = ComposeColor(0xFF00E5FF),
+                    color = MaterialTheme.deckColors.signalBeam,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp
@@ -572,7 +573,7 @@ fun WebShareScreen(
                 Text(
                     text = "Auto-shut down the share link after N downloads. 0 = unlimited.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = ComposeColor(0xFF94A3B8)
+                    color = MaterialTheme.deckColors.textSecondary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
@@ -605,14 +606,14 @@ fun WebShareScreen(
                                     text = label,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) ComposeColor(0xFF000000)
-                                            else ComposeColor(0xFFCCCCCC)
+                                    color = if (isSelected) MaterialTheme.deckColors.rootBackground
+                                            else MaterialTheme.deckColors.textSecondary
                                 )
                             },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = ComposeColor(0xFF00E5FF),
-                                selectedLabelColor = ComposeColor(0xFF000000),
-                                containerColor = ComposeColor(0xFF1E293B)
+                                selectedContainerColor = MaterialTheme.deckColors.signalBeam,
+                                selectedLabelColor = MaterialTheme.deckColors.rootBackground,
+                                containerColor = MaterialTheme.deckColors.surfaceVariant
                             )
                         )
                     }
@@ -736,10 +737,10 @@ fun WebShareScreen(
         // ── REQUESTS SECTION ────────────────────────────────────────
         OutlinedCard(
             modifier = Modifier.fillMaxWidth(),
-            border = BorderStroke(1.dp, ComposeColor(0xFF334155)),
+            border = BorderStroke(1.dp, MaterialTheme.deckColors.gridLineBright),
             shape = MaterialTheme.shapes.medium,
             colors = CardDefaults.outlinedCardColors(
-                containerColor = ComposeColor(0xFF0F172A)
+                containerColor = MaterialTheme.deckColors.surfaceContainer
             )
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
@@ -753,19 +754,19 @@ fun WebShareScreen(
                         text = "REQUESTS",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = ComposeColor(0xFF00E5FF)
+                        color = MaterialTheme.deckColors.signalBeam
                     )
                     if (pendingRequests.isNotEmpty()) {
                         Surface(
                             shape = MaterialTheme.shapes.extraSmall,
-                            color = ComposeColor(0xFF00E5FF)
+                            color = MaterialTheme.deckColors.signalBeam
                         ) {
                             Text(
                                 text = "${pendingRequests.size}",
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = ComposeColor(0xFF0F172A)
+                                color = MaterialTheme.deckColors.rootBackground
                             )
                         }
                     }
@@ -777,14 +778,14 @@ fun WebShareScreen(
                     Text(
                         text = if (autoAcceptRequests) "Auto-accepting all requests" else "No requests yet",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFF94A3B8)
+                        color = MaterialTheme.deckColors.textSecondary
                     )
                 } else {
                     pendingRequests.forEach { req ->
                         Surface(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             shape = MaterialTheme.shapes.small,
-                            color = ComposeColor(0xFF1E293B)
+                            color = MaterialTheme.deckColors.surfaceVariant
                         ) {
                             Row(
                                 modifier = Modifier.padding(12.dp),
@@ -796,12 +797,12 @@ fun WebShareScreen(
                                         text = parseBrowserName(req.userAgent),
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = ComposeColor(0xFFFFA726) // Orange like LocalSend
+                                        color = MaterialTheme.deckColors.signalWarning
                                     )
                                     Text(
                                         text = req.ip,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = ComposeColor(0xFF94A3B8)
+                                        color = MaterialTheme.deckColors.textSecondary
                                     )
                                 }
                                 // Reject button
@@ -817,7 +818,7 @@ fun WebShareScreen(
                                     Icon(
                                         imageVector = Icons.Outlined.Close,
                                         contentDescription = "Reject",
-                                        tint = ComposeColor(0xFFEF4444)
+                                        tint = MaterialTheme.deckColors.signalAlert
                                     )
                                 }
                                 // Accept button
@@ -833,7 +834,7 @@ fun WebShareScreen(
                                     Icon(
                                         imageVector = Icons.Outlined.CheckCircle,
                                         contentDescription = "Accept",
-                                        tint = ComposeColor(0xFF22C55E)
+                                        tint = MaterialTheme.deckColors.signalSuccess
                                     )
                                 }
                             }
@@ -842,7 +843,7 @@ fun WebShareScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider(color = ComposeColor(0xFF334155))
+                HorizontalDivider(color = MaterialTheme.deckColors.gridLineBright)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Auto-accept toggle
@@ -854,7 +855,7 @@ fun WebShareScreen(
                     Text(
                         text = "Automatically accept requests",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFFE2E8F0)
+                        color = MaterialTheme.deckColors.textPrimary
                     )
                     Switch(
                         checked = autoAcceptRequests,
@@ -863,8 +864,8 @@ fun WebShareScreen(
                             prefs.edit().putBoolean("web_share_auto_accept", enabled).apply()
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = ComposeColor(0xFF00E5FF),
-                            checkedTrackColor = ComposeColor(0xFF334155)
+                            checkedThumbColor = MaterialTheme.deckColors.signalBeam,
+                            checkedTrackColor = MaterialTheme.deckColors.gridLineBright
                         )
                     )
                 }
@@ -949,7 +950,7 @@ fun WebShareScreen(
             else
                 "Quota: $maxDownloads download${if (maxDownloads == "1") "" else "s"} max",
             style = MaterialTheme.typography.bodySmall,
-            color = ComposeColor(0xFF94A3B8),
+            color = MaterialTheme.deckColors.textSecondary,
             fontFamily = FontFamily.Monospace
         )
 
@@ -1074,10 +1075,10 @@ fun CertWarningCard(context: Context) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, ComposeColor(0xFF334155))
+        border = BorderStroke(1.dp, MaterialTheme.deckColors.gridLineBright)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().background(ComposeColor(0xFF0F172A))
+            modifier = Modifier.fillMaxWidth().background(MaterialTheme.deckColors.surfaceContainer)
         ) {
             Row(
                 modifier = Modifier
@@ -1093,13 +1094,13 @@ fun CertWarningCard(context: Context) {
                 Text(
                     text = "⚠️ Browser certificate warning — tap for help",
                     style = MaterialTheme.typography.labelMedium,
-                    color = ComposeColor(0xFF00E5FF),
+                    color = MaterialTheme.deckColors.signalBeam,
                     fontWeight = FontWeight.Bold
                 )
                 Icon(
                     imageVector = if (isExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                     contentDescription = null,
-                    tint = ComposeColor(0xFF94A3B8)
+                    tint = MaterialTheme.deckColors.textSecondary
                 )
             }
             
@@ -1107,33 +1108,33 @@ fun CertWarningCard(context: Context) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(ComposeColor(0xFF1E293B))
+                        .background(MaterialTheme.deckColors.surfaceVariant)
                         .padding(16.dp)
                 ) {
                     Text(
                         text = "This device uses a self-signed TLS certificate. Your browser will show a warning — this is normal for local transfers.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFFE2E8F0)
+                        color = MaterialTheme.deckColors.textPrimary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "• Chrome / Edge\n  Tap \"Advanced\" → \"Proceed to [IP] (unsafe)\"",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFFE2E8F0),
+                        color = MaterialTheme.deckColors.textPrimary,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "• Safari (iOS)\n  Tap \"Show Details\" → \"Visit this website\" → Confirm",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFFE2E8F0),
+                        color = MaterialTheme.deckColors.textPrimary,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "• Firefox\n  Tap \"Advanced\" → \"Accept the Risk and Continue\"",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ComposeColor(0xFFE2E8F0),
+                        color = MaterialTheme.deckColors.textPrimary,
                         fontFamily = FontFamily.Monospace
                     )
                 }
