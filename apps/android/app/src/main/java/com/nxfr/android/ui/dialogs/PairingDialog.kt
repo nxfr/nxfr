@@ -33,6 +33,8 @@ import com.nxfr.android.R
 @Composable
 fun PairingDialog(
     sasCode: String,
+    peerName: String = "",
+    deviceId: String = "",
     onConfirm: () -> Unit,
     onReject: () -> Unit,
 ) {
@@ -48,7 +50,7 @@ fun PairingDialog(
         },
         title = {
             Text(
-                text = stringResource(R.string.pairing_title),
+                text = if (peerName.isNotEmpty()) "Pair with $peerName" else stringResource(R.string.pairing_title),
                 style = MaterialTheme.typography.headlineSmall,
             )
         },
@@ -57,6 +59,15 @@ fun PairingDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                if (deviceId.isNotEmpty()) {
+                    Text(
+                        text = "did:nxfr:${if (deviceId.length >= 8) deviceId.take(8) else deviceId}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 Spacer(Modifier.height(8.dp))
 
                 // Big SAS code display.

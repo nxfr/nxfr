@@ -43,6 +43,8 @@ import com.nxfr.android.ui.screens.TransferScreen
 import com.nxfr.android.ui.screens.WebUploadScreen
 import com.nxfr.android.service.NxfrState
 import com.nxfr.android.ui.dialogs.ConsentDialog
+import com.nxfr.android.ui.dialogs.PairingDialog
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -64,6 +66,7 @@ fun NxfrNavHost(
     onDeviceNameChanged: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -170,7 +173,7 @@ fun NxfrNavHost(
                 DisposableEffect(Unit) {
                     if (NxfrService.discovery == null) {
                         val storeDir = context.filesDir.absolutePath
-                        discovery.startDiscovery(storeDir, deviceId, deviceName)
+                        discovery.startDiscovery(storeDir, deviceId, deviceName, NxfrService.activePort)
                     }
                     onDispose {
                         if (NxfrService.discovery == null) {
@@ -269,6 +272,14 @@ fun NxfrNavHost(
                 onAccept = {
                     scope.launch {
                         try {
+                            val storeDir = NxfrService.getIdentityDir(context)
+                            // If incoming transfer is accompanied by real SAS pairing request, persist pairing in paired.db
+                            if (offering.sasCode.isNotEmpty()) {
+                                withContext(Dispatchers.IO) {
+                                    NxfrService.NxfrBridge.nxfr_pair_confirm(offering.handle, true, storeDir)
+                                }
+                                android.util.Log.i("NxfrNavHost", "Pairing persisted for trusted peer")
+                            }
                             val confirmJson = withContext(Dispatchers.IO) {
                                 NxfrService.NxfrBridge.nxfr_confirm(offering.handle, true)
                             }
@@ -288,6 +299,56 @@ fun NxfrNavHost(
                             android.util.Log.i("NxfrNavHost", "Consent rejected")
                         } catch (t: Throwable) {
                             android.util.Log.e("NxfrNavHost", "Error rejecting transfer: ${t.message}", t)
+                        }
+                    }
+                }
+            )
+        }
+
+        if (nxfrState is NxfrState.Pairing) {
+            val pairing = nxfrState as NxfrState.Pairing
+            val storeDir = NxfrService.getIdentityDir(context)
+            PairingDialog(
+                sasCode = pairing.sasCode,
+                peerName = pairing.peerName,
+                deviceId = pairing.deviceId,
+                onConfirm = {
+                    scope.launch {
+                        try {
+                            val confirmRes = withContext(Dispatchers.IO) {
+                                NxfrService.NxfrBridge.nxfr_pair_confirm(pairing.handle, true, storeDir)
+                            }
+                            android.util.Log.i("NxfrNavHost", "Pairing confirmed: $confirmRes")
+                            withContext(Dispatchers.IO) {
+                                try { NxfrService.NxfrBridge.nxfr_close(pairing.handle) } catch (_: Throwable) {}
+                            }
+                            NxfrService.cancelActiveTransfer()
+                            android.widget.Toast.makeText(
+                                context,
+                                "Device paired successfully: ${pairing.peerName.ifEmpty { "Node" }}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } catch (t: Throwable) {
+                            android.util.Log.e("NxfrNavHost", "Error confirming pairing: ${t.message}", t)
+                        }
+                    }
+                },
+                onReject = {
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                NxfrService.NxfrBridge.nxfr_pair_confirm(pairing.handle, false, storeDir)
+                                try { NxfrService.NxfrBridge.nxfr_close(pairing.handle) } catch (_: Throwable) {}
+                            }
+                            android.util.Log.i("NxfrNavHost", "Pairing rejected")
+                            NxfrService.cancelActiveTransfer()
+                            android.widget.Toast.makeText(
+                                context,
+                                "Pairing cancelled",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } catch (t: Throwable) {
+                            android.util.Log.e("NxfrNavHost", "Error rejecting pairing: ${t.message}", t)
                         }
                     }
                 }

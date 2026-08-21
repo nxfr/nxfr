@@ -29,6 +29,7 @@ fun DeviceDeckCard(
     isQueued: Boolean = false,
     isMultipleMode: Boolean = false,
     onClick: () -> Unit,
+    onPairClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val deck = MaterialTheme.deckColors
@@ -92,6 +93,26 @@ fun DeviceDeckCard(
 
                 if (device.isPaired) {
                     BadgePill(text = "PAIRED", isHighlight = true)
+                } else if (onPairClick != null) {
+                    Box(
+                        modifier = Modifier
+                            .background(deck.surfaceContainer, RoundedCornerShape(2.dp))
+                            .border(0.5.dp, deck.signalBeam, RoundedCornerShape(2.dp))
+                            .clickable(role = Role.Button) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onPairClick()
+                            }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "PAIR ⚡",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = deck.signalBeam
+                        )
+                    }
                 } else {
                     BadgePill(text = "TOFU", isHighlight = false)
                 }
