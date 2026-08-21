@@ -48,8 +48,13 @@ impl PersistentIdentity {
             let ident =
                 generate_identity().map_err(|e| io::Error::other(format!("keygen: {e}")))?;
 
-            // Write key.
+            // Write key with restricted permissions (SECURITY §6).
             fs::write(&key_path, &ident.private_key_der)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
+            }
             // Write cert.
             fs::write(&cert_path, &ident.cert_der)?;
 

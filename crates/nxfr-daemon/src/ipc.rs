@@ -970,7 +970,7 @@ async fn cmd_pair_streaming(
             let peer_certs = client_conn.peer_certificates().unwrap_or(&[]);
             peer_certs
                 .first()
-                .map(|c| c.as_ref().to_vec())
+                .and_then(|c| nxfr_crypto::extract_spki(c.as_ref()).ok())
                 .unwrap_or_default()
         };
 

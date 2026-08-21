@@ -800,11 +800,9 @@ mod tests {
 
     #[test]
     fn receiver_streaming_to_completing_on_all_chunks_received() {
-        let (s, a) = transfer_handle_event(
-            &TransferState::Streaming,
-            &TransferEvent::AllChunksReceived,
-        )
-        .unwrap();
+        let (s, a) =
+            transfer_handle_event(&TransferState::Streaming, &TransferEvent::AllChunksReceived)
+                .unwrap();
         assert_eq!(s, TransferState::Completing);
         assert!(a.contains(&TransferAction::SendTransferAck));
         assert!(a.contains(&TransferAction::CancelTimer(TransferTimer::ChunkAck)));
@@ -822,11 +820,9 @@ mod tests {
     #[test]
     fn receiver_full_happy_path() {
         // Idle → Pending
-        let (s, _) = transfer_handle_event(
-            &TransferState::Idle,
-            &TransferEvent::ReceiveTransferRequest,
-        )
-        .unwrap();
+        let (s, _) =
+            transfer_handle_event(&TransferState::Idle, &TransferEvent::ReceiveTransferRequest)
+                .unwrap();
         assert_eq!(s, TransferState::Pending);
 
         // Pending → Negotiating
@@ -849,13 +845,14 @@ mod tests {
     #[test]
     fn incomplete_transfer_does_not_reach_complete() {
         // Still in Streaming — should NOT accept AckSent
-        let result =
-            transfer_handle_event(&TransferState::Streaming, &TransferEvent::AckSent);
+        let result = transfer_handle_event(&TransferState::Streaming, &TransferEvent::AckSent);
         assert!(result.is_err());
 
         // Still in Negotiating — should NOT accept AllChunksReceived
-        let result =
-            transfer_handle_event(&TransferState::Negotiating, &TransferEvent::AllChunksReceived);
+        let result = transfer_handle_event(
+            &TransferState::Negotiating,
+            &TransferEvent::AllChunksReceived,
+        );
         assert!(result.is_err());
     }
 
@@ -867,10 +864,8 @@ mod tests {
 
     #[test]
     fn pending_rejects_all_chunks_received() {
-        let result = transfer_handle_event(
-            &TransferState::Pending,
-            &TransferEvent::AllChunksReceived,
-        );
+        let result =
+            transfer_handle_event(&TransferState::Pending, &TransferEvent::AllChunksReceived);
         assert!(result.is_err());
     }
 }

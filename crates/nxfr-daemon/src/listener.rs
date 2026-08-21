@@ -32,6 +32,66 @@ pub async fn run_listener_on_port(
     run_listener_inner(state, format!("127.0.0.1:{port}"), false).await
 }
 
+/// Run the listener on an OS-assigned ephemeral port (for test concurrency).
+pub async fn run_listener_dynamic(
+    state: Arc<DaemonState>,
+) -> Result<(u16, tokio::task::JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
+    let server_config =
+        tls::build_server_config(state.identity.private_key(), state.identity.certificate())?;
+    let acceptor = TlsAcceptor::from(Arc::new(server_config));
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    info!("TCP listener dynamically bound on 127.0.0.1:{port}");
+
+    let state_for_shutdown = Arc::clone(&state);
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((tcp_stream, addr)) => {
+                            let acceptor = acceptor.clone();
+                            let state = Arc::clone(&state);
+                            let sem = semaphore.clone();
+                            tokio::spawn(async move {
+                                let _permit = match sem.acquire().await {
+                                    Ok(p) => p,
+                                    Err(_) => return,
+                                };
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(TLS_HANDSHAKE_TIMEOUT_SECS),
+                                    acceptor.accept(tcp_stream),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(tls_stream)) => {
+                                        if let Err(e) = handler::handle_incoming(state, tls_stream, addr).await {
+                                            log::debug!("Connection handler error for {addr}: {e}");
+                                        }
+                                    }
+                                    Ok(Err(e)) => log::warn!("TLS handshake failed from {addr}: {e}"),
+                                    Err(_) => log::warn!("TLS handshake timeout from {addr}"),
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            log::warn!("TCP accept error: {e}");
+                            tokio::time::sleep(std::time::Duration::from_millis(ACCEPT_ERROR_BACKOFF_MS)).await;
+                        }
+                    }
+                }
+                _ = state_for_shutdown.shutdown.notified() => {
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok((port, handle))
+}
+
 async fn run_listener_inner(
     state: Arc<DaemonState>,
     bind_addr: String,

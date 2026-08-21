@@ -1604,6 +1604,8 @@ dependencies = [
  "hex",
  "log",
  "nxfr-common",
+ "nxfr-crypto",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

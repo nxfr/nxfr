@@ -75,7 +75,7 @@ impl DiscoveryManager {
         let host_name = "nxfr-host.local.";
 
         let mut properties = HashMap::new();
-        properties.insert("v".to_string(), "0.1".to_string());
+        properties.insert("v".to_string(), "1.0".to_string());
         properties.insert("id".to_string(), compute_advertised_id_now(&self.device_id));
         properties.insert("name".to_string(), self.device_name.clone());
         properties.insert("plat".to_string(), self.platform.clone());

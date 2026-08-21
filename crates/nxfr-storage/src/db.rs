@@ -183,9 +183,28 @@ impl PairedDeviceDb {
         Ok(())
     }
 
-    pub fn verify_identity(&self, device_id: &str, spki: &[u8]) -> Result<IdentityCheck> {
+    pub fn verify_identity(&self, device_id: &str, incoming_key: &[u8]) -> Result<IdentityCheck> {
         if let Some(dev) = self.lookup(device_id)? {
-            if dev.public_key_spki == spki {
+            // Normalize stored key: if it's full X.509 cert DER (from older daemon versions), extract SPKI.
+            let stored_spki = nxfr_crypto::extract_spki(&dev.public_key_spki)
+                .unwrap_or_else(|_| dev.public_key_spki.clone());
+
+            // Normalize incoming key: extract SPKI if full cert DER was passed.
+            let incoming_spki =
+                nxfr_crypto::extract_spki(incoming_key).unwrap_or_else(|_| incoming_key.to_vec());
+
+            // Constant-time comparison (SECURITY §10).
+            let is_match = if stored_spki.len() == incoming_spki.len() {
+                let mut diff = 0u8;
+                for (a, b) in stored_spki.iter().zip(incoming_spki.iter()) {
+                    diff |= a ^ b;
+                }
+                diff == 0
+            } else {
+                false
+            };
+
+            if is_match {
                 Ok(IdentityCheck::Matched)
             } else {
                 Ok(IdentityCheck::Changed)
@@ -330,6 +349,74 @@ mod tests {
         assert_eq!(
             db.verify_identity("test-id", &[1, 2, 3]).unwrap(),
             IdentityCheck::Unknown
+        );
+    }
+
+    #[test]
+    fn test_verify_identity_spki_and_legacy_cert_der_interop() {
+        let dir = tempdir().unwrap();
+        let db = PairedDeviceDb::open(&dir.path().join("db")).unwrap();
+
+        let ident_a = nxfr_crypto::generate_identity().unwrap();
+        let ident_b = nxfr_crypto::generate_identity().unwrap();
+
+        let spki_a = nxfr_crypto::extract_spki(&ident_a.cert_der).unwrap();
+        let spki_b = nxfr_crypto::extract_spki(&ident_b.cert_der).unwrap();
+
+        // 1. Legacy daemon DB stores full cert DER in public_key_spki column.
+        let legacy_dev = PairedDevice {
+            device_id: "dev-legacy".to_string(),
+            name: "Legacy Daemon".to_string(),
+            public_key_spki: ident_a.cert_der.clone(),
+            first_seen: 100,
+            last_seen: 100,
+            trust_level: "paired".to_string(),
+            auto_accept: "prompt".to_string(),
+        };
+        db.insert_or_update(&legacy_dev).unwrap();
+
+        // FFI client connects with extracted SPKI: MUST match legacy record.
+        assert_eq!(
+            db.verify_identity("dev-legacy", &spki_a).unwrap(),
+            IdentityCheck::Matched
+        );
+        // Another daemon connects with cert DER: MUST match legacy record.
+        assert_eq!(
+            db.verify_identity("dev-legacy", &ident_a.cert_der).unwrap(),
+            IdentityCheck::Matched
+        );
+        // Different SPKI: MUST report Changed.
+        assert_eq!(
+            db.verify_identity("dev-legacy", &spki_b).unwrap(),
+            IdentityCheck::Changed
+        );
+
+        // 2. Modern DB stores extracted SPKI.
+        let modern_dev = PairedDevice {
+            device_id: "dev-modern".to_string(),
+            name: "Modern Daemon / FFI".to_string(),
+            public_key_spki: spki_a.clone(),
+            first_seen: 200,
+            last_seen: 200,
+            trust_level: "paired".to_string(),
+            auto_accept: "prompt".to_string(),
+        };
+        db.insert_or_update(&modern_dev).unwrap();
+
+        // SPKI query: MUST match.
+        assert_eq!(
+            db.verify_identity("dev-modern", &spki_a).unwrap(),
+            IdentityCheck::Matched
+        );
+        // Cert DER query: MUST match (normalizes to SPKI).
+        assert_eq!(
+            db.verify_identity("dev-modern", &ident_a.cert_der).unwrap(),
+            IdentityCheck::Matched
+        );
+        // Wrong cert / SPKI: MUST report Changed.
+        assert_eq!(
+            db.verify_identity("dev-modern", &ident_b.cert_der).unwrap(),
+            IdentityCheck::Changed
         );
     }
 }

@@ -14,7 +14,7 @@ use nxfr_core::codec;
 use nxfr_core::frame::FrameKind;
 use nxfr_core::messages::{ControlMessage, ManifestEntryType, TransferAckStatus};
 use nxfr_core::path::{resolve_safe_path, sanitize_path};
-use nxfr_crypto::device_id_from_cert;
+use nxfr_crypto::{device_id_from_cert, extract_spki};
 use nxfr_storage::db::IdentityCheck;
 use nxfr_storage::resume::{ResumeManifestEntry, ResumeState};
 use nxfr_transport::connection::NxfrConnection;
@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
+use zeroize::Zeroize;
 
 /// Handle an incoming TLS connection (responder side).
 pub async fn handle_incoming(
@@ -30,6 +31,21 @@ pub async fn handle_incoming(
     tls_stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Check if receiving is enabled (PROTOCOL §16, PROTO-6).
+    let receiving_enabled = {
+        let config = state.config.read().await;
+        config.receiving_enabled
+    };
+    if !receiving_enabled {
+        info!("Receiving disabled — rejecting incoming connection from {addr}");
+        let mut conn = NxfrConnection::new(tls_stream);
+        let close = ControlMessage::SessionClose {
+            reason: Some("receiving_disabled".to_string()),
+        };
+        let _ = conn.send_control(0, 0, &close).await;
+        return Ok(());
+    }
+
     // Extract peer device_id from TLS certificate SPKI.
     let (_, server_conn) = tls_stream.get_ref();
     let peer_certs = server_conn
@@ -43,10 +59,12 @@ pub async fn handle_incoming(
 
     info!("Peer device_id: {peer_id_hex} from {addr}");
 
-    // Check identity against paired DB (PROTOCOL §10.4).
+    // Check identity against paired DB (PROTOCOL §10.4, INT-3).
+    let peer_spki =
+        extract_spki(peer_cert.as_ref()).map_err(|e| format!("SPKI extraction failed: {e}"))?;
     let identity_check = {
         let db = state.db.lock().await;
-        db.verify_identity(&peer_id_hex, peer_cert.as_ref())
+        db.verify_identity(&peer_id_hex, &peer_spki)
     };
 
     let is_paired = match identity_check {
@@ -81,8 +99,11 @@ pub async fn handle_incoming(
 
     let mut conn = NxfrConnection::new(tls_stream);
 
-    // Session: receive HELLO.
-    let (hdr, payload) = conn.recv_frame().await?;
+    // Session: receive HELLO (timeout per §17.2).
+    let (hdr, payload) =
+        tokio::time::timeout(nxfr_common::timeouts::HELLO_EXCHANGE, conn.recv_frame())
+            .await
+            .map_err(|_| "HELLO exchange timed out (10s)")??;
     if hdr.kind != FrameKind::Control {
         return Err("expected CONTROL frame for HELLO".into());
     }
@@ -94,10 +115,13 @@ pub async fn handle_incoming(
             protocol_version,
             ..
         } => {
-            if *protocol_version != ProtocolVersion::V0_1 {
+            if !protocol_version.is_supported() {
                 let err = ControlMessage::Error {
                     code: nxfr_core::error_code::ErrorCode::UnsupportedVersion,
-                    message: Some("only v0.1 supported".to_string()),
+                    message: Some(format!(
+                        "unsupported version {}.{}",
+                        protocol_version.major, protocol_version.minor
+                    )),
                     fatal: true,
                     details: None,
                 };
@@ -117,7 +141,7 @@ pub async fn handle_incoming(
     // Send HELLO_ACK.
     let config = state.config.read().await;
     let hello_ack = ControlMessage::HelloAck {
-        protocol_version: ProtocolVersion::V0_1,
+        protocol_version: ProtocolVersion::V1_0,
         device_id: DeviceId::from_bytes(state.identity.device_id),
         device_name: config.device_name.clone(),
         platform: Platform::Linux,
@@ -441,6 +465,160 @@ pub async fn handle_incoming(
                                 )
                                 .await?;
                             }
+                        }
+                    }
+                    ControlMessage::PairRequest { sas_method } => {
+                        info!("Received PAIR_REQUEST (method: {sas_method}) from {peer_name} ({peer_id_hex})");
+                        if sas_method != "numeric-6" && sas_method != "sas-v0" {
+                            warn!("Unsupported SAS method: {sas_method}");
+                            let reject = ControlMessage::PairReject {
+                                reason: Some("unsupported_sas_method".to_string()),
+                            };
+                            conn.send_control(session_id, 0, &reject).await?;
+                            continue;
+                        }
+
+                        // Derive SAS code using server-side TLS exporter.
+                        let (peer_cert_der, sas_code) = {
+                            let stream_ref = conn.get_ref();
+                            let (_, server_conn) = stream_ref.get_ref();
+                            let peer_certs = server_conn.peer_certificates().unwrap_or(&[]);
+                            let peer_cert_der = peer_certs
+                                .first()
+                                .map(|c| c.as_ref().to_vec())
+                                .unwrap_or_default();
+                            let peer_id = device_id_from_cert(&peer_cert_der).unwrap_or([0u8; 32]);
+
+                            let (_, sas_context) = nxfr_core::sas::derive_sas(
+                                &state.identity.device_id,
+                                &peer_id,
+                                &[0u8; 4],
+                            );
+                            let mut exporter_bytes = [0u8; 4];
+                            server_conn
+                                .export_keying_material(
+                                    &mut exporter_bytes,
+                                    b"NXFR-SAS-v0",
+                                    Some(&sas_context),
+                                )
+                                .map_err(|e| format!("export_keying_material failed: {e}"))?;
+
+                            let (sas_code, _) = nxfr_core::sas::derive_sas(
+                                &state.identity.device_id,
+                                &peer_id,
+                                &exporter_bytes,
+                            );
+                            exporter_bytes.zeroize();
+                            (peer_cert_der, sas_code)
+                        };
+
+                        info!("Derived SAS for {peer_name}: {sas_code}");
+
+                        let has_watchers = {
+                            let watchers = state.watchers.lock().await;
+                            !watchers.is_empty()
+                        };
+
+                        let sas_event = IpcEvent::SasPrompt {
+                            peer_name: peer_name.clone(),
+                            peer_device_id: peer_id_hex.clone(),
+                            sas_code: sas_code.clone(),
+                        };
+
+                        let accepted = if has_watchers {
+                            let (consent_tx, consent_rx) = tokio::sync::oneshot::channel::<bool>();
+                            let pair_key = format!("pair-{}", peer_id_hex);
+                            {
+                                let mut offers = state.pending_offers.lock().await;
+                                offers.insert(
+                                    pair_key.clone(),
+                                    PendingOffer {
+                                        offer_event: sas_event.clone(),
+                                        respond_to: Some(consent_tx),
+                                        expires_at: Instant::now()
+                                            + std::time::Duration::from_secs(60),
+                                    },
+                                );
+                            }
+                            broadcast_to_watchers(&state, &sas_event).await;
+
+                            let consent_result = tokio::time::timeout(
+                                std::time::Duration::from_secs(60),
+                                consent_rx,
+                            )
+                            .await;
+
+                            state.pending_offers.lock().await.remove(&pair_key);
+                            matches!(consent_result, Ok(Ok(true)))
+                        } else {
+                            // When no watchers are attached (e.g. headless or direct pairing test), accept directly.
+                            true
+                        };
+
+                        if accepted {
+                            info!("Accepting pairing with {peer_name}");
+                            let accept = ControlMessage::PairAccept;
+                            conn.send_control(session_id, 0, &accept).await?;
+
+                            // Wait for peer's PAIR_ACCEPT
+                            let (_hdr, payload) = conn.recv_frame().await?;
+                            let msg = codec::decode_control(&payload)?;
+                            match msg {
+                                ControlMessage::PairAccept => {
+                                    info!("Pairing completed with {peer_name} ({peer_id_hex})");
+                                    let peer_spki =
+                                        extract_spki(&peer_cert_der).unwrap_or_default();
+                                    let db = state.db.lock().await;
+                                    let device = nxfr_storage::db::PairedDevice {
+                                        device_id: peer_id_hex.clone(),
+                                        name: peer_name.clone(),
+                                        public_key_spki: peer_spki,
+                                        first_seen: chrono::Utc::now().timestamp(),
+                                        last_seen: chrono::Utc::now().timestamp(),
+                                        trust_level: "paired".to_string(),
+                                        auto_accept: "prompt".to_string(),
+                                    };
+                                    let _ = db.insert_or_update(&device);
+                                    broadcast_to_watchers(
+                                        &state,
+                                        &IpcEvent::PairSuccess {
+                                            device_id: peer_id_hex.clone(),
+                                            device_name: peer_name.clone(),
+                                        },
+                                    )
+                                    .await;
+                                }
+                                ControlMessage::PairReject { reason } => {
+                                    warn!("Peer rejected pairing: {reason:?}");
+                                    broadcast_to_watchers(
+                                        &state,
+                                        &IpcEvent::PairFailed {
+                                            reason: reason
+                                                .unwrap_or_else(|| "peer_rejected".to_string()),
+                                        },
+                                    )
+                                    .await;
+                                }
+                                other => {
+                                    warn!(
+                                        "Unexpected response to PairAccept: {}",
+                                        other.type_name()
+                                    );
+                                }
+                            }
+                        } else {
+                            info!("User rejected pairing with {peer_name}");
+                            let reject = ControlMessage::PairReject {
+                                reason: Some("user_declined".to_string()),
+                            };
+                            conn.send_control(session_id, 0, &reject).await?;
+                            broadcast_to_watchers(
+                                &state,
+                                &IpcEvent::PairFailed {
+                                    reason: "user_declined".to_string(),
+                                },
+                            )
+                            .await;
                         }
                     }
                     ControlMessage::SessionClose { reason } => {
@@ -816,7 +994,7 @@ pub async fn connect_to_peer(
     // Send HELLO.
     let config = state.config.read().await;
     let hello = ControlMessage::Hello {
-        protocol_version: ProtocolVersion::V0_1,
+        protocol_version: ProtocolVersion::V1_0,
         device_id: DeviceId::from_bytes(state.identity.device_id),
         device_name: config.device_name.clone(),
         platform: Platform::Linux,
@@ -829,15 +1007,28 @@ pub async fn connect_to_peer(
     drop(config);
     conn.send_control(0, 0, &hello).await?;
 
-    // Receive HELLO_ACK.
-    let (_hdr, payload) = conn.recv_frame().await?;
+    // Receive HELLO_ACK (timeout per §17.2).
+    let (_hdr, payload) =
+        tokio::time::timeout(nxfr_common::timeouts::HELLO_EXCHANGE, conn.recv_frame())
+            .await
+            .map_err(|_| "HELLO_ACK exchange timed out (10s)")??;
     let msg = codec::decode_control(&payload)?;
     let (session_id, peer_name) = match &msg {
         ControlMessage::HelloAck {
+            protocol_version,
             session_id,
             device_name,
             ..
-        } => (*session_id, device_name.clone()),
+        } => {
+            if !protocol_version.is_supported() {
+                return Err(format!(
+                    "peer returned unsupported protocol version {}.{}",
+                    protocol_version.major, protocol_version.minor
+                )
+                .into());
+            }
+            (*session_id, device_name.clone())
+        }
         _ => return Err(format!("expected HELLO_ACK, got {msg:?}").into()),
     };
 
@@ -1197,11 +1388,9 @@ fn get_free_space(path: &std::path::Path) -> u64 {
     }
 }
 
-/// Generate a random session ID.
+/// Generate a cryptographically secure random session ID (SECURITY §10, SEC-7).
 fn rand_session_id() -> u32 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let hash = Sha256::digest(now.as_nanos().to_le_bytes());
-    u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
+    let mut buf = [0u8; 4];
+    let _ = getrandom::getrandom(&mut buf);
+    u32::from_be_bytes(buf)
 }

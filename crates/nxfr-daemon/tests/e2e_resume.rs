@@ -490,3 +490,276 @@ async fn test_resume_wrong_peer() {
     state_b.shutdown.notify_waiters();
     let _ = listener_handle.await;
 }
+
+#[tokio::test]
+async fn test_resume_tail_covered_full_file() {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir_a = tmp.path().join("daemon_a");
+    let dir_b = tmp.path().join("daemon_b");
+
+    let ident_a = gen_identity();
+    let ident_b = gen_identity();
+    let device_id_a = hex::encode(ident_a.device_id);
+    let device_id_b = hex::encode(ident_b.device_id);
+
+    let state_a = create_test_state(
+        ident_a.clone(),
+        &dir_a.join("paired.db"),
+        &dir_a.join("resume"),
+        &dir_a.join("recv"),
+    );
+    let state_b = create_test_state(
+        ident_b.clone(),
+        &dir_b.join("paired.db"),
+        &dir_b.join("resume"),
+        &dir_b.join("recv"),
+    );
+
+    {
+        let db = state_b.db.lock().await;
+        db.insert_or_update(&PairedDevice {
+            device_id: device_id_a.clone(),
+            name: "DaemonA".to_string(),
+            public_key_spki: ident_a.cert_der_bytes().to_vec(),
+            first_seen: chrono::Utc::now().timestamp(),
+            last_seen: chrono::Utc::now().timestamp(),
+            trust_level: "paired".to_string(),
+            auto_accept: "always".to_string(),
+        })
+        .unwrap();
+    }
+
+    let port: u16 = 17603 + (std::process::id() % 100) as u16;
+    let state_b_clone = Arc::clone(&state_b);
+    let listener_handle = tokio::spawn(async move {
+        let _ = nxfr_daemon::listener::run_listener_on_port(state_b_clone, port).await;
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Create a 20 MB test file
+    let test_file = dir_a.join("testfile.bin");
+    let file_data: Vec<u8> = (0..20 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
+    let expected_hash: [u8; 32] = Sha256::digest(&file_data).into();
+    std::fs::write(&test_file, &file_data).unwrap();
+
+    let result = handler::handle_outbound_send(
+        Arc::clone(&state_a),
+        &format!("127.0.0.1:{port}"),
+        &device_id_b,
+        &test_file,
+        None,
+    )
+    .await;
+    assert!(result.is_ok());
+    let original_transfer_id = result.unwrap();
+
+    let received_file = dir_b.join("recv").join("testfile.bin");
+    std::fs::remove_file(&received_file).unwrap();
+
+    // Partial state has the COMPLETE 20 MB file on disk in .part
+    let part_path = received_file.with_extension("bin.part");
+    std::fs::write(&part_path, &file_data).unwrap();
+
+    let mut files_map = HashMap::new();
+    files_map.insert(
+        1,
+        ResumeFileState {
+            received_bytes: 20 * 1024 * 1024,
+            received_ranges: vec![(0, 20 * 1024 * 1024)],
+            partial_sha256: None,
+            dest_path: part_path.to_string_lossy().to_string(),
+        },
+    );
+
+    let journal_state = ResumeState {
+        transfer_id: original_transfer_id.clone(),
+        peer_device_id: device_id_a.clone(),
+        display_name: "testfile.bin".to_string(),
+        manifest: vec![ResumeManifestEntry {
+            file_id: 1,
+            relative_path: "testfile.bin".to_string(),
+            size: 20 * 1024 * 1024,
+            sha256: hex::encode(expected_hash),
+        }],
+        files: files_map,
+        created_at: chrono::Utc::now().timestamp(),
+        expires_at: chrono::Utc::now().timestamp() + 86400,
+        version: 1,
+    };
+    state_b.resume.save(&journal_state).unwrap();
+
+    // Resume transfer when all bytes are already in skip_ranges
+    let resume_result = handler::handle_outbound_resume(
+        Arc::clone(&state_a),
+        &format!("127.0.0.1:{port}"),
+        &device_id_b,
+        &test_file,
+        &original_transfer_id,
+        None,
+    )
+    .await;
+
+    assert!(
+        resume_result.is_ok(),
+        "Resume transfer failed: {:?}",
+        resume_result.err()
+    );
+    let resumed_transfer_id = resume_result.unwrap();
+    assert_eq!(resumed_transfer_id, original_transfer_id);
+
+    // Assert file arrived complete with EXACT size (no tail duplication) and SHA-256
+    assert!(received_file.exists(), "Final file should exist");
+    let received_data = std::fs::read(&received_file).unwrap();
+    assert_eq!(
+        received_data.len(),
+        20 * 1024 * 1024,
+        "File size MUST be exactly 20 MB (no duplicate tail bytes)"
+    );
+    let received_hash: [u8; 32] = Sha256::digest(&received_data).into();
+    assert_eq!(expected_hash, received_hash, "SHA-256 must match source");
+
+    // .part file must no longer exist
+    assert!(!part_path.exists(), ".part file must be cleaned up");
+
+    state_b.shutdown.notify_waiters();
+    let _ = listener_handle.await;
+}
+
+#[tokio::test]
+async fn test_resume_tail_covered_partial_file() {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir_a = tmp.path().join("daemon_a");
+    let dir_b = tmp.path().join("daemon_b");
+
+    let ident_a = gen_identity();
+    let ident_b = gen_identity();
+    let device_id_a = hex::encode(ident_a.device_id);
+    let device_id_b = hex::encode(ident_b.device_id);
+
+    let state_a = create_test_state(
+        ident_a.clone(),
+        &dir_a.join("paired.db"),
+        &dir_a.join("resume"),
+        &dir_a.join("recv"),
+    );
+    let state_b = create_test_state(
+        ident_b.clone(),
+        &dir_b.join("paired.db"),
+        &dir_b.join("resume"),
+        &dir_b.join("recv"),
+    );
+
+    {
+        let db = state_b.db.lock().await;
+        db.insert_or_update(&PairedDevice {
+            device_id: device_id_a.clone(),
+            name: "DaemonA".to_string(),
+            public_key_spki: ident_a.cert_der_bytes().to_vec(),
+            first_seen: chrono::Utc::now().timestamp(),
+            last_seen: chrono::Utc::now().timestamp(),
+            trust_level: "paired".to_string(),
+            auto_accept: "always".to_string(),
+        })
+        .unwrap();
+    }
+
+    let port: u16 = 17604 + (std::process::id() % 100) as u16;
+    let state_b_clone = Arc::clone(&state_b);
+    let listener_handle = tokio::spawn(async move {
+        let _ = nxfr_daemon::listener::run_listener_on_port(state_b_clone, port).await;
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Create a 20 MB test file (20 chunks of 1 MB)
+    let test_file = dir_a.join("testfile.bin");
+    let file_data: Vec<u8> = (0..20 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
+    let expected_hash: [u8; 32] = Sha256::digest(&file_data).into();
+    std::fs::write(&test_file, &file_data).unwrap();
+
+    let result = handler::handle_outbound_send(
+        Arc::clone(&state_a),
+        &format!("127.0.0.1:{port}"),
+        &device_id_b,
+        &test_file,
+        None,
+    )
+    .await;
+    assert!(result.is_ok());
+    let original_transfer_id = result.unwrap();
+
+    let received_file = dir_b.join("recv").join("testfile.bin");
+    std::fs::remove_file(&received_file).unwrap();
+
+    // Partial state: 19 MB received out of 20 MB (19 chunks done, only chunk 20 remaining)
+    let pre_bytes = 19 * 1024 * 1024;
+    let part_data = &file_data[0..pre_bytes];
+    let part_path = received_file.with_extension("bin.part");
+    std::fs::write(&part_path, part_data).unwrap();
+
+    let mut files_map = HashMap::new();
+    files_map.insert(
+        1,
+        ResumeFileState {
+            received_bytes: pre_bytes as u64,
+            received_ranges: vec![(0, pre_bytes as u64)],
+            partial_sha256: None,
+            dest_path: part_path.to_string_lossy().to_string(),
+        },
+    );
+
+    let journal_state = ResumeState {
+        transfer_id: original_transfer_id.clone(),
+        peer_device_id: device_id_a.clone(),
+        display_name: "testfile.bin".to_string(),
+        manifest: vec![ResumeManifestEntry {
+            file_id: 1,
+            relative_path: "testfile.bin".to_string(),
+            size: 20 * 1024 * 1024,
+            sha256: hex::encode(expected_hash),
+        }],
+        files: files_map,
+        created_at: chrono::Utc::now().timestamp(),
+        expires_at: chrono::Utc::now().timestamp() + 86400,
+        version: 1,
+    };
+    state_b.resume.save(&journal_state).unwrap();
+
+    // Resume transfer
+    let resume_result = handler::handle_outbound_resume(
+        Arc::clone(&state_a),
+        &format!("127.0.0.1:{port}"),
+        &device_id_b,
+        &test_file,
+        &original_transfer_id,
+        None,
+    )
+    .await;
+
+    assert!(
+        resume_result.is_ok(),
+        "Resume transfer failed: {:?}",
+        resume_result.err()
+    );
+    let resumed_transfer_id = resume_result.unwrap();
+    assert_eq!(resumed_transfer_id, original_transfer_id);
+
+    // Verify exact size and SHA-256
+    assert!(received_file.exists(), "Final file should exist");
+    let received_data = std::fs::read(&received_file).unwrap();
+    assert_eq!(
+        received_data.len(),
+        20 * 1024 * 1024,
+        "File size MUST be exactly 20 MB"
+    );
+    let received_hash: [u8; 32] = Sha256::digest(&received_data).into();
+    assert_eq!(expected_hash, received_hash, "SHA-256 must match source");
+
+    state_b.shutdown.notify_waiters();
+    let _ = listener_handle.await;
+}

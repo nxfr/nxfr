@@ -173,22 +173,7 @@ pub async fn send_file_resume<S: AsyncRead + AsyncWrite + Unpin>(
         if should_skip {
             chunks_skipped += 1;
             offset = end as u64;
-
-            // If this is the last chunk position, we still need to send the LAST_CHUNK flag.
-            if is_last {
-                // Send a minimal "end marker" chunk for the last position.
-                // Actually, the data at this offset was already received. But we need to
-                // signal end-of-file. Send the actual last chunk anyway.
-                // The receiver will verify via whole-file hash, so duplicates are safe.
-                let chunk_data = &file_data[(end - std::cmp::min(1, end))..end];
-                if chunk_data.is_empty() {
-                    break;
-                }
-                // Reset offset to send the last chunk.
-                offset -= chunk_len;
-            } else {
-                continue;
-            }
+            continue;
         }
 
         // Enforce in-flight window.

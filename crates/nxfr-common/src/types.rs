@@ -113,7 +113,16 @@ pub struct ProtocolVersion {
 }
 
 impl ProtocolVersion {
+    /// Protocol v1.0 (current normative specification).
+    pub const V1_0: Self = Self { major: 1, minor: 0 };
+    /// Protocol v0.1 (legacy draft version for backward compatibility).
     pub const V0_1: Self = Self { major: 0, minor: 1 };
+
+    /// Returns true if this version is supported by the implementation.
+    /// Supports v1.0 (current) and v0.1 (backward compatibility).
+    pub fn is_supported(&self) -> bool {
+        (self.major == 1 && self.minor == 0) || (self.major == 0 && self.minor == 1)
+    }
 }
 
 /// Protocol-level constants from §17.
@@ -167,4 +176,33 @@ pub mod timeouts {
     pub const SESSION_CLOSE_GRACE: Duration = Duration::from_secs(5);
     pub const PAUSE_TIMEOUT: Duration = Duration::from_secs(300);
     pub const RESUME_STATE_EXPIRY: Duration = Duration::from_secs(86400);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_version_support() {
+        assert!(
+            ProtocolVersion::V1_0.is_supported(),
+            "v1.0 must be supported"
+        );
+        assert!(
+            ProtocolVersion::V0_1.is_supported(),
+            "v0.1 must be supported for backward compat"
+        );
+        assert!(
+            !ProtocolVersion { major: 2, minor: 0 }.is_supported(),
+            "v2.0 must be rejected"
+        );
+        assert!(
+            !ProtocolVersion { major: 0, minor: 2 }.is_supported(),
+            "v0.2 must be rejected"
+        );
+        assert!(
+            !ProtocolVersion { major: 1, minor: 1 }.is_supported(),
+            "v1.1 must be rejected"
+        );
+    }
 }

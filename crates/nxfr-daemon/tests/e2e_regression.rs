@@ -235,14 +235,10 @@ async fn test_self_send_with_watcher_and_consent() {
         .unwrap();
     }
 
-    // Start listener.
-    let port: u16 = 17700 + (std::process::id() % 100) as u16;
-    let state_listen = Arc::clone(&state);
-    let listener_handle = tokio::spawn(async move {
-        let _ = nxfr_daemon::listener::run_listener_on_port(state_listen, port).await;
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Start listener dynamically.
+    let (port, listener_handle) = nxfr_daemon::listener::run_listener_dynamic(Arc::clone(&state))
+        .await
+        .unwrap();
 
     // Register a watcher channel.
     let (watcher_tx, _watcher_rx) = tokio::sync::mpsc::channel::<IpcEvent>(64);
@@ -346,13 +342,10 @@ async fn test_watcher_consent_via_ipc_completes_transfer() {
         watchers.push(watcher_tx);
     }
 
-    // Start B's TCP listener.
-    let port: u16 = 17800 + (std::process::id() % 100) as u16;
-    let state_b_clone = Arc::clone(&state_b);
-    let listener_handle = tokio::spawn(async move {
-        let _ = nxfr_daemon::listener::run_listener_on_port(state_b_clone, port).await;
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Start B's TCP listener dynamically.
+    let (port, listener_handle) = nxfr_daemon::listener::run_listener_dynamic(Arc::clone(&state_b))
+        .await
+        .unwrap();
 
     // Spawn auto-accept task: when an offer arrives, accept via pending_offers.
     let state_b_consent = Arc::clone(&state_b);
@@ -487,4 +480,159 @@ fn test_rapid_toggle_cycles_no_panic() {
     );
 
     mgr.shutdown().unwrap();
+}
+
+// ──────────────────────── Test: Protocol version negotiation ────────────────
+
+#[tokio::test]
+async fn test_protocol_version_v1_0_and_v0_1_negotiation() {
+    use nxfr_common::types::{DeviceId, Platform, ProtocolVersion};
+    use nxfr_core::messages::ControlMessage;
+    use nxfr_transport::connection::NxfrConnection;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("version_test_daemon");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let server_ident = gen_identity();
+    let state = create_test_state(
+        server_ident.clone(),
+        &dir.join("paired.db"),
+        &dir.join("resume"),
+        &dir.join("recv"),
+    );
+
+    let (port, _listener) = nxfr_daemon::listener::run_listener_dynamic(Arc::clone(&state))
+        .await
+        .unwrap();
+
+    let client_ident = gen_identity();
+
+    // 1. Connect and send v1.0 HELLO → Expect success with v1.0 HelloAck
+    {
+        let client_tls_config = nxfr_transport::tls::build_client_config(
+            client_ident.private_key(),
+            client_ident.certificate(),
+        )
+        .unwrap();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_tls_config));
+        let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node")
+            .unwrap()
+            .to_owned();
+        let tls = connector.connect(domain, tcp).await.unwrap();
+        let mut conn = NxfrConnection::new(tls);
+
+        let hello = ControlMessage::Hello {
+            protocol_version: ProtocolVersion::V1_0,
+            device_id: DeviceId::from_bytes(client_ident.device_id),
+            device_name: "ClientV1_0".to_string(),
+            platform: Platform::Linux,
+            capabilities: vec![],
+            is_paired: false,
+        };
+        conn.send_control(0, 0, &hello).await.unwrap();
+
+        let (_hdr, payload) = conn.recv_frame().await.unwrap();
+        let ack_msg = nxfr_core::codec::decode_control(&payload).unwrap();
+        match ack_msg {
+            ControlMessage::HelloAck {
+                protocol_version, ..
+            } => {
+                assert_eq!(
+                    protocol_version,
+                    ProtocolVersion::V1_0,
+                    "Server must reply with v1.0"
+                );
+            }
+            other => panic!("Expected HelloAck, got {:?}", other),
+        }
+    }
+
+    // 2. Connect and send v0.1 HELLO (legacy peer) → Expect success with v1.0 HelloAck
+    {
+        let client_tls_config = nxfr_transport::tls::build_client_config(
+            client_ident.private_key(),
+            client_ident.certificate(),
+        )
+        .unwrap();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_tls_config));
+        let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node")
+            .unwrap()
+            .to_owned();
+        let tls = connector.connect(domain, tcp).await.unwrap();
+        let mut conn = NxfrConnection::new(tls);
+
+        let hello_v0_1 = ControlMessage::Hello {
+            protocol_version: ProtocolVersion::V0_1,
+            device_id: DeviceId::from_bytes(client_ident.device_id),
+            device_name: "ClientV0_1".to_string(),
+            platform: Platform::Linux,
+            capabilities: vec![],
+            is_paired: false,
+        };
+        conn.send_control(0, 0, &hello_v0_1).await.unwrap();
+
+        let (_hdr, payload) = conn.recv_frame().await.unwrap();
+        let ack_msg = nxfr_core::codec::decode_control(&payload).unwrap();
+        match ack_msg {
+            ControlMessage::HelloAck {
+                protocol_version, ..
+            } => {
+                assert_eq!(
+                    protocol_version,
+                    ProtocolVersion::V1_0,
+                    "Server must accept v0.1 and reply with v1.0"
+                );
+            }
+            other => panic!("Expected HelloAck, got {:?}", other),
+        }
+    }
+
+    // 3. Connect and send unsupported v2.0 HELLO → Expect Error frame with UnsupportedVersion
+    {
+        let client_tls_config = nxfr_transport::tls::build_client_config(
+            client_ident.private_key(),
+            client_ident.certificate(),
+        )
+        .unwrap();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_tls_config));
+        let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node")
+            .unwrap()
+            .to_owned();
+        let tls = connector.connect(domain, tcp).await.unwrap();
+        let mut conn = NxfrConnection::new(tls);
+
+        let hello_unsupported = ControlMessage::Hello {
+            protocol_version: ProtocolVersion { major: 2, minor: 0 },
+            device_id: DeviceId::from_bytes(client_ident.device_id),
+            device_name: "ClientV2_0".to_string(),
+            platform: Platform::Linux,
+            capabilities: vec![],
+            is_paired: false,
+        };
+        conn.send_control(0, 0, &hello_unsupported).await.unwrap();
+
+        let (_hdr, payload) = conn.recv_frame().await.unwrap();
+        let err_msg = nxfr_core::codec::decode_control(&payload).unwrap();
+        match err_msg {
+            ControlMessage::Error { code, fatal, .. } => {
+                assert_eq!(
+                    code,
+                    nxfr_core::error_code::ErrorCode::UnsupportedVersion,
+                    "Expected UnsupportedVersion error code"
+                );
+                assert!(fatal, "UnsupportedVersion must be fatal");
+            }
+            other => panic!("Expected Error message, got {:?}", other),
+        }
+    }
 }

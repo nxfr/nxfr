@@ -153,7 +153,10 @@ mod tests {
 
         // Unknown forward-compatible codes
         let unknown = ErrorCode::from_wire_str("future_quota_error");
-        assert_eq!(unknown, ErrorCode::Unknown("future_quota_error".to_string()));
+        assert_eq!(
+            unknown,
+            ErrorCode::Unknown("future_quota_error".to_string())
+        );
         assert_eq!(unknown.as_str(), "future_quota_error");
         assert_eq!(unknown.to_string(), "future_quota_error");
     }
