@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,7 +14,6 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
-use std::sync::atomic::AtomicBool;
 
 pub const DEFAULT_WEB_PORT: u16 = 17396;
 pub const MAX_UPLOAD_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10 GB
@@ -125,7 +125,10 @@ impl<'a, W: AsyncWriteExt + Unpin> ChunkedWriter<'a, W> {
         Self { stream }
     }
 
-    async fn write_chunk(&mut self, data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn write_chunk(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if data.is_empty() {
             return Ok(());
         }
@@ -244,11 +247,7 @@ fn build_zip_central_entry(
 }
 
 /// Builds the ZIP end of central directory record.
-fn build_zip_eocd(
-    entry_count: u16,
-    central_dir_size: u32,
-    central_dir_offset: u32,
-) -> Vec<u8> {
+fn build_zip_eocd(entry_count: u16, central_dir_size: u32, central_dir_offset: u32) -> Vec<u8> {
     let mut eocd = Vec::with_capacity(22);
     // End of central directory signature
     eocd.extend_from_slice(&0x06054b50u32.to_le_bytes());
@@ -269,12 +268,11 @@ fn build_zip_eocd(
     eocd
 }
 
-
 const HTML_PAGE: &str = r#"<!DOCTYPE html>
-<html><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NXFR — Web Upload</title>
+<title>NXFR — Upload</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
 .card{background:#1E293B;border-radius:16px;padding:32px;max-width:440px;width:100%;box-shadow:0 4px 24px #00000066}
@@ -301,45 +299,46 @@ input[type=file]{display:none}
 .queue-list{display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto}
 .queue-item{display:flex;align-items:center;justify-content:space-between;background:#0F172A;padding:6px 10px;border-radius:6px;border:1px solid #334155;font-size:12px}
 .queue-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;color:#E2E8F0}
-.btn-remove{background:transparent;color:#EF4444;border:none;cursor:pointer;font-size:12px;font-weight:700;padding:2px 6px;border-radius:4px}
+.btn-remove{background:transparent;color:#EF4444;border:none;cursor:pointer;font-size:14px;font-weight:700;padding:8px 10px;border-radius:4px;min-width:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center}
 .btn-remove:hover{background:#EF444422}
+@media(max-width:480px){.card{padding:20px 16px}.pin-input{letter-spacing:3px;font-size:20px;padding:10px}.queue-name{max-width:calc(100% - 60px)}.fp-box strong{font-size:10px}}
 </style></head><body>
 
 <div class="card" id="pin-card" style="display:none">
-<h1>NXFR Protected Upload</h1>
+<h1>NXFR — Upload</h1>
 <p class="sub">Enter the security PIN set by the recipient to upload files.</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
-<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+<strong style="color:#00E5FF;font-family:monospace;font-size:12px;">{{FINGERPRINT}}</strong>
 </div>
 <div style="margin:24px 0 16px">
-<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off">
-<div id="pin-err" class="pin-err"></div>
+<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off" aria-label="Security PIN">
+<div id="pin-err" class="pin-err" role="alert"></div>
 </div>
 <button class="btn" id="btn-unlock" onclick="unlockUploadWithPin()" style="margin-top:8px">Unlock Upload</button>
 </div>
 
 <div class="card" id="main-card">
-<h1>NXFR Direct Upload</h1>
+<h1>NXFR — Upload</h1>
 <p class="sub">Select or drop files to send to this device</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
-<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+<strong style="color:#00E5FF;font-family:monospace;font-size:12px;">{{FINGERPRINT}}</strong>
 </div>
-<div class="drop" id="drop">Click or drag files here</div>
-<input type="file" id="file" multiple>
-<input type="file" id="folder" webkitdirectory directory multiple style="display:none">
-<div style="text-align:center;margin-top:8px"><button type="button" style="background:transparent;color:#94A3B8;border:1px solid #334155;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px" onclick="document.getElementById('folder').click()">Select Folder</button></div>
+<div class="drop" id="drop" tabindex="0" role="button" aria-label="Click or drag files here to upload">Click or drag files here</div>
+<input type="file" id="file" multiple aria-hidden="true">
+<input type="file" id="folder" webkitdirectory directory multiple style="display:none" aria-hidden="true">
+<div style="text-align:center;margin-top:8px"><button type="button" style="background:transparent;color:#94A3B8;border:1px solid #334155;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;min-height:36px" onclick="document.getElementById('folder').click()">Select Folder</button></div>
 <div id="current-file" class="current-file" style="display:none"></div>
-<div class="progress" style="display:none" id="pg"><div class="bar" id="bar"></div></div>
-<p class="status" id="st"></p>
+<div class="progress" style="display:none" id="pg" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"><div class="bar" id="bar"></div></div>
+<p class="status" id="st" aria-live="polite"></p>
 <div style="text-align:center">
 <button type="button" class="btn btn-cancel" id="btn-cancel" style="display:none" onclick="cancelCurrentUpload()">Cancel Upload</button>
 </div>
 <div id="queue-box" class="queue-box" style="display:none">
 <div class="queue-header">
 <span>UPCOMING QUEUE (<span id="queue-count">0</span>)</span>
-<button type="button" style="background:transparent;color:#94A3B8;border:none;cursor:pointer;font-size:11px" onclick="clearQueue()">Clear All</button>
+<button type="button" style="background:transparent;color:#94A3B8;border:none;cursor:pointer;font-size:12px;padding:8px 12px;min-height:36px" onclick="clearQueue()">Clear All</button>
 </div>
 <div id="queue-list" class="queue-list"></div>
 </div>
@@ -523,7 +522,7 @@ function renderQueue(){
     qBox.style.display = 'block';
     qCount.textContent = uploadQueue.length;
     qList.innerHTML = uploadQueue.map((f, i) =>
-      `<div class="queue-item"><span class="queue-name" title="${escapeHtml(f.relativePath||f.name)}">${escapeHtml(f.relativePath||f.name)} (${fmtBytes(f.size)})</span><button type="button" class="btn-remove" onclick="removeFromQueue(${i})">✕</button></div>`
+      `<div class="queue-item"><span class="queue-name" title="${escapeHtml(f.relativePath||f.name)}">${escapeHtml(f.relativePath||f.name)} (${fmtBytes(f.size)})</span><button type="button" class="btn-remove" aria-label="Remove ${escapeHtml(f.relativePath||f.name)}" onclick="removeFromQueue(${i})">✕</button></div>`
     ).join('');
   } else {
     qBox.style.display = 'none';
@@ -602,7 +601,7 @@ function processQueue(){
 
   currentXhr.onload = () => {
     if(currentXhr.status === 200){
-      st.textContent = '✓ ' + currentFile.name + ' uploaded';
+      st.textContent = '✓ ' + displayName + ' uploaded';
       bar.style.width = '100%';
       bar.style.background = '#22C55E';
       if(cancelBtn) cancelBtn.style.display = 'none';
@@ -640,7 +639,9 @@ pub fn build_web_tls_config(
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let cert = CertificateDer::from(cert_der.to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));
-    let config = ServerConfig::builder()
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)?;
     Ok(Arc::new(config))
@@ -683,10 +684,10 @@ pub struct WebShareItem {
 }
 
 const HTML_DOWNLOAD_PAGE: &str = r#"<!DOCTYPE html>
-<html><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NXFR — Direct Download</title>
+<title>NXFR — Download</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;background:#0F172A;color:#E2E8F0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}
 .card{background:#1E293B;border-radius:16px;padding:32px;max-width:540px;width:100%;box-shadow:0 4px 24px #00000066}
@@ -714,28 +715,29 @@ h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .pin-input{width:100%;box-sizing:border-box;background:#0F172A;border:2px solid #334155;border-radius:8px;color:#F8FAFC;font-size:24px;font-family:monospace;text-align:center;letter-spacing:6px;padding:12px;outline:none;transition:border-color 0.2s}
 .pin-input:focus{border-color:#00E5FF}
 .pin-err{color:#EF4444;font-size:13px;margin-top:10px;display:none;text-align:center;font-weight:600}
+@media(max-width:480px){.card{padding:20px 16px}.pin-input{letter-spacing:3px;font-size:20px;padding:10px}.file-name{font-size:13px}.fp-box strong{font-size:10px}}
 </style></head><body>
 
 <div class="card" id="pin-card" style="display:none">
-<h1>NXFR Protected Share</h1>
+<h1>NXFR — Download</h1>
 <p class="sub">The sender set a security PIN for this share. Enter the PIN to unlock and download files.</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
-<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+<strong style="color:#00E5FF;font-family:monospace;font-size:12px;">{{FINGERPRINT}}</strong>
 </div>
 <div style="margin:24px 0 16px">
-<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off">
-<div id="pin-err" class="pin-err"></div>
+<input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Enter PIN" autocomplete="off" aria-label="Security PIN">
+<div id="pin-err" class="pin-err" role="alert"></div>
 </div>
-<button class="btn btn-all" id="btn-unlock" onclick="unlockShareWithPin()" style="margin-bottom:0">Unlock Downloads</button>
+<button class="btn" id="btn-unlock" onclick="unlockShareWithPin()" style="width:100%;justify-content:center;padding:12px;font-size:15px;margin-bottom:0">Unlock Downloads</button>
 </div>
 
 <div class="card" id="main-card">
-<h1>NXFR Direct Download</h1>
+<h1>NXFR — Download</h1>
 <p class="sub">Download files shared directly from the peer device</p>
 <div class="fp-box">
 Connected Device Fingerprint:<br>
-<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+<strong style="color:#00E5FF;font-family:monospace;font-size:12px;">{{FINGERPRINT}}</strong>
 </div>
 <button class="btn btn-all" id="btn-all" onclick="downloadAll()">Download All Files ({{TOTAL_FILES}})</button>
 <div class="file-list" id="file-list"></div>
@@ -799,8 +801,8 @@ async function unlockShareWithPin() {
 
 function fmtBytes(b){
   if(!b||b<=0) return '0 B';
-  const u=['B','KB','MB','GB','TB'];
-  const i=Math.floor(Math.log(b)/Math.log(1024));
+  const u=['B','KB','MB','GB','TB','PB'];
+  const i=Math.min(Math.floor(Math.log(b)/Math.log(1024)), u.length-1);
   return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
 }
 function fmtSpeed(bps){
@@ -812,6 +814,7 @@ function fmtSpeed(bps){
 }
 function fmtDuration(s){
   if(s<60) return Math.ceil(s)+'s';
+  if(s>=3600){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+m+'m';}
   const m=Math.floor(s/60),r=Math.ceil(s%60);
   return m+':'+String(r).padStart(2,'0');
 }
@@ -891,7 +894,8 @@ async function downloadItem(id) {
 
   const url = `/dl/${item.id}` + (t ? `?t=${encodeURIComponent(t)}` : '');
 
-  // P1: Large files (>100MB) — hand off to browser native download manager
+  // Large files (>100MB) — hand off to browser native download manager
+  // Do NOT falsely claim "Downloaded" — we cannot track browser download progress
   if (item.size > BLOB_THRESHOLD) {
     if (btn) { btn.textContent = 'Downloading...'; btn.disabled = true; btn.className = 'btn'; }
     if (pgTrack) pgTrack.style.display = 'block';
@@ -899,8 +903,8 @@ async function downloadItem(id) {
     if (pgBar) { pgBar.style.width = '100%'; pgBar.style.background = '#00E5FF'; }
     window.location.assign(url + (url.includes('?') ? '&' : '?') + 'dl=1');
     setTimeout(() => {
-      if (btn) { btn.textContent = 'Downloaded ✓'; btn.className = 'btn btn-success'; btn.disabled = false; }
-      if (pgStatus) pgStatus.textContent = 'Sent to browser download manager';
+      if (btn) { btn.textContent = 'Sent to browser'; btn.className = 'btn'; btn.disabled = false; }
+      if (pgStatus) pgStatus.textContent = 'Check your browser downloads';
     }, 3000);
     return;
   }
@@ -988,12 +992,19 @@ async function downloadItem(id) {
 
 async function downloadAll() {
   const btnAll = document.getElementById('btn-all');
+  const origLabel = 'Download All as ZIP (' + manifest.length + ' files)';
   if (btnAll) { btnAll.disabled = true; btnAll.textContent = 'Preparing ZIP...'; }
   const url = '/dl/all.zip' + (t ? '?t=' + encodeURIComponent(t) : '');
-  window.location.assign(url);
-  setTimeout(() => {
-    if (btnAll) { btnAll.disabled = false; btnAll.textContent = 'Download All as ZIP'; }
-  }, 3000);
+  try {
+    const resp = await fetch(url, { method: 'HEAD' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    window.location.assign(url);
+    setTimeout(() => {
+      if (btnAll) { btnAll.disabled = false; btnAll.textContent = origLabel; }
+    }, 3000);
+  } catch (err) {
+    if (btnAll) { btnAll.disabled = false; btnAll.textContent = 'ZIP download failed — Retry'; btnAll.className = 'btn btn-all'; }
+  }
 }
 </script></body></html>"#;
 
@@ -1021,7 +1032,7 @@ pub struct PendingRequest {
 // ── Waiting page HTML (shown when approval gate is active) ──────────
 
 const HTML_WAITING_PAGE: &str = r#"<!DOCTYPE html>
-<html><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NXFR — Requesting Access</title>
@@ -1035,15 +1046,16 @@ h1{color:#00E5FF;font-size:24px;margin:0 0 8px}
 .status{font-size:16px;font-weight:600;color:#E2E8F0}
 .rejected{color:#EF4444;font-size:18px;font-weight:700}
 .fp-box{font-size:12px;color:#94A3B8;background:#0F172A;padding:10px;border-radius:8px;word-break:break-all;margin-top:16px;border:1px solid #334155}
+@media(max-width:480px){.card{padding:20px 16px}.fp-box strong{font-size:10px}}
 </style></head><body>
 <div class="card">
-<h1>NXFR</h1>
+<h1>NXFR — Requesting Access</h1>
 <p class="sub">Requesting access to shared files</p>
-<div id="spinner" class="spinner"></div>
-<div id="status" class="status">Waiting for response...</div>
+<div id="spinner" class="spinner" aria-hidden="true"></div>
+<div id="status" class="status" aria-live="polite">Waiting for response...</div>
 <div class="fp-box">
-Device Fingerprint:<br>
-<strong style="color:#00E5FF;font-family:monospace;font-size:11px;">{{FINGERPRINT}}</strong>
+Connected Device Fingerprint:<br>
+<strong style="color:#00E5FF;font-family:monospace;font-size:12px;">{{FINGERPRINT}}</strong>
 </div>
 </div>
 <script>
@@ -1197,6 +1209,7 @@ impl WebServer {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_expiry(
         receive_dir: PathBuf,
         port: u16,
@@ -1255,8 +1268,7 @@ impl WebServer {
         // Check accepted session tokens
         let map = self.pending_requests.lock().await;
         map.values().any(|r| {
-            r.status == RequestStatus::Accepted &&
-            r.session_token.as_deref() == Some(token)
+            r.status == RequestStatus::Accepted && r.session_token.as_deref() == Some(token)
         })
     }
 
@@ -1342,13 +1354,11 @@ impl WebServer {
         let acceptor = TlsAcceptor::from(tls_config);
         let server_arc = Arc::new(server);
 
-        let token_for_log = token.clone();
         let cancel_clone = cancel.clone();
         let join_handle = tokio::spawn(async move {
             log::info!(
-                "[nxfr-web] Web upload server started on port {}, token={}",
+                "[nxfr-web] Web upload server started on port {}, auth=token",
                 actual_port,
-                token_for_log
             );
 
             loop {
@@ -1532,13 +1542,13 @@ impl WebServer {
         let acceptor = TlsAcceptor::from(tls_config);
         let server_arc = Arc::new(server);
 
-        let token_for_log = token.clone();
+        let has_pin_for_log = server_arc.pin.is_some();
         let cancel_clone = cancel.clone();
         let join_handle = tokio::spawn(async move {
             log::info!(
-                "[nxfr-web] Web share server started on port {}, token={}",
+                "[nxfr-web] Web share server started on port {}, auth={}",
                 actual_port,
-                token_for_log
+                if has_pin_for_log { "pin" } else { "token" }
             );
 
             loop {
@@ -1756,10 +1766,24 @@ impl WebServer {
 
         // ── API routes for approval gate ────────────────────────────
         if method == "POST" && path == "/api/request" {
-            // Browser registers a download request. If auto_accept or PIN is set,
-            // immediately accept. Otherwise, create a pending request.
             let auto = self.auto_accept.load(Ordering::SeqCst);
             let has_pin = self.pin.is_some();
+
+            // Extract credential from Authorization header.
+            let mut auth_token: Option<String> = None;
+            let headers_for_api = String::from_utf8_lossy(&headers_buf[..body_start]);
+            for hdr_line in headers_for_api.lines().skip(1) {
+                let lower = hdr_line.to_lowercase();
+                if lower.starts_with("authorization: bearer ") {
+                    auth_token = Some(hdr_line[22..].trim().to_string());
+                }
+            }
+
+            // Check credential validity.
+            let credential_valid = match &auth_token {
+                Some(tok) => self.is_valid_token(tok).await,
+                None => false,
+            };
 
             let session_id = generate_token();
             let now = std::time::SystemTime::now()
@@ -1767,8 +1791,9 @@ impl WebServer {
                 .unwrap_or_default()
                 .as_secs();
 
-            if auto || has_pin {
-                // No gate needed — auto-accept
+            if credential_valid {
+                // Client proved they know the token or PIN — issue session token.
+                // auto_accept means "skip human approval", not "skip authentication".
                 let session_token = generate_token();
                 let req = PendingRequest {
                     session_id: session_id.clone(),
@@ -1778,15 +1803,25 @@ impl WebServer {
                     status: RequestStatus::Accepted,
                     session_token: Some(session_token.clone()),
                 };
-                self.pending_requests.lock().await.insert(session_id.clone(), req);
+                self.pending_requests
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), req);
                 let body = serde_json::json!({
                     "session_id": session_id,
                     "status": "accepted",
                     "token": session_token,
                 });
-                return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
-            } else {
-                // Approval required — hold in pending state
+                return Self::send_response(
+                    stream,
+                    "200 OK",
+                    "application/json",
+                    body.to_string().as_bytes(),
+                )
+                .await;
+            } else if !auto && !has_pin {
+                // No credential required — this is the manual approval gate flow.
+                // Human host will approve or reject via respond_to_request().
                 let req = PendingRequest {
                     session_id: session_id.clone(),
                     ip: ip.to_string(),
@@ -1795,13 +1830,35 @@ impl WebServer {
                     status: RequestStatus::Pending,
                     session_token: None,
                 };
-                self.pending_requests.lock().await.insert(session_id.clone(), req);
-                log::info!("[nxfr-web] [{}] New download request pending approval (session={})", ip, &session_id[..8]);
+                self.pending_requests
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), req);
+                log::info!(
+                    "[nxfr-web] [{}] New download request pending approval (session={})",
+                    ip,
+                    &session_id[..8]
+                );
                 let body = serde_json::json!({
                     "session_id": session_id,
                     "status": "pending",
                 });
-                return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
+                return Self::send_response(
+                    stream,
+                    "200 OK",
+                    "application/json",
+                    body.to_string().as_bytes(),
+                )
+                .await;
+            } else {
+                // Credential required (auto_accept or has_pin) but not provided or invalid.
+                log::warn!(
+                    "[nxfr-web] [{}] 403 Forbidden: /api/request without valid credential",
+                    ip
+                );
+                let body = b"{\"error\": \"Authentication required\"}";
+                return Self::send_response(stream, "403 Forbidden", "application/json", body)
+                    .await;
             }
         }
 
@@ -1810,12 +1867,15 @@ impl WebServer {
             let mut session_param = "";
             for pair in query.split('&') {
                 if let Some((k, v)) = pair.split_once('=') {
-                    if k == "s" { session_param = v; }
+                    if k == "s" {
+                        session_param = v;
+                    }
                 }
             }
             if session_param.is_empty() {
                 let body = b"{\"error\": \"missing session id\"}";
-                return Self::send_response(stream, "400 Bad Request", "application/json", body).await;
+                return Self::send_response(stream, "400 Bad Request", "application/json", body)
+                    .await;
             }
             let map = self.pending_requests.lock().await;
             match map.get(session_param) {
@@ -1826,23 +1886,71 @@ impl WebServer {
                             resp["token"] = serde_json::json!(tok);
                         }
                     }
-                    return Self::send_response(stream, "200 OK", "application/json", resp.to_string().as_bytes()).await;
+                    return Self::send_response(
+                        stream,
+                        "200 OK",
+                        "application/json",
+                        resp.to_string().as_bytes(),
+                    )
+                    .await;
                 }
                 None => {
                     let body = b"{\"error\": \"unknown session\"}";
-                    return Self::send_response(stream, "404 Not Found", "application/json", body).await;
+                    return Self::send_response(stream, "404 Not Found", "application/json", body)
+                        .await;
                 }
             }
         }
 
         if method == "GET" && path == "/api/pending" {
-            // Internal: return all pending requests (used by FFI polling)
+            // Require authentication with master token (SEC-5).
+            let mut auth_token: Option<String> = None;
+            let headers_str = String::from_utf8_lossy(&headers_buf[..body_start]);
+            for hdr_line in headers_str.lines().skip(1) {
+                let lower = hdr_line.to_lowercase();
+                if lower.starts_with("authorization: bearer ") {
+                    auth_token = Some(hdr_line[22..].trim().to_string());
+                }
+            }
+            if auth_token.is_none() {
+                for pair in query.split('&') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k == "token" || k == "t" {
+                            auth_token = Some(v.to_string());
+                        }
+                    }
+                }
+            }
+
+            let is_auth = match &auth_token {
+                Some(tok) => self.is_valid_token(tok).await,
+                None => false,
+            };
+
+            if !is_auth {
+                return Self::send_response(
+                    stream,
+                    "403 Forbidden",
+                    "application/json",
+                    b"{\"error\": \"Authentication required\"}",
+                )
+                .await;
+            }
+
+            // Return pending requests
             let map = self.pending_requests.lock().await;
-            let pending: Vec<&PendingRequest> = map.values()
+            let pending: Vec<&PendingRequest> = map
+                .values()
                 .filter(|r| r.status == RequestStatus::Pending)
                 .collect();
             let body = serde_json::json!({ "pending_requests": pending });
-            return Self::send_response(stream, "200 OK", "application/json", body.to_string().as_bytes()).await;
+            return Self::send_response(
+                stream,
+                "200 OK",
+                "application/json",
+                body.to_string().as_bytes(),
+            )
+            .await;
         }
 
         // ── GET / — main page ───────────────────────────────────────
@@ -1859,15 +1967,17 @@ impl WebServer {
                     let mut query_token: Option<String> = None;
                     for pair in query.split('&') {
                         if let Some((k, v)) = pair.split_once('=') {
-                            if k == "t" { query_token = Some(v.to_string()); }
+                            if k == "t" {
+                                query_token = Some(v.to_string());
+                            }
                         }
                     }
                     let has_valid_session = if let Some(tok) = &query_token {
                         // Check if this token belongs to an accepted session
                         let map = self.pending_requests.lock().await;
                         map.values().any(|r| {
-                            r.status == RequestStatus::Accepted &&
-                            r.session_token.as_deref() == Some(tok.as_str())
+                            r.status == RequestStatus::Accepted
+                                && r.session_token.as_deref() == Some(tok.as_str())
                         })
                     } else {
                         false
@@ -1875,15 +1985,15 @@ impl WebServer {
 
                     if !has_valid_session {
                         // Serve the waiting page
-                        let page = HTML_WAITING_PAGE
-                            .replace("{{FINGERPRINT}}", &self.fingerprint);
+                        let page = HTML_WAITING_PAGE.replace("{{FINGERPRINT}}", &self.fingerprint);
                         log::info!("[nxfr-web] [{}] 200 OK: Served approval waiting page", ip);
                         return Self::send_response(
                             stream,
                             "200 OK",
                             "text/html; charset=utf-8",
                             page.as_bytes(),
-                        ).await;
+                        )
+                        .await;
                     }
                     // Valid session token → fall through to serve download page
                     // Set `t` as a usable token for /dl/ auth
@@ -1891,10 +2001,13 @@ impl WebServer {
 
                 let manifest_json =
                     serde_json::to_string(manifest).unwrap_or_else(|_| "[]".to_string());
+                // NOTE: All template variables in HTML_DOWNLOAD_PAGE must be replaced here.
+                // Variables: {{FINGERPRINT}}, {{MANIFEST_JSON}}, {{HAS_PIN}}, {{TOTAL_FILES}}
                 let page = HTML_DOWNLOAD_PAGE
                     .replace("{{FINGERPRINT}}", &self.fingerprint)
                     .replace("{{MANIFEST_JSON}}", &manifest_json)
-                    .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" });
+                    .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" })
+                    .replace("{{TOTAL_FILES}}", &manifest.len().to_string());
                 log::info!(
                     "[nxfr-web] [{}] 200 OK: Served download portal ({} items, {} bytes)",
                     ip,
@@ -2017,7 +2130,13 @@ impl WebServer {
                     Some(m) => m,
                     None => {
                         let body = b"{\"error\": \"Download mode not active\"}";
-                        return Self::send_response(stream, "404 Not Found", "application/json", body).await;
+                        return Self::send_response(
+                            stream,
+                            "404 Not Found",
+                            "application/json",
+                            body,
+                        )
+                        .await;
                     }
                 };
 
@@ -2046,7 +2165,11 @@ impl WebServer {
                 for item in manifest.iter() {
                     let file_path = PathBuf::from(&item.path);
                     if !file_path.exists() {
-                        log::warn!("[nxfr-web] [{}] ZIP: skipping missing file '{}'", ip, item.name);
+                        log::warn!(
+                            "[nxfr-web] [{}] ZIP: skipping missing file '{}'",
+                            ip,
+                            item.name
+                        );
                         continue;
                     }
 
@@ -2066,7 +2189,9 @@ impl WebServer {
                     let mut file_written: u64 = 0;
                     loop {
                         let n = f.read(&mut file_buf).await?;
-                        if n == 0 { break; }
+                        if n == 0 {
+                            break;
+                        }
                         chunked.write_chunk(&file_buf[..n]).await?;
                         hasher.update(&file_buf[..n]);
                         file_written += n as u64;
@@ -2118,7 +2243,11 @@ impl WebServer {
                 let count = self.download_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(max) = self.max_downloads {
                     if count as u32 >= max {
-                        log::info!("[nxfr-web] Download quota reached ({}/{}), shutting down", count, max);
+                        log::info!(
+                            "[nxfr-web] Download quota reached ({}/{}), shutting down",
+                            count,
+                            max
+                        );
                         self.cancel.cancel();
                     }
                 }
@@ -2230,17 +2359,23 @@ impl WebServer {
 
                         f.seek(std::io::SeekFrom::Start(start)).await?;
 
-                        let _transfer_guard = ActiveTransferGuard::new(self.active_transfers.clone());
+                        let _transfer_guard =
+                            ActiveTransferGuard::new(self.active_transfers.clone());
                         let mut file_buf = [0u8; 65536];
                         let mut remaining = content_length;
                         let mut total_sent: u64 = 0;
                         while remaining > 0 {
                             let to_read = std::cmp::min(remaining as usize, file_buf.len());
                             let n = f.read(&mut file_buf[..to_read]).await?;
-                            if n == 0 { break; }
-                            tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.write_all(&file_buf[..n]))
-                                .await
-                                .map_err(|_| "Download chunk write timed out (30s)")??;
+                            if n == 0 {
+                                break;
+                            }
+                            tokio::time::timeout(
+                                CHUNK_IO_TIMEOUT,
+                                stream.write_all(&file_buf[..n]),
+                            )
+                            .await
+                            .map_err(|_| "Download chunk write timed out (30s)")??;
                             total_sent += n as u64;
                             remaining -= n as u64;
                             self.bump_activity().await;
@@ -2250,8 +2385,27 @@ impl WebServer {
 
                         log::info!(
                             "[nxfr-web] [{}] 206 Partial Content: '{}' bytes {}-{}/{} ({} sent)",
-                            ip, item.name, start, end, item.size, total_sent
+                            ip,
+                            item.name,
+                            start,
+                            end,
+                            item.size,
+                            total_sent
                         );
+
+                        // Count this download for quota (same as 200 path).
+                        let count = self.download_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        if let Some(max) = self.max_downloads {
+                            if count as u32 >= max {
+                                log::info!(
+                                    "[nxfr-web] Download quota reached ({}/{}), shutting down",
+                                    count,
+                                    max
+                                );
+                                self.cancel.cancel();
+                            }
+                        }
+
                         return Ok(());
                     }
                     None => {
@@ -2280,9 +2434,7 @@ impl WebServer {
                  Content-Disposition: attachment; filename=\"{}\"\r\n\
                  Connection: close\r\n\
                  \r\n",
-                mime,
-                item.size,
-                safe_name
+                mime, item.size, safe_name
             );
 
             stream.write_all(header.as_bytes()).await?;
@@ -2308,7 +2460,11 @@ impl WebServer {
             let count = self.download_count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(max) = self.max_downloads {
                 if count as u32 >= max {
-                    log::info!("[nxfr-web] Download quota reached ({}/{}), shutting down", count, max);
+                    log::info!(
+                        "[nxfr-web] Download quota reached ({}/{}), shutting down",
+                        count,
+                        max
+                    );
                     self.cancel.cancel();
                 }
             }
@@ -2580,7 +2736,8 @@ impl WebServer {
                 }
 
                 // Read next chunk into stack buffer with per-chunk timeout (30s)
-                let read_res = tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.read(&mut read_buf)).await;
+                let read_res =
+                    tokio::time::timeout(CHUNK_IO_TIMEOUT, stream.read(&mut read_buf)).await;
                 let n = match read_res {
                     Ok(Ok(n)) => n,
                     Ok(Err(e)) => {
@@ -2843,8 +3000,12 @@ mod tests {
             .with_no_client_auth();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(client_crypto));
 
-        let stream = TcpStream::connect(("127.0.0.1", server_port)).await.unwrap();
-        let domain = rustls_pki_types::ServerName::try_from("nxfr-node").unwrap().to_owned();
+        let stream = TcpStream::connect(("127.0.0.1", server_port))
+            .await
+            .unwrap();
+        let domain = rustls_pki_types::ServerName::try_from("nxfr-node")
+            .unwrap()
+            .to_owned();
         let mut tls_stream = connector.connect(domain, stream).await.unwrap();
 
         let request = format!(
@@ -2863,11 +3024,24 @@ mod tests {
         drop(tls_stream);
 
         // Split headers and body
-        let header_end = raw_response.windows(4).position(|w| w == b"\r\n\r\n").expect("headers present");
+        let header_end = raw_response
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("headers present");
         let headers = String::from_utf8_lossy(&raw_response[..header_end]);
-        assert!(headers.contains("200 OK"), "Expected 200 OK, got:\n{}", headers);
-        assert!(headers.contains("Transfer-Encoding: chunked"), "Expected chunked encoding");
-        assert!(headers.contains("Content-Type: application/zip"), "Expected application/zip");
+        assert!(
+            headers.contains("200 OK"),
+            "Expected 200 OK, got:\n{}",
+            headers
+        );
+        assert!(
+            headers.contains("Transfer-Encoding: chunked"),
+            "Expected chunked encoding"
+        );
+        assert!(
+            headers.contains("Content-Type: application/zip"),
+            "Expected application/zip"
+        );
 
         let body_chunked = &raw_response[header_end + 4..];
 
@@ -2875,8 +3049,12 @@ mod tests {
         let mut unchunked = Vec::new();
         let mut cursor = 0;
         loop {
-            let next_crlf = body_chunked[cursor..].windows(2).position(|w| w == b"\r\n").expect("valid chunk header CRLF");
-            let size_str = std::str::from_utf8(&body_chunked[cursor..cursor + next_crlf]).expect("valid hex size string");
+            let next_crlf = body_chunked[cursor..]
+                .windows(2)
+                .position(|w| w == b"\r\n")
+                .expect("valid chunk header CRLF");
+            let size_str = std::str::from_utf8(&body_chunked[cursor..cursor + next_crlf])
+                .expect("valid hex size string");
             let chunk_size = usize::from_str_radix(size_str.trim(), 16).expect("valid hex number");
             cursor += next_crlf + 2;
             if chunk_size == 0 {
@@ -2884,16 +3062,27 @@ mod tests {
             }
             unchunked.extend_from_slice(&body_chunked[cursor..cursor + chunk_size]);
             cursor += chunk_size;
-            assert_eq!(&body_chunked[cursor..cursor + 2], b"\r\n", "chunk data must end in CRLF");
+            assert_eq!(
+                &body_chunked[cursor..cursor + 2],
+                b"\r\n",
+                "chunk data must end in CRLF"
+            );
             cursor += 2;
         }
 
         // Verify that unchunked body starts with ZIP magic (0x04034b50 -> PK\x03\x04)
         assert!(unchunked.len() > 30, "ZIP must not be empty");
-        assert_eq!(&unchunked[0..4], b"PK\x03\x04", "Must start with ZIP local file header signature");
+        assert_eq!(
+            &unchunked[0..4],
+            b"PK\x03\x04",
+            "Must start with ZIP local file header signature"
+        );
 
         // Verify end of central directory signature (0x06054b50 -> PK\x05\x06) is present at end
-        assert!(unchunked.windows(4).any(|w| w == b"PK\x05\x06"), "Must contain EOCD record");
+        assert!(
+            unchunked.windows(4).any(|w| w == b"PK\x05\x06"),
+            "Must contain EOCD record"
+        );
 
         handle.stop();
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -4091,7 +4280,9 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("nxfr_quota_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let file_path = temp_dir.join("test.txt");
-        tokio::fs::write(&file_path, b"quota test content").await.unwrap();
+        tokio::fs::write(&file_path, b"quota test content")
+            .await
+            .unwrap();
 
         let manifest = vec![WebShareItem {
             id: 0,
@@ -4153,9 +4344,699 @@ mod tests {
         // Wait a brief moment for cancellation to propagate
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        assert!(handle.is_stopped(), "Server handle should be stopped after reaching max downloads quota");
+        assert!(
+            handle.is_stopped(),
+            "Server handle should be stopped after reaching max downloads quota"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
-}
 
+    // ── SEC-1: /api/request authorization regression tests ──────────
+
+    /// Reusable NoCertVerifier for tests that don't need cert validation.
+    #[derive(Debug)]
+    struct TestNoCertVerifier;
+    impl rustls::client::danger::ServerCertVerifier for TestNoCertVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls_pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+            _server_name: &rustls_pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls_pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::ED25519,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+            ]
+        }
+    }
+
+    fn test_tls_connector() -> TlsConnector {
+        let client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TestNoCertVerifier))
+            .with_no_client_auth();
+        TlsConnector::from(Arc::new(client_config))
+    }
+
+    fn test_domain() -> rustls_pki_types::ServerName<'static> {
+        rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap()
+    }
+
+    async fn tls_request(connector: &TlsConnector, port: u16, request: &str) -> String {
+        let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let domain = test_domain();
+        let mut tls = connector.connect(domain, stream).await.unwrap();
+        tls.write_all(request.as_bytes()).await.unwrap();
+        tls.flush().await.unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        String::from_utf8_lossy(&resp).to_string()
+    }
+
+    /// Share server with auto_accept=true: /api/request without token → 403
+    /// (auto_accept means skip human approval, NOT skip authentication)
+    #[tokio::test]
+    async fn test_api_request_auto_accept_no_token_returns_403() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec1_auto_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"auto accept test").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 16,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17600,
+            None,
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Externally set auto_accept=true (like FFI/Android does)
+        handle.set_auto_accept(true);
+
+        let port = handle.port;
+        let connector = test_tls_connector();
+
+        // POST /api/request with no auth → 403 (auto_accept requires token)
+        let req = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 403"),
+            "Expected 403, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Upload server: /api/request with correct URL token → 200 accepted
+    #[tokio::test]
+    async fn test_api_request_upload_correct_token_returns_session() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nxfr_sec1_upload_ok_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let handle = WebServer::start(
+            &identity.private_key_der,
+            &identity.cert_der,
+            temp_dir.clone(),
+            17601,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let token = handle.token.clone();
+        let connector = test_tls_connector();
+
+        // POST /api/request with valid URL token → 200 accepted with session_token
+        let req = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "Expected 200, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+        assert!(
+            resp.contains("\"status\":\"accepted\"") || resp.contains("\"status\": \"accepted\"")
+        );
+        assert!(resp.contains("\"token\""));
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Share+PIN: /api/request without PIN → 403
+    #[tokio::test]
+    async fn test_api_request_share_wrong_pin_returns_403() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec1_pin_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"test content").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 12,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17602,
+            Some("1234".to_string()),
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let connector = test_tls_connector();
+
+        // POST /api/request with wrong PIN → 403
+        let req = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer 9999\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 403"),
+            "Expected 403 for wrong PIN, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+
+        // POST /api/request with no auth at all → 403
+        let req_no_auth = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
+        );
+        let resp_no_auth = tls_request(&connector, port, &req_no_auth).await;
+        assert!(
+            resp_no_auth.starts_with("HTTP/1.1 403"),
+            "Expected 403 for no auth, got: {}",
+            resp_no_auth.lines().next().unwrap_or("")
+        );
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Share+PIN: /api/request with correct PIN → 200 accepted
+    #[tokio::test]
+    async fn test_api_request_share_correct_pin_returns_token() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nxfr_sec1_pin_ok_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"test content").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 12,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17603,
+            Some("5678".to_string()),
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let connector = test_tls_connector();
+
+        // POST /api/request with correct PIN → 200 accepted
+        let req = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer 5678\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "Expected 200 for correct PIN, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+        assert!(
+            resp.contains("\"status\":\"accepted\"") || resp.contains("\"status\": \"accepted\"")
+        );
+        assert!(resp.contains("\"token\""));
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Share (no PIN, no auto): /api/request without auth → pending (gate flow)
+    #[tokio::test]
+    async fn test_api_request_share_gate_creates_pending() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec1_gate_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"gate test").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 9,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        // No PIN → gate flow active, auto_accept defaults to false
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17604,
+            None,
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let connector = test_tls_connector();
+
+        // POST /api/request with no auth → 200 with status=pending (not 403)
+        let req = format!(
+            "POST /api/request HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "Gate flow should return 200 pending, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+        assert!(
+            resp.contains("\"status\":\"pending\"") || resp.contains("\"status\": \"pending\""),
+            "Expected pending status in response"
+        );
+
+        // Verify pending request exists
+        let pending = handle.get_pending_requests().await;
+        assert_eq!(pending.len(), 1, "Should have exactly one pending request");
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // ── SEC-2: Range download quota bypass regression tests ──────────
+
+    /// Range request must count toward download quota
+    #[tokio::test]
+    async fn test_range_download_increments_quota() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec2_range_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"range quota test content").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 24,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        // max_downloads = 1
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17605,
+            None,
+            manifest,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let token = handle.token.clone();
+        let connector = test_tls_connector();
+
+        // Range request covering entire file
+        let req = format!(
+            "GET /dl/0 HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nRange: bytes=0-\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 206"),
+            "Expected 206, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+
+        // Wait for shutdown to propagate
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        assert!(
+            handle.is_stopped(),
+            "Server should shut down after Range download consumed the quota"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Verify that a 416 (invalid range) does NOT count toward quota
+    #[tokio::test]
+    async fn test_invalid_range_does_not_count_quota() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec2_416_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"small").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 5,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        // max_downloads = 1
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17606,
+            None,
+            manifest,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let token = handle.token.clone();
+        let connector = test_tls_connector();
+
+        // Invalid range (beyond file size)
+        let req = format!(
+            "GET /dl/0 HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nRange: bytes=100-200\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&connector, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 416"),
+            "Expected 416, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+
+        // Server should NOT be stopped — quota not consumed by invalid range
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !handle.is_stopped(),
+            "Server should NOT shut down after 416 response"
+        );
+
+        // A valid full download should still work and consume the quota
+        let req_full = format!(
+            "GET /dl/0 HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        );
+        let resp_full = tls_request(&connector, port, &req_full).await;
+        assert!(
+            resp_full.starts_with("HTTP/1.1 200"),
+            "Expected 200, got: {}",
+            resp_full.lines().next().unwrap_or("")
+        );
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            handle.is_stopped(),
+            "Server should shut down after valid download consumed the quota"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // ── SEC-4: Web TLS version enforcement tests ───────────────────
+
+    fn test_tls12_connector() -> tokio_rustls::TlsConnector {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS12])
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TestNoCertVerifier))
+            .with_no_client_auth();
+        tokio_rustls::TlsConnector::from(Arc::new(client_crypto))
+    }
+
+    fn test_tls13_connector() -> tokio_rustls::TlsConnector {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TestNoCertVerifier))
+            .with_no_client_auth();
+        tokio_rustls::TlsConnector::from(Arc::new(client_crypto))
+    }
+
+    /// TLS 1.2 client must be rejected; TLS 1.3 client must succeed
+    #[tokio::test]
+    async fn test_web_tls_rejects_tls12_and_accepts_tls13() {
+        let temp_dir = std::env::temp_dir().join(format!("nxfr_sec4_tls_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"tls version test").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 16,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17607,
+            None,
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let token = handle.token.clone();
+
+        // 1. Attempt TLS 1.2 connection → MUST fail during handshake
+        let tls12_conn = test_tls12_connector();
+        let tcp12 = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let domain12 = rustls_pki_types::ServerName::try_from("localhost")
+            .unwrap()
+            .to_owned();
+        let handshake_tls12_res = tls12_conn.connect(domain12, tcp12).await;
+        assert!(
+            handshake_tls12_res.is_err(),
+            "TLS 1.2 handshake MUST be rejected by web server"
+        );
+
+        // 2. Attempt TLS 1.3 connection → MUST succeed
+        let tls13_conn = test_tls13_connector();
+        let req = format!(
+            "GET /dl/0 HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        );
+        let resp = tls_request(&tls13_conn, port, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "TLS 1.3 handshake MUST succeed, got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // ── SEC-5: /api/pending authentication tests ────────────────────
+
+    #[tokio::test]
+    async fn test_api_pending_requires_authentication() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nxfr_sec5_pending_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, b"pending auth test").unwrap();
+
+        let identity = nxfr_crypto::identity::generate_identity().unwrap();
+        let manifest = vec![WebShareItem {
+            id: 0,
+            name: "test.txt".to_string(),
+            size: 17,
+            mime: "text/plain".to_string(),
+            path: file_path.to_string_lossy().to_string(),
+        }];
+
+        let handle = WebServer::start_share(
+            &identity.private_key_der,
+            &identity.cert_der,
+            17608,
+            None,
+            manifest,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let port = handle.port;
+        let token = handle.token.clone();
+        let connector = test_tls_connector();
+
+        // 1. Unauthenticated GET /api/pending → 403 Forbidden
+        let req_unauth = format!(
+            "GET /api/pending HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
+        );
+        let resp_unauth = tls_request(&connector, port, &req_unauth).await;
+        assert!(
+            resp_unauth.starts_with("HTTP/1.1 403"),
+            "Unauthenticated /api/pending MUST return 403, got: {}",
+            resp_unauth.lines().next().unwrap_or("")
+        );
+
+        // 2. Invalid token GET /api/pending → 403 Forbidden
+        let req_invalid = format!(
+            "GET /api/pending HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer invalid_token\r\nConnection: close\r\n\r\n"
+        );
+        let resp_invalid = tls_request(&connector, port, &req_invalid).await;
+        assert!(
+            resp_invalid.starts_with("HTTP/1.1 403"),
+            "Invalid token on /api/pending MUST return 403, got: {}",
+            resp_invalid.lines().next().unwrap_or("")
+        );
+
+        // 3. Valid master token GET /api/pending → 200 OK
+        let req_auth = format!(
+            "GET /api/pending HTTP/1.1\r\nHost: localhost:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        );
+        let resp_auth = tls_request(&connector, port, &req_auth).await;
+        assert!(
+            resp_auth.starts_with("HTTP/1.1 200"),
+            "Authenticated /api/pending MUST return 200, got: {}",
+            resp_auth.lines().next().unwrap_or("")
+        );
+        assert!(
+            resp_auth.contains("pending_requests"),
+            "Response should contain pending_requests array"
+        );
+
+        handle.stop();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // ── SEC-3: Token redaction regression test ──────────────────────
+
+    /// Verify that web server startup logs don't contain the actual token value.
+    /// The old format was log::info with token={} printing the real token.
+    /// After SEC-3, startup logs must not interpolate any credential.
+    #[test]
+    fn test_startup_log_format_does_not_contain_token_placeholder() {
+        let source = include_str!("lib.rs");
+        // Build the patterns as runtime strings to avoid the test matching itself.
+        let log_prefix = "log::info!";
+        let token_pattern = ["token=", "{}"].concat();
+
+        let has_token_in_log = source.lines().any(|line| {
+            let trimmed = line.trim();
+            // Only match actual log format strings, not test code or comments
+            !trimmed.starts_with("//")
+                && !trimmed.starts_with("///")
+                && !trimmed.starts_with("let ")
+                && !trimmed.starts_with("*")
+                && !trimmed.contains("contains(")
+                && trimmed.contains(&token_pattern)
+                && trimmed.contains(log_prefix)
+        });
+        assert!(
+            !has_token_in_log,
+            "Found startup log that interpolates a token value"
+        );
+    }
+
+    /// Regression test: Verify that all template variables ({{VAR}}) in HTML_PAGE,
+    /// HTML_DOWNLOAD_PAGE, and HTML_WAITING_PAGE are completely substituted and no
+    /// unrendered `{{...}}` tags remain in production output.
+    #[test]
+    fn test_no_unrendered_template_variables_in_rendered_pages() {
+        let fingerprint = "12:34:56:78:9A:BC:DE:F0";
+        let manifest_json = "[]";
+        let has_pin = false;
+        let file_count = 5;
+
+        // 1. Upload page
+        let upload_page = HTML_PAGE
+            .replace("{{FINGERPRINT}}", fingerprint)
+            .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" });
+        assert!(
+            !upload_page.contains("{{"),
+            "Upload page contains unresolved template placeholder: {}",
+            upload_page
+        );
+
+        // 2. Download page
+        let download_page = HTML_DOWNLOAD_PAGE
+            .replace("{{FINGERPRINT}}", fingerprint)
+            .replace("{{MANIFEST_JSON}}", manifest_json)
+            .replace("{{HAS_PIN}}", if has_pin { "true" } else { "false" })
+            .replace("{{TOTAL_FILES}}", &file_count.to_string());
+        assert!(
+            !download_page.contains("{{"),
+            "Download page contains unresolved template placeholder: {}",
+            download_page
+        );
+        assert!(
+            download_page.contains("Download All Files (5)"),
+            "Download page should contain substituted total files count"
+        );
+
+        // 3. Waiting page
+        let waiting_page = HTML_WAITING_PAGE.replace("{{FINGERPRINT}}", fingerprint);
+        assert!(
+            !waiting_page.contains("{{"),
+            "Waiting page contains unresolved template placeholder: {}",
+            waiting_page
+        );
+    }
+}
