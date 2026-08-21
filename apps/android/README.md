@@ -67,6 +67,16 @@ The Android implementation of the **Nearby Xfer Protocol (NXFR)**, featuring the
 - SHA-256 file verification runs off the main thread using a streaming 64KB buffer (`Dispatchers.IO`).
 - This prevents UI jank during checksum verification of large files.
 
+### 6. Standalone Pairing (PROTO-2)
+- **Device-Initiated Pairing**: Tap "Pair" on any unpaired device in the device picker to initiate SAS-based pairing without starting a transfer.
+- **SAS Verification Dialog**: `PairingDialog` displays a 6-digit Short Authentication String for out-of-band verification.
+- **Navigation-Integrated**: Pairing flow is wired into `NxfrNavHost` with proper back-stack management and success/failure callbacks.
+
+### 7. Accessibility & Design Tokens
+- **WCAG AA Touch Targets**: All interactive elements meet the 48dp minimum touch target standard (`SendScreen` actions, `ActionRail` chips, `StagedFilmstrip` delete buttons, `ConsentDialog` buttons).
+- **Design Token System**: All colors in `WebShareScreen` use centralized `MaterialTheme.deckColors` tokens, ensuring consistent rendering across Dark, OLED, and Light themes.
+- **Standardized Terminology**: User-facing labels use approachable language ("Device Name" instead of "Call-Sign", "PAIRED & VERIFIED" instead of "TOFU: PAIRED & TRUSTED").
+
 ---
 
 ## Background Behavior & Battery Contract

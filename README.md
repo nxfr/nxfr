@@ -73,7 +73,7 @@ The user interface uses the Instrument Deck design system:
 - **Rust Toolchain**: 1.75+ (stable) via [rustup.rs](https://rustup.rs/)
 - **Cargo NDK**: `cargo install cargo-ndk`
 - **Android SDK & NDK**: Version 26.1+ configured via `ANDROID_HOME`
-- **Java JDK**: 17+ (Eclipse Temurin or OpenJDK)
+- **Java JDK**: 21+ (Android Studio JBR or Eclipse Temurin recommended)
 
 ### 1. Build Rust Core Workspace & CLI
 ```bash

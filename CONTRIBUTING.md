@@ -8,7 +8,7 @@ This guide outlines our development process, standards, and expectations to ensu
 - Stable Rust toolchain (via [rustup](https://rustup.rs/)).
 - `cargo` (comes with rustup) and `cargo-ndk`.
 - Android SDK & NDK (26.1+).
-- JDK 17+.
+- JDK 21+.
 
 ### Setup
 1. Clone the repository: `git clone https://github.com/nxfr/nxfr.git`
@@ -19,9 +19,9 @@ This guide outlines our development process, standards, and expectations to ensu
 You can also run tests for individual crates:
 ```bash
 cargo test -p nxfr-core      # 107 tests — protocol state machines, codec, framing
-cargo test -p nxfr-web        # 13 tests — web server, chunked streaming, timeouts
-cargo test -p nxfr-ffi        # 44 tests — FFI bridge, JNI safety, transfer lifecycle
-cargo test -p nxfr-storage    # 19 tests — history, paired device DB
+cargo test -p nxfr-web        # 25 tests — web server, chunked streaming, accessibility, timeouts
+cargo test -p nxfr-ffi        # 45 tests — FFI bridge, JNI safety, pairing, transfer lifecycle
+cargo test -p nxfr-storage    # 20 tests — history, paired device DB, SPKI verification
 cargo test -p nxfr-crypto     # 8 tests — key generation, SAS derivation
 cargo test -p nxfr-transport  # 7 tests — framing codec, TLS config
 ```

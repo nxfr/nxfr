@@ -232,8 +232,8 @@ systemd integration.
 client to the daemon.
 - **nxfr-common:** Shared types, errors, and
 utility functions used across the workspace.
-- **nxfr-ffi:** JNI bridge for Android. Exposes core protocol functions to Kotlin via C-ABI exports. Handles session lifecycle, SAS derivation, and transfer orchestration across the JNI boundary.
-- **nxfr-web:** Embedded HTTPS server for browser-based transfers. Runs on port 17396 with token and PIN authentication. Serves upload/download pages with streaming file I/O.
+- **nxfr-ffi:** JNI bridge for Android. Exposes core protocol functions to Kotlin via C-ABI exports. Handles session lifecycle, standalone pairing (pair request, pair accept, SAS derivation), auto-accept policy management, device naming, and transfer orchestration across the JNI boundary.
+- **nxfr-web:** Embedded HTTPS server for browser-based transfers. Runs on port 17396 with token and PIN authentication. Serves accessible, responsive upload/download pages with streaming file I/O, ARIA semantics, and mobile-friendly layouts.
 
 ## 3. Android Architecture
 
@@ -285,6 +285,7 @@ and orchestrates the Rust core library via JNI.
 - **MainActivity:** Device picking, transfer consent, and all other flows live inside `MainActivity` as Compose navigation routes. There's no `DevicePickerActivity`.
 - **DesertModeOrchestrator:** State machine managing three-tier off-grid discovery (Wi-Fi Direct P2P → SoftAP hotspot → QR code fallback). Wraps `NxfrP2pManager` and `NxfrSoftApManager`.
 - **NxfrWebServer:** Embedded HTTPS server on port 17396 for browser-based send and receive. Token-gated with optional PIN protection.
+- **PairingDialog:** Compose dialog for standalone SAS-based device pairing, wired into `NxfrNavHost` navigation with success/failure callbacks.
 - **TransferNotificationManager:** Manages rich
 system notifications, displaying progress bars,
 Accept/Reject action buttons for incoming
