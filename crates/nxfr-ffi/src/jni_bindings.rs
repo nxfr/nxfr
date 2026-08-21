@@ -34,6 +34,12 @@ fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> Result<String, String> {
         .map_err(|e| format!("JNI get_string failed: {e}"))
 }
 
+/// Convert a Rust String to CString safely. Returns Err on interior NUL bytes
+/// instead of silently producing an empty string (which masks real errors).
+fn safe_cstring(s: String) -> Result<std::ffi::CString, String> {
+    std::ffi::CString::new(s).map_err(|e| format!("string contains interior NUL byte: {e}"))
+}
+
 /// Call one of the existing C-ABI nxfr_* functions that returns *mut c_char,
 /// convert the result to a Java String, and free the C string.
 fn c_result_to_jstring(env: &mut JNIEnv, ptr: *mut std::os::raw::c_char) -> jstring {
@@ -71,7 +77,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_str = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_str = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_identity_generate(c_str.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -90,7 +99,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_str = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_str = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_identity_load(c_str.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -116,8 +128,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_addr = std::ffi::CString::new(addr_str).unwrap_or_default();
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_addr = match safe_cstring(addr_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_connect(c_addr.as_ptr(), c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -137,7 +155,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_listen(port as u16, c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -173,7 +194,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_path = std::ffi::CString::new(path_str).unwrap_or_default();
+        let c_path = match safe_cstring(path_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_send_file(handle as u64, c_path.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -253,7 +277,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_pair_confirm(handle as u64, accepted != 0, c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -272,7 +299,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_paired_list(c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -296,8 +326,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
-        let c_did = std::ffi::CString::new(did_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_did = match safe_cstring(did_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_unpair(c_dir.as_ptr(), c_did.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -326,9 +362,18 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
-        let c_did = std::ffi::CString::new(did_str).unwrap_or_default();
-        let c_pol = std::ffi::CString::new(pol_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_did = match safe_cstring(did_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_pol = match safe_cstring(pol_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_set_auto_accept(c_dir.as_ptr(), c_did.as_ptr(), c_pol.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -352,8 +397,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir_str).unwrap_or_default();
-        let c_name = std::ffi::CString::new(name_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_name = match safe_cstring(name_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_set_name(c_dir.as_ptr(), c_name.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -374,7 +425,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_path = std::ffi::CString::new(path_str).unwrap_or_default();
+        let c_path = match safe_cstring(path_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_sanitize_path(c_path.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -416,8 +470,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_id = std::ffi::CString::new(id_hex).unwrap_or_default();
-        let c_date = std::ffi::CString::new(date).unwrap_or_default();
+        let c_id = match safe_cstring(id_hex) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_date = match safe_cstring(date) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_advertised_id(c_id.as_ptr(), c_date.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -452,8 +512,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
                 &format!("exporter_bytes too short: {} < 4", exp_bytes.len()),
             );
         }
-        let c_id_a = std::ffi::CString::new(id_a).unwrap_or_default();
-        let c_id_b = std::ffi::CString::new(id_b).unwrap_or_default();
+        let c_id_a = match safe_cstring(id_a) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_id_b = match safe_cstring(id_b) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = unsafe {
             super::nxfr_derive_sas(
                 c_id_a.as_ptr(),
@@ -499,7 +565,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_path = std::ffi::CString::new(path_str).unwrap_or_default();
+        let c_path = match safe_cstring(path_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_set_receive_dir(c_path.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -523,8 +592,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Err(e) => return make_error_jstring(&mut env, &e),
         };
         let pin_str = jstring_to_string(&mut env, &pin).unwrap_or_default();
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
-        let c_pin = std::ffi::CString::new(pin_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_pin = match safe_cstring(pin_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_web_start(port as u16, c_dir.as_ptr(), c_pin.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -615,9 +690,18 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
-        let c_pin = std::ffi::CString::new(pin_str).unwrap_or_default();
-        let c_manifest = std::ffi::CString::new(manifest_str).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_pin = match safe_cstring(pin_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_manifest = match safe_cstring(manifest_str) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let max_dl = if max_downloads > 0 {
             max_downloads as u32
         } else {
@@ -647,7 +731,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_web_fingerprint(c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -671,8 +758,14 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_record = std::ffi::CString::new(record).unwrap_or_default();
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_record = match safe_cstring(record) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_history_add(c_record.as_ptr(), c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -692,7 +785,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_history_list(limit as u32, c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));
@@ -711,7 +807,10 @@ pub extern "system" fn Java_com_nxfr_android_service_NxfrService_00024NxfrBridge
             Ok(s) => s,
             Err(e) => return make_error_jstring(&mut env, &e),
         };
-        let c_dir = std::ffi::CString::new(dir).unwrap_or_default();
+        let c_dir = match safe_cstring(dir) {
+            Ok(c) => c,
+            Err(e) => return make_error_jstring(&mut env, &e),
+        };
         let ptr = super::nxfr_history_clear(c_dir.as_ptr());
         c_result_to_jstring(&mut env, ptr)
     }));

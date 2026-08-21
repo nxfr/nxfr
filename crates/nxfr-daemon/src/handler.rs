@@ -959,7 +959,8 @@ pub async fn connect_to_peer(
     .map_err(|_| "connect timed out after 5s — is the receiver online?")?
     .map_err(|e| format!("connect failed: {e}"))?;
     info!("TCP connected, starting TLS handshake ...");
-    let server_name = ServerName::try_from("nxfr-node").unwrap();
+    let server_name =
+        ServerName::try_from("nxfr-node").expect("static ServerName 'nxfr-node' is always valid");
     let tls_stream = connector.connect(server_name, tcp_stream).await?;
 
     // Verify peer identity.

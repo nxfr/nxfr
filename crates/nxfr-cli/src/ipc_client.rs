@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
@@ -11,7 +12,7 @@ pub struct IpcClient {
 impl IpcClient {
     pub async fn connect() -> anyhow::Result<Self> {
         let mut socket_path = dirs::state_dir().unwrap_or_else(|| {
-            let mut p = dirs::home_dir().expect("Home dir not found");
+            let mut p = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
             p.push(".local");
             p.push("state");
             p
