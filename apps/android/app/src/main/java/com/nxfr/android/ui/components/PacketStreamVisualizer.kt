@@ -40,7 +40,7 @@ fun PacketStreamVisualizer(
     val cycleDuration = if (speedMbps > 20.0) 400 else if (speedMbps > 5.0) 700 else 1100
 
     val infiniteTransition = rememberInfiniteTransition(label = "PacketStream")
-    val animatedProgress by infiniteTransition.animateFloat(
+    val animatedProgress = infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -49,9 +49,6 @@ fun PacketStreamVisualizer(
         ),
         label = "PacketMotion"
     )
-
-    val packet1Offset = if (animationsEnabled) animatedProgress else 0.5f
-    val packet2Offset = if (animationsEnabled) (animatedProgress + 0.5f) % 1f else 0.8f
 
     Column(
         modifier = modifier
@@ -67,6 +64,10 @@ fun PacketStreamVisualizer(
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxWidth().height(36.dp)) {
+                val currentProgress = animatedProgress.value
+                val packet1Offset = if (animationsEnabled) currentProgress else 0.5f
+                val packet2Offset = if (animationsEnabled) (currentProgress + 0.5f) % 1f else 0.8f
+
                 val startX = 72.dp.toPx()
                 val endX = size.width - 72.dp.toPx()
                 val centerY = size.height / 2f

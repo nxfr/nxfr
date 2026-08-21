@@ -36,7 +36,7 @@ fun BeamVisualizer(
 
     val infiniteTransition = rememberInfiniteTransition(label = "BeamAnimation")
 
-    val animatedSweep by infiniteTransition.animateFloat(
+    val animatedSweep = infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -45,8 +45,6 @@ fun BeamVisualizer(
         ),
         label = "SweepProgress"
     )
-
-    val sweepProgress = if (animationsEnabled) animatedSweep else if (isPowered) 0.5f else 0.0f
 
     Column(
         modifier = modifier
@@ -62,6 +60,7 @@ fun BeamVisualizer(
         ) {
             // Background Wire & Traveling Packet Dots
             Canvas(modifier = Modifier.fillMaxWidth().height(32.dp)) {
+                val sweepProgress = if (animationsEnabled) animatedSweep.value else if (isPowered) 0.5f else 0.0f
                 val startX = 68.dp.toPx()
                 val endX = size.width - 68.dp.toPx()
                 val centerY = size.height / 2f
